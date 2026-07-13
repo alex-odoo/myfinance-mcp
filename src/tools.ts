@@ -138,7 +138,7 @@ export function registerFinanceTools(server: McpServer, userId: string): void {
     {
       title: "Log expense",
       description:
-        "Record spending. Use for any purchase, bill, or receipt photo. Negative amount = refund to the same category.",
+        "Record ONE purchase, bill, or receipt. Negative amount = refund to the same category. NEVER use this for bank-statement rows or any batch of 3+ records: use import_transactions with the whole array instead (one-by-one logging hits the per-turn tool limit).",
       inputSchema: {
         amount: z.number().describe("Amount spent in the original currency. Negative = refund."),
         currency: currencySchema.optional(),
@@ -320,7 +320,7 @@ export function registerFinanceTools(server: McpServer, userId: string): void {
     {
       title: "Bulk import",
       description:
-        "Import parsed bank-statement rows (one statement/month per call). Dedupes against existing records, coerces unknown categories to 'other', and reconciles against the statement total. Sign convention: negative amount = money out, positive = money in.",
+        "Import bank-statement / statement-screenshot rows in bulk. ALWAYS send the ENTIRE statement as ONE call with the full transactions array (up to 500 rows) - never split into chunks, never log rows one-by-one via log_expense. Safe to re-run: dedupes against existing records (by external_id, then amount+date+merchant). Unknown categories become 'other'. Pass statement_total to get a reconciliation check. Sign convention: negative amount = money out, positive = money in.",
       inputSchema: {
         account: z.string().optional().describe("Target account name. Default: Manual."),
         statement_total: z
