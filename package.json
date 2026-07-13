@@ -1,0 +1,25 @@
+{
+  "name": "finance-mcp",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "bun run --watch src/index.ts",
+    "start": "bun run src/index.ts",
+    "build": "tsc --noEmit",
+    "e2e": "bun run scripts/gate-a-e2e.ts",
+    "lint": "eslint src scripts"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "express": "^5.2.1",
+    "zod": "^3"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.6",
+    "bun-types": "^1.3.14",
+    "eslint": "^10.7.0",
+    "typescript": "^5.9",
+    "typescript-eslint": "^8.63.0"
+  }
+}
