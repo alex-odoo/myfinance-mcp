@@ -11,5 +11,5 @@ export default tseslint.config(
       ],
     },
   },
-  { ignores: ["node_modules/", "state/", "state-e2e/"] }
+  { ignores: ["node_modules/", "src/generated/"] }
 );

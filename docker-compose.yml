@@ -9,10 +9,6 @@ services:
       # format:raw prevents compose from interpolating "$" inside the argon2 hash
       - path: app.env
         format: raw
-    environment:
-      - STATE_DIR=/app/state
-    volumes:
-      - ./state:/app/state
     healthcheck:
       test: ["CMD", "bun", "-e", "fetch('http://localhost:8788/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
       interval: 30s

@@ -12,8 +12,9 @@ import type {
   OAuthTokens,
 } from "@modelcontextprotocol/sdk/shared/auth.js";
 import { InvalidGrantError, InvalidTokenError } from "@modelcontextprotocol/sdk/server/auth/errors.js";
-import { OAuthStore } from "./store.js";
-import { loginPage } from "./login.js";
+import { OAuthStore } from "./store";
+import { loginPage } from "./login";
+import { verifyLogin } from "../users";
 
 const ACCESS_TOKEN_TTL_MS = 24 * 60 * 60 * 1000;
 const REFRESH_TOKEN_TTL_MS = 60 * 24 * 60 * 60 * 1000;
@@ -34,29 +35,27 @@ function newSecret(bytes = 32): string {
 }
 
 /**
- * Single-user OAuth 2.1 provider for Gate A. The consent screen doubles as
- * login; credentials come from env (hash verified via Bun.password).
- * Real signup + Supabase-backed users arrive in M1.
+ * OAuth 2.1 provider. Login is checked against the users table (M1: the one
+ * bootstrapped account; signup comes later). Pending auth requests and login
+ * rate limits are in-memory (single instance, short TTL); everything durable
+ * lives in Supabase via OAuthStore.
  */
 export class FinanceOAuthProvider implements OAuthServerProvider {
   private readonly pending = new Map<string, PendingAuthRequest>();
   private readonly loginAttempts = new Map<string, { count: number; resetAt: number }>();
 
-  constructor(
-    private readonly store: OAuthStore,
-    private readonly user: { email: string; passwordHash: string }
-  ) {}
+  constructor(private readonly store: OAuthStore) {}
 
   get clientsStore(): OAuthRegisteredClientsStore {
     return {
       getClient: (clientId) => this.store.getClient(clientId),
-      registerClient: (client) => {
+      registerClient: async (client) => {
         const full: OAuthClientInformationFull = {
           ...client,
           client_id: newSecret(16),
           client_id_issued_at: Math.floor(Date.now() / 1000),
         };
-        this.store.saveClient(full);
+        await this.store.saveClient(full);
         return full;
       },
     };
@@ -95,9 +94,8 @@ export class FinanceOAuthProvider implements OAuthServerProvider {
         return;
       }
 
-      const emailOk = (email ?? "").trim().toLowerCase() === this.user.email.toLowerCase();
-      const passwordOk = await Bun.password.verify(password ?? "", this.user.passwordHash).catch(() => false);
-      if (!emailOk || !passwordOk) {
+      const user = await verifyLogin(email ?? "", password ?? "");
+      if (!user) {
         this.recordFailedLogin(ip);
         res.status(401).type("html").send(loginPage(requestId!, pendingReq.clientName, "Wrong email or password."));
         return;
@@ -105,13 +103,13 @@ export class FinanceOAuthProvider implements OAuthServerProvider {
 
       this.pending.delete(requestId!);
       const code = newSecret();
-      this.store.saveCode(code, {
+      await this.store.saveCode(code, {
         clientId: pendingReq.clientId,
         codeChallenge: pendingReq.params.codeChallenge,
         redirectUri: pendingReq.params.redirectUri,
         scopes: pendingReq.params.scopes ?? [],
         resource: pendingReq.params.resource?.href,
-        userId: this.user.email,
+        userId: user.id,
         expiresAt: Date.now() + CODE_TTL_MS,
       });
 
@@ -127,7 +125,7 @@ export class FinanceOAuthProvider implements OAuthServerProvider {
     client: OAuthClientInformationFull,
     authorizationCode: string
   ): Promise<string> {
-    const record = this.store.getCode(authorizationCode);
+    const record = await this.store.getCode(authorizationCode);
     if (!record || record.clientId !== client.client_id) {
       throw new InvalidGrantError("Invalid authorization code");
     }
@@ -141,14 +139,14 @@ export class FinanceOAuthProvider implements OAuthServerProvider {
     redirectUri?: string,
     resource?: URL
   ): Promise<OAuthTokens> {
-    const record = this.store.getCode(authorizationCode);
+    const record = await this.store.getCode(authorizationCode);
     if (!record || record.clientId !== client.client_id) {
       throw new InvalidGrantError("Invalid authorization code");
     }
     if (redirectUri && redirectUri !== record.redirectUri) {
       throw new InvalidGrantError("redirect_uri does not match authorization request");
     }
-    this.store.deleteCode(authorizationCode);
+    await this.store.deleteCode(authorizationCode);
     return this.issueTokens(client.client_id, record.scopes, record.userId, resource?.href ?? record.resource);
   }
 
@@ -158,11 +156,12 @@ export class FinanceOAuthProvider implements OAuthServerProvider {
     scopes?: string[],
     resource?: URL
   ): Promise<OAuthTokens> {
-    const record = this.store.getRefreshToken(refreshToken);
+    const record = await this.store.getRefreshToken(refreshToken);
     if (!record || record.clientId !== client.client_id) {
       throw new InvalidGrantError("Invalid refresh token");
     }
-    this.store.deleteRefreshToken(refreshToken);
+    await this.store.deleteRefreshToken(refreshToken);
+    void this.store.pruneExpired();
     return this.issueTokens(
       client.client_id,
       scopes?.length ? scopes : record.scopes,
@@ -172,7 +171,7 @@ export class FinanceOAuthProvider implements OAuthServerProvider {
   }
 
   async verifyAccessToken(token: string): Promise<AuthInfo> {
-    const record = this.store.getToken(token);
+    const record = await this.store.getToken(token);
     if (!record) throw new InvalidTokenError("Invalid or expired access token");
     return {
       token,
@@ -188,23 +187,28 @@ export class FinanceOAuthProvider implements OAuthServerProvider {
     client: OAuthClientInformationFull,
     request: OAuthTokenRevocationRequest
   ): Promise<void> {
-    const access = this.store.getToken(request.token);
-    if (access && access.clientId === client.client_id) this.store.deleteToken(request.token);
-    const refresh = this.store.getRefreshToken(request.token);
-    if (refresh && refresh.clientId === client.client_id) this.store.deleteRefreshToken(request.token);
+    const access = await this.store.getToken(request.token);
+    if (access && access.clientId === client.client_id) await this.store.deleteToken(request.token);
+    const refresh = await this.store.getRefreshToken(request.token);
+    if (refresh && refresh.clientId === client.client_id) await this.store.deleteRefreshToken(request.token);
   }
 
-  private issueTokens(clientId: string, scopes: string[], userId: string, resource?: string): OAuthTokens {
+  private async issueTokens(
+    clientId: string,
+    scopes: string[],
+    userId: string,
+    resource?: string
+  ): Promise<OAuthTokens> {
     const accessToken = newSecret();
     const refreshToken = newSecret();
-    this.store.saveToken(accessToken, {
+    await this.store.saveToken(accessToken, {
       clientId,
       scopes,
       userId,
       resource,
       expiresAt: Date.now() + ACCESS_TOKEN_TTL_MS,
     });
-    this.store.saveRefreshToken(refreshToken, {
+    await this.store.saveRefreshToken(refreshToken, {
       clientId,
       scopes,
       userId,

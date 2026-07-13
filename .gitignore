@@ -4,3 +4,4 @@ state/
 app.env
 *.log
 .DS_Store
+src/generated/

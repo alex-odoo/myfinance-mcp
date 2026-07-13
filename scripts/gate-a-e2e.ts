@@ -11,7 +11,6 @@
  */
 import { createHash, randomBytes } from "node:crypto";
 import type { Subprocess } from "bun";
-import { rmSync } from "node:fs";
 
 const externalBase = process.argv[2];
 const PORT = 8790;
@@ -19,7 +18,6 @@ const BASE = externalBase?.replace(/\/$/, "") ?? `http://localhost:${PORT}`;
 const EMAIL = process.env.E2E_EMAIL ?? "gate-a@test.local";
 const PASSWORD = process.env.E2E_PASSWORD ?? "gate-a-secret";
 const REDIRECT_URI = "http://localhost:19999/callback";
-const STATE_DIR = "./state-e2e";
 
 let passed = 0;
 function ok(name: string, cond: boolean, detail?: string): void {
@@ -49,7 +47,6 @@ let serverProc: Subprocess | null = null;
 
 async function main(): Promise<void> {
   if (!externalBase) {
-    rmSync(STATE_DIR, { recursive: true, force: true });
     const hash = await Bun.password.hash(PASSWORD);
     serverProc = Bun.spawn(["bun", "run", "src/index.ts"], {
       env: {
@@ -58,7 +55,6 @@ async function main(): Promise<void> {
         BASE_URL: BASE,
         FINANCE_MCP_EMAIL: EMAIL,
         FINANCE_MCP_PASSWORD_HASH: hash,
-        STATE_DIR,
       },
       stdout: "pipe",
       stderr: "pipe",
@@ -220,6 +216,61 @@ async function main(): Promise<void> {
   const pingPayload = JSON.parse(call.json?.result?.content?.[0]?.text ?? "{}");
   ok("ping returns ok", pingPayload.ok === true && pingPayload.user === EMAIL, JSON.stringify(pingPayload));
 
+  // 12b. Finance flow (spawn mode only: creates + wipes a test user; never against prod)
+  if (!externalBase) {
+    const call = (name: string, args: Record<string, unknown> = {}, id = 100) =>
+      mcpCall(tokens.access_token, { jsonrpc: "2.0", id, method: "tools/call", params: { name, arguments: args } });
+    const payload = (r: any) => JSON.parse(r.json?.result?.content?.[0]?.text ?? "{}");
+    const isErr = (r: any) => r.json?.result?.isError === true;
+
+    const e1 = payload(await call("log_expense", { amount: 250, currency: "UAH", category: "groceries", merchant: "Silpo" }));
+    ok("log_expense UAH", e1.id && e1.currency === "UAH" && e1.amount_base > 0 && e1.base_currency === "EUR", JSON.stringify(e1));
+    const e2 = payload(await call("log_expense", { amount: 12.5, category: "restaurants", merchant: "Cafe", items: [{ name: "lunch", price: 12.5 }] }));
+    ok("log_expense receipt items", e2.id && e2.amount_base === 12.5, JSON.stringify(e2));
+    const inc = payload(await call("log_income", { amount: 1000, currency: "USD", category: "freelance" }));
+    ok("log_income USD", inc.id && inc.amount_base > 0, JSON.stringify(inc));
+
+    const sum = payload(await call("get_summary", {}));
+    ok(
+      "get_summary totals",
+      sum.total_expense > 0 && sum.total_income > 0 && sum.groups.length === 2 && sum.groups[0].share_pct > 0,
+      JSON.stringify(sum)
+    );
+
+    const list = payload(await call("get_transactions", { merchant: "silpo" }));
+    ok("get_transactions merchant search", list.count === 1 && list.transactions[0].merchant === "Silpo");
+
+    const upd = payload(await call("update_transaction", { id: e1.id, category: "restaurants" }));
+    ok("update_transaction recategorize", upd.updated === true && upd.category === "restaurants");
+
+    const trends = payload(await call("get_trends", { months: 3 }));
+    ok("get_trends buckets", trends.months.length === 3 && trends.months[2].expense > 0, JSON.stringify(trends));
+
+    const bud = payload(await call("set_budget", { amount: 500 }));
+    ok("set_budget overall", bud.ok === true);
+    const prog = payload(await call("get_budget_progress", {}));
+    ok("budget progress computed", prog.budgets?.[0]?.spent > 0 && prog.budgets[0].cap === 500, JSON.stringify(prog));
+
+    const csvRes = await call("export_transactions", {});
+    const csv = csvRes.json?.result?.content?.[0]?.text ?? "";
+    ok("export CSV", csv.startsWith("date,type,") && csv.split("\n").length === 4);
+
+    const del = payload(await call("delete_transaction", { id: e2.id }));
+    ok("delete_transaction", del.deleted === true);
+
+    const badCat = await call("log_expense", { amount: 5, category: "not-a-category" });
+    ok("invalid category rejected", badCat.status !== 200 || isErr(badCat) || badCat.json?.error);
+  } else {
+    const settings = await mcpCall(tokens.access_token, {
+      jsonrpc: "2.0",
+      id: 100,
+      method: "tools/call",
+      params: { name: "get_settings", arguments: {} },
+    });
+    const s = JSON.parse(settings.json?.result?.content?.[0]?.text ?? "{}");
+    ok("get_settings (read-only prod smoke)", !!s.base_currency, JSON.stringify(s));
+  }
+
   // 13. Refresh token rotation
   const refreshRes = await fetch(asMeta.token_endpoint, {
     method: "POST",
@@ -250,12 +301,25 @@ async function main(): Promise<void> {
   });
   ok("new access token works", pingNew.status === 200);
 
-  console.log(`\nGate A e2e PASSED: ${passed} checks green.`);
+  // 14. GDPR wipe (spawn mode only) - last, since it also revokes all tokens
+  if (!externalBase) {
+    const wipeRes = await mcpCall(refreshed.access_token, {
+      jsonrpc: "2.0",
+      id: 5,
+      method: "tools/call",
+      params: { name: "delete_account", arguments: { confirm: "DELETE" } },
+    });
+    const wipe = JSON.parse(wipeRes.json?.result?.content?.[0]?.text ?? "{}");
+    ok("delete_account wipes test user", wipe.deleted === true, JSON.stringify(wipeRes.json));
+    const afterWipe = await mcpCall(refreshed.access_token, { jsonrpc: "2.0", id: 6, method: "tools/call", params: { name: "ping", arguments: {} } });
+    ok("wiped user token rejected", afterWipe.status === 401);
+  }
+
+  console.log(`\ne2e PASSED: ${passed} checks green.`);
 }
 
 try {
   await main();
 } finally {
   (serverProc as Subprocess | null)?.kill();
-  if (!externalBase) rmSync(STATE_DIR, { recursive: true, force: true });
 }

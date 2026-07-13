@@ -1,0 +1,176 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+  runtime  = "bun"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum TxType {
+  expense
+  income
+  transfer
+}
+
+enum TxSource {
+  manual
+  receipt
+  bank
+}
+
+enum CategoryKind {
+  expense
+  income
+}
+
+model User {
+  id           String   @id @default(uuid()) @db.Uuid
+  email        String   @unique
+  passwordHash String?
+  baseCurrency String   @default("EUR") @db.Char(3)
+  timezone     String   @default("UTC")
+  createdAt    DateTime @default(now())
+
+  accounts     Account[]
+  transactions Transaction[]
+  budgets      Budget[]
+
+  @@map("users")
+}
+
+model Account {
+  id         String  @id @default(uuid()) @db.Uuid
+  userId     String  @db.Uuid
+  name       String
+  type       String  @default("manual") // manual | bank
+  provider   String? // monobank | ... (M2)
+  externalId String?
+  currency   String? @db.Char(3)
+
+  user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  transactions Transaction[]
+
+  @@unique([userId, name])
+  @@map("accounts")
+}
+
+model Category {
+  key  String       @id
+  kind CategoryKind
+
+  transactions Transaction[]
+
+  @@map("categories")
+}
+
+model Transaction {
+  id          String   @id @default(uuid()) @db.Uuid
+  userId      String   @db.Uuid
+  accountId   String   @db.Uuid
+  type        TxType
+  amount      Decimal  @db.Decimal(14, 2) // original; negative expense = refund
+  currency    String   @db.Char(3)
+  amountBase  Decimal  @db.Decimal(14, 2) // in user's base currency, frozen at occurredAt
+  fxRate      Decimal  @db.Decimal(18, 8) // amountBase / amount
+  categoryKey String?
+  merchant    String?
+  note        String?
+  items       Json? // receipt line items [{name, qty?, price?}]
+  occurredAt  DateTime
+  source      TxSource @default(manual)
+  externalId  String? // bank idempotency (M2)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  user     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  account  Account   @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  category Category? @relation(fields: [categoryKey], references: [key])
+
+  @@unique([accountId, externalId])
+  @@index([userId, occurredAt])
+  @@index([userId, categoryKey])
+  @@map("transactions")
+}
+
+model Budget {
+  id          String  @id @default(uuid()) @db.Uuid
+  userId      String  @db.Uuid
+  categoryKey String  @default("overall") // "overall" = whole-month budget (NULL breaks the compound unique)
+  amount      Decimal @db.Decimal(14, 2) // in user's base currency
+  period      String  @default("monthly")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, categoryKey])
+  @@map("budgets")
+}
+
+model FxRate {
+  date  DateTime @db.Date
+  base  String   @default("EUR") @db.Char(3)
+  quote String   @db.Char(3)
+  rate  Decimal  @db.Decimal(18, 8) // quote units per 1 base
+
+  @@id([date, quote])
+  @@map("fx_rates")
+}
+
+model Event {
+  id        String   @id @default(uuid()) @db.Uuid
+  userId    String?  @db.Uuid
+  type      String
+  meta      Json?
+  createdAt DateTime @default(now())
+
+  @@index([type, createdAt])
+  @@map("events")
+}
+
+// OAuth server state (moved from JSON file in Gate A; container is stateless now)
+
+model OauthClient {
+  clientId  String   @id
+  data      Json // full OAuthClientInformationFull
+  createdAt DateTime @default(now())
+
+  @@map("oauth_clients")
+}
+
+model OauthCode {
+  code          String   @id
+  clientId      String
+  codeChallenge String
+  redirectUri   String
+  scopes        String[]
+  resource      String?
+  userId        String   @db.Uuid
+  expiresAt     DateTime
+
+  @@map("oauth_codes")
+}
+
+model OauthAccessToken {
+  token     String   @id
+  clientId  String
+  scopes    String[]
+  userId    String   @db.Uuid
+  resource  String?
+  expiresAt DateTime
+
+  @@index([expiresAt])
+  @@map("oauth_access_tokens")
+}
+
+model OauthRefreshToken {
+  token     String   @id
+  clientId  String
+  scopes    String[]
+  userId    String   @db.Uuid
+  resource  String?
+  expiresAt DateTime
+
+  @@index([expiresAt])
+  @@map("oauth_refresh_tokens")
+}

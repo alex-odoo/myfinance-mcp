@@ -2,18 +2,30 @@ import express from "express";
 import { mcpAuthRouter } from "@modelcontextprotocol/sdk/server/auth/router.js";
 import { requireBearerAuth } from "@modelcontextprotocol/sdk/server/auth/middleware/bearerAuth.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
-import { config, assertConfig } from "./config.js";
-import { OAuthStore } from "./oauth/store.js";
-import { FinanceOAuthProvider } from "./oauth/provider.js";
-import { buildMcpServer, SERVER_NAME, SERVER_VERSION } from "./mcp.js";
+import { config, assertConfig } from "./config";
+import { db } from "./db";
+import { OAuthStore } from "./oauth/store";
+import { FinanceOAuthProvider } from "./oauth/provider";
+import { bootstrapUser } from "./users";
+import { buildMcpServer, SERVER_NAME, SERVER_VERSION } from "./mcp";
+import { EXPENSE_CATEGORIES, INCOME_CATEGORIES } from "./categories";
 
 assertConfig();
 
-const store = new OAuthStore(config.stateDir);
-const provider = new FinanceOAuthProvider(store, {
-  email: config.userEmail,
-  passwordHash: config.passwordHash,
+// Idempotent boot: category dictionary + the single M1 user.
+await db.category.createMany({
+  data: [
+    ...EXPENSE_CATEGORIES.map((key) => ({ key, kind: "expense" as const })),
+    ...INCOME_CATEGORIES.filter((k) => !(EXPENSE_CATEGORIES as readonly string[]).includes(k)).map((key) => ({
+      key,
+      kind: "income" as const,
+    })),
+  ],
+  skipDuplicates: true,
 });
+await bootstrapUser();
+
+const provider = new FinanceOAuthProvider(new OAuthStore());
 
 const app = express();
 app.set("trust proxy", 1);
@@ -37,7 +49,7 @@ const bearerAuth = requireBearerAuth({
 
 // Stateless Streamable HTTP: one server+transport per request, nothing shared.
 app.post("/mcp", bearerAuth, async (req, res) => {
-  const userId = String(req.auth?.extra?.userId ?? "unknown");
+  const userId = String(req.auth?.extra?.userId ?? "");
   const server = buildMcpServer(userId);
   const transport = new StreamableHTTPServerTransport({
     sessionIdGenerator: undefined,

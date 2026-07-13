@@ -1,6 +1,5 @@
-import { mkdirSync, readFileSync, renameSync, writeFileSync, existsSync } from "node:fs";
-import { join } from "node:path";
 import type { OAuthClientInformationFull } from "@modelcontextprotocol/sdk/shared/auth.js";
+import { db } from "../db";
 
 export interface AuthCodeRecord {
   clientId: string;
@@ -12,113 +11,128 @@ export interface AuthCodeRecord {
   expiresAt: number;
 }
 
-export interface AccessTokenRecord {
+export interface TokenRecord {
   clientId: string;
   scopes: string[];
   userId: string;
   resource?: string;
   expiresAt: number;
 }
-
-export interface RefreshTokenRecord {
-  clientId: string;
-  scopes: string[];
-  userId: string;
-  resource?: string;
-  expiresAt: number;
-}
-
-interface StoreData {
-  clients: Record<string, OAuthClientInformationFull>;
-  codes: Record<string, AuthCodeRecord>;
-  tokens: Record<string, AccessTokenRecord>;
-  refreshTokens: Record<string, RefreshTokenRecord>;
-}
-
-const EMPTY: StoreData = { clients: {}, codes: {}, tokens: {}, refreshTokens: {} };
 
 /**
- * JSON-file-backed OAuth state. Gate A scope: single box, low volume;
- * moves to Supabase together with user accounts in M1.
+ * Supabase-backed OAuth state (was a JSON file in Gate A). The container is
+ * stateless now: restarts and redeploys keep every session alive.
  */
 export class OAuthStore {
-  private data: StoreData;
-  private readonly file: string;
-
-  constructor(stateDir: string) {
-    mkdirSync(stateDir, { recursive: true });
-    this.file = join(stateDir, "oauth.json");
-    this.data = existsSync(this.file)
-      ? { ...EMPTY, ...(JSON.parse(readFileSync(this.file, "utf8")) as StoreData) }
-      : structuredClone(EMPTY);
-    this.prune();
+  async getClient(clientId: string): Promise<OAuthClientInformationFull | undefined> {
+    const row = await db.oauthClient.findUnique({ where: { clientId } });
+    return row ? (row.data as unknown as OAuthClientInformationFull) : undefined;
   }
 
-  private persist(): void {
-    this.prune();
-    const tmp = `${this.file}.tmp`;
-    writeFileSync(tmp, JSON.stringify(this.data), { mode: 0o600 });
-    renameSync(tmp, this.file);
+  async saveClient(client: OAuthClientInformationFull): Promise<void> {
+    await db.oauthClient.upsert({
+      where: { clientId: client.client_id },
+      update: { data: client as object },
+      create: { clientId: client.client_id, data: client as object },
+    });
   }
 
-  private prune(): void {
-    const now = Date.now();
-    for (const [k, v] of Object.entries(this.data.codes)) if (v.expiresAt < now) delete this.data.codes[k];
-    for (const [k, v] of Object.entries(this.data.tokens)) if (v.expiresAt < now) delete this.data.tokens[k];
-    for (const [k, v] of Object.entries(this.data.refreshTokens)) if (v.expiresAt < now) delete this.data.refreshTokens[k];
+  async saveCode(code: string, r: AuthCodeRecord): Promise<void> {
+    await db.oauthCode.create({
+      data: {
+        code,
+        clientId: r.clientId,
+        codeChallenge: r.codeChallenge,
+        redirectUri: r.redirectUri,
+        scopes: r.scopes,
+        resource: r.resource,
+        userId: r.userId,
+        expiresAt: new Date(r.expiresAt),
+      },
+    });
   }
 
-  getClient(clientId: string): OAuthClientInformationFull | undefined {
-    return this.data.clients[clientId];
+  async getCode(code: string): Promise<AuthCodeRecord | undefined> {
+    const row = await db.oauthCode.findUnique({ where: { code } });
+    if (!row || row.expiresAt.getTime() < Date.now()) return undefined;
+    return {
+      clientId: row.clientId,
+      codeChallenge: row.codeChallenge,
+      redirectUri: row.redirectUri,
+      scopes: row.scopes,
+      resource: row.resource ?? undefined,
+      userId: row.userId,
+      expiresAt: row.expiresAt.getTime(),
+    };
   }
 
-  saveClient(client: OAuthClientInformationFull): void {
-    this.data.clients[client.client_id] = client;
-    this.persist();
+  async deleteCode(code: string): Promise<void> {
+    await db.oauthCode.deleteMany({ where: { code } });
   }
 
-  saveCode(code: string, record: AuthCodeRecord): void {
-    this.data.codes[code] = record;
-    this.persist();
+  async saveToken(token: string, r: TokenRecord): Promise<void> {
+    await db.oauthAccessToken.create({
+      data: {
+        token,
+        clientId: r.clientId,
+        scopes: r.scopes,
+        userId: r.userId,
+        resource: r.resource,
+        expiresAt: new Date(r.expiresAt),
+      },
+    });
   }
 
-  getCode(code: string): AuthCodeRecord | undefined {
-    const rec = this.data.codes[code];
-    return rec && rec.expiresAt >= Date.now() ? rec : undefined;
+  async getToken(token: string): Promise<TokenRecord | undefined> {
+    const row = await db.oauthAccessToken.findUnique({ where: { token } });
+    if (!row || row.expiresAt.getTime() < Date.now()) return undefined;
+    return {
+      clientId: row.clientId,
+      scopes: row.scopes,
+      userId: row.userId,
+      resource: row.resource ?? undefined,
+      expiresAt: row.expiresAt.getTime(),
+    };
   }
 
-  deleteCode(code: string): void {
-    delete this.data.codes[code];
-    this.persist();
+  async deleteToken(token: string): Promise<void> {
+    await db.oauthAccessToken.deleteMany({ where: { token } });
   }
 
-  saveToken(token: string, record: AccessTokenRecord): void {
-    this.data.tokens[token] = record;
-    this.persist();
+  async saveRefreshToken(token: string, r: TokenRecord): Promise<void> {
+    await db.oauthRefreshToken.create({
+      data: {
+        token,
+        clientId: r.clientId,
+        scopes: r.scopes,
+        userId: r.userId,
+        resource: r.resource,
+        expiresAt: new Date(r.expiresAt),
+      },
+    });
   }
 
-  getToken(token: string): AccessTokenRecord | undefined {
-    const rec = this.data.tokens[token];
-    return rec && rec.expiresAt >= Date.now() ? rec : undefined;
+  async getRefreshToken(token: string): Promise<TokenRecord | undefined> {
+    const row = await db.oauthRefreshToken.findUnique({ where: { token } });
+    if (!row || row.expiresAt.getTime() < Date.now()) return undefined;
+    return {
+      clientId: row.clientId,
+      scopes: row.scopes,
+      userId: row.userId,
+      resource: row.resource ?? undefined,
+      expiresAt: row.expiresAt.getTime(),
+    };
   }
 
-  deleteToken(token: string): void {
-    delete this.data.tokens[token];
-    this.persist();
+  async deleteRefreshToken(token: string): Promise<void> {
+    await db.oauthRefreshToken.deleteMany({ where: { token } });
   }
 
-  saveRefreshToken(token: string, record: RefreshTokenRecord): void {
-    this.data.refreshTokens[token] = record;
-    this.persist();
-  }
-
-  getRefreshToken(token: string): RefreshTokenRecord | undefined {
-    const rec = this.data.refreshTokens[token];
-    return rec && rec.expiresAt >= Date.now() ? rec : undefined;
-  }
-
-  deleteRefreshToken(token: string): void {
-    delete this.data.refreshTokens[token];
-    this.persist();
+  /** Called opportunistically; keeps the token tables from growing forever. */
+  async pruneExpired(): Promise<void> {
+    const now = new Date();
+    await db.oauthCode.deleteMany({ where: { expiresAt: { lt: now } } });
+    await db.oauthAccessToken.deleteMany({ where: { expiresAt: { lt: now } } });
+    await db.oauthRefreshToken.deleteMany({ where: { expiresAt: { lt: now } } });
   }
 }

@@ -32,7 +32,6 @@ echo "==> Rebuild + restart container"
 ssh -i "$SSH_KEY" "$SERVER" "set -e
   cd $REMOTE_DIR
   test -f app.env || { echo 'FATAL: $REMOTE_DIR/app.env missing (bootstrap first)'; exit 1; }
-  install -d -o 1000 -g 1000 state   # container runs as bun (uid 1000); bind mount must be writable
   docker compose build --quiet
   docker compose up -d
 "
