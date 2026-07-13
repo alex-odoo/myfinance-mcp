@@ -55,6 +55,9 @@ let serverProc: Subprocess | null = null;
 
 async function main(): Promise<void> {
   if (!externalBase) {
+    // Idempotency: a previously crashed run may have left the test user behind
+    const { db } = await import("../src/db");
+    await db.user.deleteMany({ where: { email: EMAIL } });
     const hash = await Bun.password.hash(PASSWORD);
     serverProc = Bun.spawn(["bun", "run", "src/index.ts"], {
       env: {
@@ -288,6 +291,23 @@ async function main(): Promise<void> {
 
     const badCat = await call("log_expense", { amount: 5, category: "not-a-category" });
     ok("invalid category rejected", badCat.status !== 200 || isErr(badCat) || badCat.json?.error);
+
+    // 12b-tel. Telemetry: tool calls + errors captured as events, no amounts/merchants leaked
+    await Bun.sleep(400); // fire-and-forget writes settle
+    const { db } = await import("../src/db");
+    const since = new Date(Date.now() - 5 * 60_000);
+    const telemetry = await db.event.findMany({ where: { type: "tool_call", createdAt: { gte: since } } });
+    ok("telemetry: tool_call events written", telemetry.length >= 5, String(telemetry.length));
+    const errEvent = telemetry.find((e: any) => e.meta?.error === true && String(e.meta?.tool) === "log_expense");
+    ok("telemetry: error call captured with err text", !!errEvent && String((errEvent.meta as any).err).length > 0);
+    const leaky = telemetry.filter((e: any) => {
+      const s = JSON.stringify(e.meta);
+      const keys = Object.keys(e.meta ?? {});
+      return s.includes("Vitalvit") || s.includes("Silpo") || keys.some((k) => ["a_amount", "a_merchant", "a_note", "a_items"].includes(k));
+    });
+    ok("telemetry: no merchants/amounts leaked", leaky.length === 0, JSON.stringify(leaky[0]?.meta ?? {}));
+    const initEv = await db.event.findFirst({ where: { type: "client_init", createdAt: { gte: since } } });
+    ok("telemetry: clientInfo recorded", !!initEv && !!(initEv.meta as any)?.client);
 
     // 12c. Accounts, transfers, balances
     const accRev = payload(await call("create_account", { name: "Revolut", type: "bank", currency: "RON" }));

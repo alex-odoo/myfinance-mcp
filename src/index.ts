@@ -9,6 +9,7 @@ import { FinanceOAuthProvider } from "./oauth/provider";
 import { bootstrapUser } from "./users";
 import { buildMcpServer, SERVER_NAME, SERVER_VERSION } from "./mcp";
 import { EXPENSE_CATEGORIES, INCOME_CATEGORIES } from "./categories";
+import { instrumentTransport, pruneOldEvents } from "./telemetry";
 
 assertConfig();
 
@@ -24,6 +25,8 @@ await db.category.createMany({
   skipDuplicates: true,
 });
 await bootstrapUser();
+await pruneOldEvents();
+setInterval(() => void pruneOldEvents(), 24 * 60 * 60 * 1000);
 
 const provider = new FinanceOAuthProvider(new OAuthStore());
 
@@ -55,6 +58,7 @@ app.post("/mcp", bearerAuth, async (req, res) => {
     sessionIdGenerator: undefined,
     enableJsonResponse: true,
   });
+  instrumentTransport(transport, req.body, userId);
   res.on("close", () => {
     void transport.close();
     void server.close();
