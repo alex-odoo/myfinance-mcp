@@ -372,8 +372,15 @@ export function registerFinanceTools(server: McpServer, userId: string): void {
         }
         const windowStart = new Date(occurredAt.getTime() - 2 * 86_400_000);
         const windowEnd = new Date(occurredAt.getTime() + 2 * 86_400_000);
+        // Same account for bank rows, but manual/receipt entries live on the Manual
+        // account by default: match them user-wide or hand-logged rows duplicate on import
         const candidates = await db.transaction.findMany({
-          where: { userId, accountId: acc.id, currency: cur, occurredAt: { gte: windowStart, lte: windowEnd } },
+          where: {
+            userId,
+            currency: cur,
+            occurredAt: { gte: windowStart, lte: windowEnd },
+            OR: [{ accountId: acc.id }, { source: { in: ["manual", "receipt"] } }],
+          },
         });
         const rm = normalize(row.merchant);
         const isDup = candidates.some((c) => {
@@ -595,13 +602,30 @@ export function registerFinanceTools(server: McpServer, userId: string): void {
     "delete_transaction",
     {
       title: "Delete transaction",
-      description: "Remove a wrongly logged record.",
+      description: "Remove ONE wrongly logged record. For 3+ records use delete_transactions (bulk) with the ids array.",
       inputSchema: { id: z.string().uuid() },
     },
     async ({ id }) => {
       const res = await db.transaction.deleteMany({ where: { id, userId } });
       if (res.count === 0) throw new Error("Transaction not found.");
       return text({ deleted: true, id });
+    }
+  );
+
+  server.registerTool(
+    "delete_transactions",
+    {
+      title: "Bulk delete",
+      description:
+        "Delete MANY transactions in ONE call by ids (from get_transactions). Always prefer this over repeated delete_transaction calls - one-by-one deletion hits the per-turn tool limit.",
+      inputSchema: {
+        ids: z.array(z.string().uuid()).min(1).max(500),
+      },
+    },
+    async ({ ids }) => {
+      const res = await db.transaction.deleteMany({ where: { id: { in: ids }, userId } });
+      logEvent("bulk_deleted", userId, { requested: ids.length, deleted: res.count });
+      return text({ deleted: res.count, not_found: ids.length - res.count });
     }
   );
 

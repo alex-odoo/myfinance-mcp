@@ -374,6 +374,23 @@ async function main(): Promise<void> {
       })
     );
     ok("import: mismatch flagged", String(impBad.reconciliation).startsWith("MISMATCH"), JSON.stringify(impBad));
+
+    // 12e. Cross-account dedup: hand-logged row on Manual must block its bank twin on Revolut
+    const handLogged = payload(await call("log_expense", { amount: 33.33, currency: "RON", category: "clothing", merchant: "Zara" }));
+    const impCross = payload(
+      await call("import_transactions", {
+        account: "Revolut",
+        transactions: [{ date: today(), amount: -33.33, merchant: "ZARA ROMANIA SRL" }],
+      })
+    );
+    ok("import: manual twin on other account deduped", impCross.duplicates_skipped === 1 && impCross.imported === 0, JSON.stringify(impCross));
+
+    // 12f. Bulk delete
+    const listForDel = payload(await call("get_transactions", { limit: 3 }));
+    const delIds = listForDel.transactions.map((t: any) => t.id);
+    const bulkDel = payload(await call("delete_transactions", { ids: delIds }));
+    ok("bulk delete by ids", bulkDel.deleted === delIds.length, JSON.stringify(bulkDel));
+    void handLogged;
   } else {
     const settings = await mcpCall(tokens.access_token, {
       jsonrpc: "2.0",
