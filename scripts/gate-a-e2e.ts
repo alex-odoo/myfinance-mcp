@@ -30,6 +30,14 @@ function b64url(buf: Buffer): string {
   return buf.toString("base64url");
 }
 
+function round2c(n: number): number {
+  return Math.round(n * 100) / 100;
+}
+
+function today(): string {
+  return new Date().toISOString().slice(0, 10);
+}
+
 async function mcpCall(token: string, body: unknown): Promise<any> {
   const res = await fetch(`${BASE}/mcp`, {
     method: "POST",
@@ -260,6 +268,72 @@ async function main(): Promise<void> {
 
     const badCat = await call("log_expense", { amount: 5, category: "not-a-category" });
     ok("invalid category rejected", badCat.status !== 200 || isErr(badCat) || badCat.json?.error);
+
+    // 12c. Accounts, transfers, balances
+    const accRev = payload(await call("create_account", { name: "Revolut", type: "bank", currency: "RON" }));
+    ok("create_account Revolut RON", accRev.ok === true && accRev.currency === "RON");
+    const accBroker = payload(await call("create_account", { name: "IBKR", type: "investment", currency: "USD" }));
+    ok("create_account IBKR USD", accBroker.ok === true);
+
+    const yesterday = new Date(Date.now() - 86_400_000).toISOString().slice(0, 10);
+    const snap = payload(await call("log_balance", { account: "Revolut", amount: 1000, date: yesterday }));
+    ok("log_balance anchors Revolut", snap.ok === true && snap.balance === 1000 && snap.currency === "RON");
+
+    const spent = payload(await call("log_expense", { amount: 145, account: "revolut", category: "health", merchant: "Vitalvit" }));
+    ok("log_expense on account (case-insensitive)", spent.currency === "RON", JSON.stringify(spent));
+
+    const tr = payload(
+      await call("log_transfer", { amount: 46.05, from_account: "Revolut", to_account: "IBKR", received_amount: 10, received_currency: "USD" })
+    );
+    ok("log_transfer cross-currency", tr.transfer === "Revolut -> IBKR" && tr.received.currency === "USD", JSON.stringify(tr));
+
+    const accounts = payload(await call("get_accounts", {}));
+    const rev = accounts.accounts.find((a: any) => a.name === "Revolut");
+    const ibkr = accounts.accounts.find((a: any) => a.name === "IBKR");
+    ok("Revolut balance = snapshot - expense - transfer", rev.balance === round2c(1000 - 145 - 46.05), JSON.stringify(rev));
+    ok("IBKR received 10 USD", ibkr.balance === 10, JSON.stringify(ibkr));
+    ok("net worth computed in base", accounts.net_worth > 0 && accounts.base_currency === "EUR");
+
+    const sumAfterTransfer = payload(await call("get_summary", {}));
+    ok(
+      "transfer excluded from spending",
+      sumAfterTransfer.total_expense === round2c(sum.total_expense - 12.5 + spent.amount_base),
+      JSON.stringify({ before: sum.total_expense, after: sumAfterTransfer.total_expense })
+    );
+
+    // 12d. Bulk import with dedup + reconciliation
+    const imp = payload(
+      await call("import_transactions", {
+        account: "Revolut",
+        statement_total: -173.01,
+        transactions: [
+          { date: today(), amount: -145, merchant: "Vitalvit SRL", category: "health" }, // dup of logged expense
+          { date: today(), amount: -14, merchant: "A Roastery", category: "restaurants", external_id: "stmt-001" },
+          { date: today(), amount: -14.01, merchant: "Weird Shop", category: "not-real-category" },
+        ],
+      })
+    );
+    ok("import: dup skipped", imp.duplicates_skipped === 1, JSON.stringify(imp));
+    ok("import: 2 imported", imp.imported === 2);
+    ok("import: category coerced", imp.unknown_categories_coerced_to_other === 1);
+    ok("import: reconciliation ok", imp.reconciliation === "ok");
+
+    const impReplay = payload(
+      await call("import_transactions", {
+        account: "Revolut",
+        transactions: [{ date: today(), amount: -14, merchant: "A Roastery", external_id: "stmt-001" }],
+      })
+    );
+    ok("import replay: external_id dedup", impReplay.imported === 0 && impReplay.duplicates_skipped === 1);
+
+    const impBad = payload(
+      await call("import_transactions", {
+        account: "Revolut",
+        statement_total: -500,
+        transactions: [{ date: today(), amount: -20, merchant: "Gap Store" }],
+      })
+    );
+    ok("import: mismatch flagged", String(impBad.reconciliation).startsWith("MISMATCH"), JSON.stringify(impBad));
   } else {
     const settings = await mcpCall(tokens.access_token, {
       jsonrpc: "2.0",

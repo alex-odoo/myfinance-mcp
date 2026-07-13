@@ -3,7 +3,11 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { db, logEvent } from "./db";
 import { convert, round2 } from "./fx";
 import { EXPENSE_CATEGORIES, INCOME_CATEGORIES } from "./categories";
+import { resolveAccount, computeBalance, ACCOUNT_TYPES } from "./accounts";
+import { SERVER_VERSION } from "./version";
 import type { TxType } from "./generated/prisma/enums";
+
+const ALL_CATEGORIES = new Set<string>([...EXPENSE_CATEGORIES, ...INCOME_CATEGORIES]);
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -45,14 +49,6 @@ function parseDate(s: string): Date {
   return new Date(`${s}T00:00:00.000Z`);
 }
 
-async function defaultAccount(userId: string) {
-  return db.account.upsert({
-    where: { userId_name: { userId, name: "Manual" } },
-    update: {},
-    create: { userId, name: "Manual", type: "manual" },
-  });
-}
-
 interface LogInput {
   amount: number;
   currency?: string;
@@ -61,14 +57,15 @@ interface LogInput {
   note?: string;
   date?: string;
   items?: unknown;
+  account?: string;
 }
 
 async function logTransaction(userId: string, type: TxType, input: LogInput) {
   const user = await getUser(userId);
-  const currency = (input.currency ?? user.baseCurrency).toUpperCase();
+  const account = await resolveAccount(userId, input.account);
+  const currency = (input.currency ?? account.currency ?? user.baseCurrency).toUpperCase();
   const dateStr = input.date ?? todayIn(user.timezone);
   const occurredAt = parseDate(dateStr);
-  const account = await defaultAccount(userId);
 
   const { converted, rate } = await convert(input.amount, currency, user.baseCurrency, occurredAt);
 
@@ -131,7 +128,7 @@ export function registerFinanceTools(server: McpServer, userId: string): void {
     },
     async () => {
       const user = await getUser(userId);
-      return text({ ok: true, server: "financemcp", version: "0.2.0-m1", user: user.email, time: new Date().toISOString() });
+      return text({ ok: true, server: "financemcp", version: SERVER_VERSION, user: user.email, time: new Date().toISOString() });
     }
   );
 
@@ -149,6 +146,7 @@ export function registerFinanceTools(server: McpServer, userId: string): void {
         note: z.string().optional(),
         date: dateSchema.optional(),
         items: itemsSchema.optional(),
+        account: z.string().optional().describe("Account name (see get_accounts). Default: Manual."),
       },
     },
     async (input) => text(await logTransaction(userId, "expense", input as LogInput))
@@ -166,9 +164,271 @@ export function registerFinanceTools(server: McpServer, userId: string): void {
         merchant: z.string().optional().describe("Payer / source, e.g. client or employer name."),
         note: z.string().optional(),
         date: dateSchema.optional(),
+        account: z.string().optional().describe("Account name (see get_accounts). Default: Manual."),
       },
     },
     async (input) => text(await logTransaction(userId, "income", input as LogInput))
+  );
+
+  server.registerTool(
+    "create_account",
+    {
+      title: "Create account",
+      description:
+        "Add a money account: bank, card, cash, or investment (brokerage). Transfers between own accounts are then tracked without counting as spending.",
+      inputSchema: {
+        name: z.string().min(1).max(40).describe("Short name, e.g. 'Revolut', 'Mono black', 'IBKR'."),
+        type: z.enum(ACCOUNT_TYPES).describe("cash | bank | card | investment"),
+        currency: currencySchema.describe("Main currency of this account."),
+      },
+    },
+    async ({ name, type, currency }) => {
+      const existing = await db.account.findMany({ where: { userId } });
+      if (existing.some((a) => a.name.toLowerCase() === name.toLowerCase())) {
+        throw new Error(`Account "${name}" already exists.`);
+      }
+      const acc = await db.account.create({
+        data: { userId, name, type, currency: currency.toUpperCase() },
+      });
+      return text({ ok: true, account: acc.name, type: acc.type, currency: acc.currency });
+    }
+  );
+
+  server.registerTool(
+    "get_accounts",
+    {
+      title: "Accounts & net worth",
+      description:
+        "All accounts with computed balances (latest snapshot + tracked flows) and total net worth in the base currency.",
+      inputSchema: {},
+    },
+    async () => {
+      const user = await getUser(userId);
+      const accounts = await db.account.findMany({ where: { userId }, orderBy: { name: "asc" } });
+      const today = parseDate(todayIn(user.timezone));
+      const out = [];
+      let netWorth = 0;
+      for (const a of accounts) {
+        const b = await computeBalance(a);
+        const { converted } = await convert(b.balance, b.currency, user.baseCurrency, today);
+        netWorth += converted;
+        out.push({
+          name: a.name,
+          type: a.type,
+          currency: b.currency,
+          balance: b.balance,
+          balance_base: converted,
+          anchored_at: b.anchoredAt,
+        });
+      }
+      return text({
+        base_currency: user.baseCurrency,
+        net_worth: round2(netWorth),
+        accounts: out,
+        hint: out.some((a) => !a.anchored_at)
+          ? "Accounts without a snapshot show tracked flows only. Anchor real balances with log_balance."
+          : undefined,
+      });
+    }
+  );
+
+  server.registerTool(
+    "log_transfer",
+    {
+      title: "Log transfer",
+      description:
+        "Move money between OWN accounts: card to brokerage, cash withdrawal, currency exchange. Never counted as spending or income.",
+      inputSchema: {
+        amount: z.number().positive().describe("Amount leaving the source account."),
+        currency: currencySchema.optional().describe("Default: source account currency."),
+        from_account: z.string(),
+        to_account: z.string(),
+        received_amount: z.number().positive().optional().describe("Amount arriving, for cross-currency transfers."),
+        received_currency: currencySchema.optional(),
+        note: z.string().optional(),
+        date: dateSchema.optional(),
+      },
+    },
+    async ({ amount, currency, from_account, to_account, received_amount, received_currency, note, date }) => {
+      const user = await getUser(userId);
+      const from = await resolveAccount(userId, from_account);
+      const to = await resolveAccount(userId, to_account);
+      if (from.id === to.id) throw new Error("from_account and to_account must differ.");
+      const cur = (currency ?? from.currency ?? user.baseCurrency).toUpperCase();
+      const dateStr = date ?? todayIn(user.timezone);
+      const occurredAt = parseDate(dateStr);
+      const fx = await convert(amount, cur, user.baseCurrency, occurredAt);
+      const tx = await db.transaction.create({
+        data: {
+          userId,
+          accountId: from.id,
+          type: "transfer",
+          amount,
+          currency: cur,
+          amountBase: fx.converted,
+          fxRate: fx.rate,
+          note,
+          occurredAt,
+          counterAccountId: to.id,
+          counterAmount: received_amount,
+          counterCurrency: received_currency?.toUpperCase() ?? (received_amount ? (to.currency ?? undefined) : undefined),
+        },
+      });
+      logEvent("logged", userId, { type: "transfer" });
+      return text({
+        id: tx.id,
+        transfer: `${from.name} -> ${to.name}`,
+        date: dateStr,
+        sent: { amount, currency: cur },
+        received: received_amount ? { amount: received_amount, currency: tx.counterCurrency } : undefined,
+      });
+    }
+  );
+
+  server.registerTool(
+    "log_balance",
+    {
+      title: "Log balance snapshot",
+      description:
+        "Anchor an account's REAL balance at end of a date (from the bank app). Balances are then snapshot + later flows.",
+      inputSchema: {
+        account: z.string(),
+        amount: z.number().describe("Actual balance shown by the bank/broker."),
+        currency: currencySchema.optional().describe("Default: account currency."),
+        date: dateSchema.optional().describe("Balance as of end of this date. Default: today."),
+      },
+    },
+    async ({ account, amount, currency, date }) => {
+      const user = await getUser(userId);
+      const acc = await resolveAccount(userId, account);
+      const cur = (currency ?? acc.currency ?? user.baseCurrency).toUpperCase();
+      const asOf = parseDate(date ?? todayIn(user.timezone));
+      if (!acc.currency) await db.account.update({ where: { id: acc.id }, data: { currency: cur } });
+      await db.balanceSnapshot.upsert({
+        where: { accountId_asOf: { accountId: acc.id, asOf } },
+        update: { amount, currency: cur },
+        create: { userId, accountId: acc.id, amount, currency: cur, asOf },
+      });
+      return text({ ok: true, account: acc.name, balance: amount, currency: cur, as_of: asOf.toISOString().slice(0, 10) });
+    }
+  );
+
+  server.registerTool(
+    "import_transactions",
+    {
+      title: "Bulk import",
+      description:
+        "Import parsed bank-statement rows (one statement/month per call). Dedupes against existing records, coerces unknown categories to 'other', and reconciles against the statement total. Sign convention: negative amount = money out, positive = money in.",
+      inputSchema: {
+        account: z.string().optional().describe("Target account name. Default: Manual."),
+        statement_total: z
+          .number()
+          .optional()
+          .describe("Signed sum of ALL rows in the source statement, for reconciliation."),
+        transactions: z
+          .array(
+            z.object({
+              date: dateSchema,
+              amount: z.number().describe("Signed: negative = expense/out, positive = income/in."),
+              currency: currencySchema.optional(),
+              type: z.enum(["expense", "income", "transfer"]).optional().describe("Override sign-based detection."),
+              category: z.string().optional(),
+              merchant: z.string().optional(),
+              note: z.string().optional(),
+              external_id: z.string().optional().describe("Bank transaction reference, best dedup key."),
+            })
+          )
+          .min(1)
+          .max(500),
+      },
+    },
+    async ({ account, statement_total, transactions }) => {
+      const user = await getUser(userId);
+      const acc = await resolveAccount(userId, account);
+      let imported = 0;
+      let duplicates = 0;
+      let coerced = 0;
+      let rowsSum = 0;
+
+      const normalize = (s?: string | null) => (s ?? "").toLowerCase().replace(/[^\p{L}\p{N}]/gu, "");
+
+      for (const row of transactions) {
+        rowsSum += row.amount;
+        const cur = (row.currency ?? acc.currency ?? user.baseCurrency).toUpperCase();
+        const occurredAt = parseDate(row.date);
+        const type: TxType = row.type ?? (row.amount < 0 ? "expense" : "income");
+        const amountAbs = round2(Math.abs(row.amount));
+
+        if (row.external_id) {
+          const byExt = await db.transaction.findFirst({
+            where: { accountId: acc.id, externalId: row.external_id },
+          });
+          if (byExt) {
+            duplicates++;
+            continue;
+          }
+        }
+        const windowStart = new Date(occurredAt.getTime() - 2 * 86_400_000);
+        const windowEnd = new Date(occurredAt.getTime() + 2 * 86_400_000);
+        const candidates = await db.transaction.findMany({
+          where: { userId, accountId: acc.id, currency: cur, occurredAt: { gte: windowStart, lte: windowEnd } },
+        });
+        const rm = normalize(row.merchant);
+        const isDup = candidates.some((c) => {
+          if (Math.abs(Math.abs(Number(c.amount)) - amountAbs) > 0.009) return false;
+          const cm = normalize(c.merchant);
+          if (rm && cm) return cm.includes(rm) || rm.includes(cm);
+          // no merchant info to compare: only exact same day counts as duplicate (conservative)
+          return c.occurredAt.getTime() === occurredAt.getTime();
+        });
+        if (isDup) {
+          duplicates++;
+          continue;
+        }
+
+        let category = row.category;
+        if (type !== "transfer") {
+          if (!category || !ALL_CATEGORIES.has(category)) {
+            if (category) coerced++;
+            category = "other";
+          }
+        }
+
+        const fx = await convert(amountAbs, cur, user.baseCurrency, occurredAt);
+        await db.transaction.create({
+          data: {
+            userId,
+            accountId: acc.id,
+            type,
+            amount: amountAbs,
+            currency: cur,
+            amountBase: fx.converted,
+            fxRate: fx.rate,
+            categoryKey: type === "transfer" ? null : category,
+            merchant: row.merchant,
+            note: row.note,
+            occurredAt,
+            source: "bank",
+            externalId: row.external_id,
+          },
+        });
+        imported++;
+      }
+
+      rowsSum = round2(rowsSum);
+      const diff = statement_total !== undefined ? round2(statement_total - rowsSum) : undefined;
+      logEvent("bank_imported", userId, { imported, duplicates });
+      return text({
+        account: acc.name,
+        imported,
+        duplicates_skipped: duplicates,
+        unknown_categories_coerced_to_other: coerced,
+        rows_sum: rowsSum,
+        statement_total,
+        reconciliation:
+          statement_total === undefined ? "not_checked" : Math.abs(diff!) < 0.01 ? "ok" : `MISMATCH by ${diff}`,
+      });
+    }
   );
 
   server.registerTool(

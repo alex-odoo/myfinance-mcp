@@ -49,8 +49,9 @@ model Account {
   externalId String?
   currency   String? @db.Char(3)
 
-  user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user         User              @relation(fields: [userId], references: [id], onDelete: Cascade)
   transactions Transaction[]
+  snapshots    BalanceSnapshot[]
 
   @@unique([userId, name])
   @@map("accounts")
@@ -66,23 +67,26 @@ model Category {
 }
 
 model Transaction {
-  id          String   @id @default(uuid()) @db.Uuid
-  userId      String   @db.Uuid
-  accountId   String   @db.Uuid
-  type        TxType
-  amount      Decimal  @db.Decimal(14, 2) // original; negative expense = refund
-  currency    String   @db.Char(3)
-  amountBase  Decimal  @db.Decimal(14, 2) // in user's base currency, frozen at occurredAt
-  fxRate      Decimal  @db.Decimal(18, 8) // amountBase / amount
-  categoryKey String?
-  merchant    String?
-  note        String?
-  items       Json? // receipt line items [{name, qty?, price?}]
-  occurredAt  DateTime
-  source      TxSource @default(manual)
-  externalId  String? // bank idempotency (M2)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id              String   @id @default(uuid()) @db.Uuid
+  userId          String   @db.Uuid
+  accountId       String   @db.Uuid
+  type            TxType
+  amount          Decimal  @db.Decimal(14, 2) // original; negative expense = refund
+  currency        String   @db.Char(3)
+  amountBase      Decimal  @db.Decimal(14, 2) // in user's base currency, frozen at occurredAt
+  fxRate          Decimal  @db.Decimal(18, 8) // amountBase / amount
+  categoryKey     String?
+  merchant        String?
+  note            String?
+  items           Json? // receipt line items [{name, qty?, price?}]
+  occurredAt      DateTime
+  source          TxSource @default(manual)
+  externalId      String? // bank/import idempotency
+  counterAccountId String? @db.Uuid // transfer destination (own account)
+  counterAmount   Decimal? @db.Decimal(14, 2) // received amount for cross-currency transfers
+  counterCurrency String?  @db.Char(3)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
 
   user     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
   account  Account   @relation(fields: [accountId], references: [id], onDelete: Cascade)
@@ -105,6 +109,21 @@ model Budget {
 
   @@unique([userId, categoryKey])
   @@map("budgets")
+}
+
+model BalanceSnapshot {
+  id        String   @id @default(uuid()) @db.Uuid
+  userId    String   @db.Uuid
+  accountId String   @db.Uuid
+  amount    Decimal  @db.Decimal(14, 2) // balance at END of asOf date, in `currency`
+  currency  String   @db.Char(3)
+  asOf      DateTime @db.Date
+  createdAt DateTime @default(now())
+
+  account Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@unique([accountId, asOf])
+  @@map("balance_snapshots")
 }
 
 model FxRate {
