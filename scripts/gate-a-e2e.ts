@@ -214,6 +214,26 @@ async function main(): Promise<void> {
   const toolNames = (list.json?.result?.tools ?? []).map((t: any) => t.name);
   ok("tools/list has ping", toolNames.includes("ping"), JSON.stringify(toolNames));
 
+  // 11b. MCP Apps: tool _meta links + UI resource served
+  const sumTool = (list.json?.result?.tools ?? []).find((t: any) => t.name === "get_summary");
+  ok(
+    "get_summary linked to dashboard UI",
+    sumTool?._meta?.ui?.resourceUri === "ui://financemcp/dashboard",
+    JSON.stringify(sumTool?._meta)
+  );
+  const uiRes = await mcpCall(tokens.access_token, {
+    jsonrpc: "2.0",
+    id: 21,
+    method: "resources/read",
+    params: { uri: "ui://financemcp/dashboard" },
+  });
+  const uiContent = uiRes.json?.result?.contents?.[0];
+  ok(
+    "dashboard resource serves HTML",
+    uiContent?.mimeType === "text/html;profile=mcp-app" && String(uiContent?.text).includes("ui/notifications/tool-result"),
+    JSON.stringify({ mime: uiContent?.mimeType, len: String(uiContent?.text).length })
+  );
+
   // 12. tools/call ping
   const call = await mcpCall(tokens.access_token, {
     jsonrpc: "2.0",

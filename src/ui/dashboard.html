@@ -1,0 +1,204 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<style>
+  :root {
+    --surface: #fcfcfb; --ink: #0b0b0b; --ink-2: #52514e; --muted: #898781;
+    --grid: #e1e0d9; --s1: #2a78d6; --s2: #1baf7a; --critical: #d03b3b;
+    --tile: #f4f3f0;
+  }
+  [data-theme="dark"] {
+    --surface: #1a1a19; --ink: #ffffff; --ink-2: #c3c2b7; --muted: #898781;
+    --grid: #2c2c2a; --s1: #3987e5; --s2: #199e70; --critical: #d03b3b;
+    --tile: #242423;
+  }
+  * { box-sizing: border-box; margin: 0; }
+  body {
+    font: 13px/1.45 -apple-system, system-ui, "Segoe UI", sans-serif;
+    background: var(--surface); color: var(--ink); padding: 14px 16px;
+  }
+  h2 { font-size: 14px; font-weight: 650; margin-bottom: 2px; }
+  .sub { color: var(--ink-2); font-size: 12px; margin-bottom: 12px; }
+  .tiles { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 14px; }
+  .tile { background: var(--tile); border-radius: 10px; padding: 10px 14px; min-width: 108px; flex: 1; }
+  .tile .v { font-size: 19px; font-weight: 700; letter-spacing: -0.02em; }
+  .tile .v.neg { color: var(--critical); }
+  .tile .k { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; margin-top: 2px; }
+  .row { display: grid; grid-template-columns: minmax(84px, 30%) 1fr auto; gap: 10px; align-items: center; padding: 5px 0; }
+  .row .lbl { color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .row .val { color: var(--ink); font-variant-numeric: tabular-nums; text-align: right; white-space: nowrap; }
+  .track { background: var(--grid); border-radius: 4px; height: 10px; position: relative; overflow: hidden; }
+  .fill { position: absolute; inset: 0 auto 0 0; border-radius: 4px; background: var(--s1); min-width: 2px; }
+  .fill.over { background: var(--critical); }
+  .over-flag { color: var(--critical); font-weight: 650; }
+  .chart { display: flex; gap: 10px; align-items: flex-end; height: 150px; margin: 14px 0 4px; border-bottom: 1px solid var(--grid); padding-bottom: 0; }
+  .mgroup { flex: 1; display: flex; gap: 2px; align-items: flex-end; height: 100%; position: relative; cursor: default; }
+  .bar { flex: 1; border-radius: 4px 4px 0 0; min-height: 2px; }
+  .bar.e { background: var(--s1); } .bar.i { background: var(--s2); }
+  .xlabels { display: flex; gap: 10px; margin-top: 4px; }
+  .xlabels div { flex: 1; text-align: center; color: var(--muted); font-size: 11px; }
+  .legend { display: flex; gap: 14px; margin-top: 10px; color: var(--ink-2); font-size: 12px; }
+  .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 5px; vertical-align: -1px; }
+  .tip { position: fixed; pointer-events: none; background: var(--ink); color: var(--surface);
+         border-radius: 6px; padding: 6px 9px; font-size: 12px; opacity: 0; transition: opacity .12s; z-index: 5; white-space: nowrap; }
+  details { margin-top: 12px; color: var(--ink-2); }
+  summary { cursor: pointer; font-size: 12px; color: var(--muted); }
+  table { border-collapse: collapse; margin-top: 8px; width: 100%; font-size: 12px; }
+  td, th { text-align: left; padding: 3px 10px 3px 0; border-bottom: 1px solid var(--grid); font-variant-numeric: tabular-nums; }
+  th { color: var(--muted); font-weight: 500; }
+</style>
+</head>
+<body>
+<div id="root" class="viz-root"></div>
+<div class="tip" id="tip"></div>
+<script>
+(function () {
+  "use strict";
+  var nextId = 1, pending = {}, payload = null;
+
+  function request(method, params) {
+    return new Promise(function (resolve) {
+      var id = nextId++;
+      pending[id] = resolve;
+      parent.postMessage({ jsonrpc: "2.0", id: id, method: method, params: params || {} }, "*");
+    });
+  }
+  function notify(method, params) {
+    parent.postMessage({ jsonrpc: "2.0", method: method, params: params || {} }, "*");
+  }
+
+  function applyTheme(ctx) {
+    var theme = ctx && ctx.theme;
+    if (!theme) theme = matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+    document.documentElement.setAttribute("data-theme", theme);
+  }
+
+  function fmt(n, cur) {
+    if (typeof n !== "number") return "";
+    try {
+      return new Intl.NumberFormat("en", { style: "currency", currency: cur || "EUR", maximumFractionDigits: Math.abs(n) >= 1000 ? 0 : 2 }).format(n);
+    } catch (e) { return n.toFixed(2) + " " + (cur || ""); }
+  }
+  function esc(s) { return String(s == null ? "" : s).replace(/[&<>"]/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]; }); }
+
+  function tile(v, k, cur, signed) {
+    var neg = signed && v < 0;
+    return '<div class="tile"><div class="v' + (neg ? " neg" : "") + '">' + fmt(v, cur) + '</div><div class="k">' + esc(k) + "</div></div>";
+  }
+
+  function renderBudgets(p) {
+    var cur = p.base_currency, h = "<h2>Budgets</h2><div class='sub'>" + esc(p.month || "") + "</div>";
+    var overall = (p.budgets || []).filter(function (b) { return b.budget === "overall"; })[0];
+    if (overall) h += '<div class="tiles">' + tile(overall.spent, "spent", cur) + tile(overall.left, "left", cur, true) + "</div>";
+    h += (p.budgets || []).map(function (b) {
+      var pct = Math.min(100, b.used_pct || 0);
+      return '<div class="row"><div class="lbl">' + esc(b.budget) + '</div>' +
+        '<div class="track"><div class="fill' + (b.over ? " over" : "") + '" style="width:' + pct + '%"></div></div>' +
+        '<div class="val">' + fmt(b.spent, cur) + " / " + fmt(b.cap, cur) + (b.over ? ' <span class="over-flag">&#9650; over</span>' : "") + "</div></div>";
+    }).join("");
+    return h;
+  }
+
+  function renderTrends(p) {
+    var cur = p.base_currency, months = p.months || [];
+    var max = 1;
+    months.forEach(function (m) { max = Math.max(max, m.expense || 0, m.income || 0); });
+    var h = "<h2>Monthly trend</h2><div class='sub'>" + esc(p.category === "all" ? "expense vs income" : p.category) + "</div>";
+    h += '<div class="chart">' + months.map(function (m, idx) {
+      var he = Math.round((m.expense || 0) / max * 100), hi = Math.round((m.income || 0) / max * 100);
+      return '<div class="mgroup" data-i="' + idx + '"><div class="bar e" style="height:' + he + '%"></div><div class="bar i" style="height:' + hi + '%"></div></div>';
+    }).join("") + "</div>";
+    h += '<div class="xlabels">' + months.map(function (m) { return "<div>" + esc(String(m.month).slice(2)) + "</div>"; }).join("") + "</div>";
+    h += '<div class="legend"><span><span class="dot" style="background:var(--s1)"></span>Expense</span>' +
+         '<span><span class="dot" style="background:var(--s2)"></span>Income</span></div>';
+    h += "<details><summary>View as table</summary><table><tr><th>Month</th><th>Expense</th><th>Income</th></tr>" +
+      months.map(function (m) { return "<tr><td>" + esc(m.month) + "</td><td>" + fmt(m.expense, cur) + "</td><td>" + fmt(m.income, cur) + "</td></tr>"; }).join("") +
+      "</table></details>";
+    return h;
+  }
+
+  function renderSummary(p) {
+    var cur = p.base_currency;
+    var h = "<h2>Summary</h2><div class='sub'>" + esc(p.period || "") + " &middot; by " + esc(p.expense_by || "category") + "</div>";
+    h += '<div class="tiles">' + tile(p.total_expense, "spent", cur) + tile(p.total_income, "income", cur) + tile(p.net, "net", cur, true) + "</div>";
+    var groups = p.groups || [], max = 1;
+    groups.forEach(function (g) { max = Math.max(max, g.total || 0); });
+    h += groups.slice(0, 12).map(function (g) {
+      return '<div class="row"><div class="lbl">' + esc(g.key) + '</div>' +
+        '<div class="track"><div class="fill" style="width:' + Math.round((g.total || 0) / max * 100) + '%"></div></div>' +
+        '<div class="val">' + fmt(g.total, cur) + ' <span style="color:var(--muted)">' + (g.share_pct || 0) + "%</span></div></div>";
+    }).join("");
+    if (groups.length > 12) h += '<div class="sub" style="margin-top:6px">+' + (groups.length - 12) + " more</div>";
+    return h;
+  }
+
+  function renderAccounts(p) {
+    var h = "<h2>Accounts</h2><div class='sub'>net worth in " + esc(p.base_currency) + "</div>";
+    h += '<div class="tiles">' + tile(p.net_worth, "net worth", p.base_currency, true) + "</div><div class='tiles'>";
+    h += (p.accounts || []).map(function (a) {
+      return '<div class="tile"><div class="v' + (a.balance < 0 ? " neg" : "") + '">' + fmt(a.balance, a.currency) + '</div><div class="k">' +
+        esc(a.name) + " &middot; " + esc(a.type) + (a.anchored_at ? "" : " &middot; flows only") + "</div></div>";
+    }).join("");
+    return h + "</div>";
+  }
+
+  function render() {
+    if (!payload) return;
+    var root = document.getElementById("root"), h;
+    if (payload.budgets) h = renderBudgets(payload);
+    else if (payload.months) h = renderTrends(payload);
+    else if (payload.groups) h = renderSummary(payload);
+    else if (payload.accounts) h = renderAccounts(payload);
+    else h = "<div class='sub'>Nothing to show yet.</div>";
+    root.innerHTML = h;
+    wireTooltips();
+    requestAnimationFrame(function () {
+      notify("ui/notifications/size-changed", { width: document.body.scrollWidth, height: document.body.scrollHeight + 8 });
+    });
+  }
+
+  function wireTooltips() {
+    var tip = document.getElementById("tip");
+    Array.prototype.forEach.call(document.querySelectorAll(".mgroup"), function (g) {
+      g.addEventListener("mousemove", function (ev) {
+        var m = (payload.months || [])[Number(g.getAttribute("data-i"))];
+        if (!m) return;
+        tip.innerHTML = esc(m.month) + " &middot; out " + fmt(m.expense, payload.base_currency) + " &middot; in " + fmt(m.income, payload.base_currency);
+        tip.style.opacity = "1";
+        tip.style.left = Math.min(ev.clientX + 12, innerWidth - tip.offsetWidth - 8) + "px";
+        tip.style.top = (ev.clientY - 34) + "px";
+      });
+      g.addEventListener("mouseleave", function () { tip.style.opacity = "0"; });
+    });
+  }
+
+  window.addEventListener("message", function (ev) {
+    var m = ev.data;
+    if (!m || m.jsonrpc !== "2.0") return;
+    if (m.id != null && pending[m.id]) {
+      pending[m.id](m.result);
+      delete pending[m.id];
+      return;
+    }
+    if (m.method === "ui/notifications/tool-result") {
+      var res = (m.params && (m.params.result || m.params)) || {};
+      try {
+        payload = res.structuredContent || JSON.parse(((res.content || [])[0] || {}).text || "{}");
+      } catch (e) { payload = null; }
+      render();
+    } else if (m.method === "ui/notifications/host-context-changed") {
+      applyTheme(m.params || {});
+      render();
+    }
+  });
+
+  applyTheme(null);
+  request("ui/initialize", {}).then(function (res) {
+    if (res && res.hostContext) applyTheme(res.hostContext);
+    notify("ui/notifications/initialized", {});
+  });
+})();
+</script>
+</body>
+</html>

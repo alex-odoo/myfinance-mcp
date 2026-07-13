@@ -5,6 +5,7 @@ import { convert, round2 } from "./fx";
 import { EXPENSE_CATEGORIES, INCOME_CATEGORIES } from "./categories";
 import { resolveAccount, computeBalance, ACCOUNT_TYPES } from "./accounts";
 import { SERVER_VERSION } from "./version";
+import { DASHBOARD_TOOL_META } from "./ui";
 import type { TxType } from "./generated/prisma/enums";
 
 const ALL_CATEGORIES = new Set<string>([...EXPENSE_CATEGORIES, ...INCOME_CATEGORIES]);
@@ -197,6 +198,7 @@ export function registerFinanceTools(server: McpServer, userId: string): void {
   server.registerTool(
     "get_accounts",
     {
+      _meta: DASHBOARD_TOOL_META,
       title: "Accounts & net worth",
       description:
         "All accounts with computed balances (latest snapshot + tracked flows) and total net worth in the base currency.",
@@ -434,6 +436,7 @@ export function registerFinanceTools(server: McpServer, userId: string): void {
   server.registerTool(
     "get_summary",
     {
+      _meta: DASHBOARD_TOOL_META,
       title: "Spending summary",
       description:
         "Totals for a period, computed server-side in the user's base currency. Answers 'how much did I spend on X in July'.",
@@ -520,6 +523,7 @@ export function registerFinanceTools(server: McpServer, userId: string): void {
         },
         orderBy: { occurredAt: "desc" },
         take: limit ?? 20,
+        include: { account: { select: { name: true } } },
       });
       return text({
         base_currency: user.baseCurrency,
@@ -534,6 +538,7 @@ export function registerFinanceTools(server: McpServer, userId: string): void {
           category: t.categoryKey,
           merchant: t.merchant ?? undefined,
           note: t.note ?? undefined,
+          account: t.account.name,
           source: t.source,
         })),
       });
@@ -603,6 +608,7 @@ export function registerFinanceTools(server: McpServer, userId: string): void {
   server.registerTool(
     "get_trends",
     {
+      _meta: DASHBOARD_TOOL_META,
       title: "Monthly trends",
       description: "Month-over-month expense/income dynamics, optionally for one category.",
       inputSchema: {
@@ -673,6 +679,7 @@ export function registerFinanceTools(server: McpServer, userId: string): void {
   server.registerTool(
     "get_budget_progress",
     {
+      _meta: DASHBOARD_TOOL_META,
       title: "Budget progress",
       description: "Current month: spent vs cap for every budget.",
       inputSchema: {},
