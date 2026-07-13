@@ -25,13 +25,13 @@ echo "==> Rsync code to $SERVER:$REMOTE_DIR"
 rsync -az --delete \
   -e "ssh -i $SSH_KEY" \
   --exclude '.git' --exclude 'node_modules' --exclude 'state' --exclude 'state-e2e' \
-  --exclude '.env' \
+  --exclude '.env' --exclude 'app.env' \
   ./ "$SERVER:$REMOTE_DIR/"
 
 echo "==> Rebuild + restart container"
 ssh -i "$SSH_KEY" "$SERVER" "set -e
   cd $REMOTE_DIR
-  test -f .env || { echo 'FATAL: $REMOTE_DIR/.env missing (bootstrap first)'; exit 1; }
+  test -f app.env || { echo 'FATAL: $REMOTE_DIR/app.env missing (bootstrap first)'; exit 1; }
   docker compose build --quiet
   docker compose up -d
 "

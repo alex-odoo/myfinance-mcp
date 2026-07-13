@@ -1,5 +1,6 @@
 node_modules/
 state/
 .env
+app.env
 *.log
 .DS_Store
