@@ -320,7 +320,7 @@ export function registerFinanceTools(server: McpServer, userId: string): void {
     {
       title: "Bulk import",
       description:
-        "Import bank-statement / statement-screenshot rows in bulk. ALWAYS send the ENTIRE statement as ONE call with the full transactions array (up to 500 rows) - never split into chunks, never log rows one-by-one via log_expense. Safe to re-run: every row is keyed by external_id (or a server-derived stable key) and re-imports are skipped; a hand-logged twin is merged into the bank row instead of duplicating; repeated purchases (same merchant and amount on different days, or twice the same day) import normally. The response lists each skipped or merged row with a reason. Unknown categories become 'other'. Pass statement_total to get a reconciliation check. Sign convention: negative amount = money out, positive = money in.",
+        "Import bank-statement / statement-screenshot rows in bulk. ALWAYS send the ENTIRE statement as ONE call with the full transactions array (up to 500 rows) - never split into chunks, never log rows one-by-one via log_expense. If one statement truly cannot fit in a single call, EVERY row of EVERY chunk must carry external_id (bank reference; or the statement row number, e.g. 'r017') - rows without external_id are keyed by amount+date+occurrence WITHIN one call, so identical rows arriving in different calls are indistinguishable from re-imports. Safe to re-run: keyed rows are skipped, a hand-logged twin is merged into the bank row instead of duplicating, and repeated purchases (same merchant and amount on different days, or twice the same day) import normally. Unknown categories become 'other'. Pass statement_total to get a reconciliation check. Sign convention: negative amount = money out, positive = money in.",
       inputSchema: {
         account: z.string().optional().describe("Target account name. Default: Manual."),
         statement_total: z
@@ -345,6 +345,10 @@ export function registerFinanceTools(server: McpServer, userId: string): void {
                 .string()
                 .optional()
                 .describe("Bank transaction reference - the strongest dedup key. If absent, the server derives a stable key from amount + date + position."),
+              force: z
+                .boolean()
+                .optional()
+                .describe("Import even if a similar row exists. Use ONLY when a previous response's hint asked to re-send this row. Exact external_id duplicates are still skipped."),
             })
           )
           .min(1)
@@ -359,6 +363,7 @@ export function registerFinanceTools(server: McpServer, userId: string): void {
       let merged = 0;
       let coerced = 0;
       let rowsSum = 0;
+      let noIdSkips = 0;
       const skipped: Array<{ row: number; reason: string; existing_id: string }> = [];
 
       const normalize = (s?: string | null) => (s ?? "").toLowerCase().replace(/[^\p{L}\p{N}]/gu, "");
@@ -393,6 +398,7 @@ export function registerFinanceTools(server: McpServer, userId: string): void {
           where: { accountId: acc.id, externalId },
         });
         if (byExt) {
+          if (!row.external_id) noIdSkips++;
           skipped.push({
             row: idx + 1,
             reason: row.external_id ? "external_id_exists" : "already_imported",
@@ -405,17 +411,20 @@ export function registerFinanceTools(server: McpServer, userId: string): void {
         const windowEnd = new Date(occurredAt.getTime() + 2 * 86_400_000);
         // Manual/receipt entries live on the Manual account by default: match them
         // user-wide or hand-logged rows duplicate on import. Bank rows only compete
-        // within the same account.
-        const candidates = (
-          await db.transaction.findMany({
-            where: {
-              userId,
-              currency: cur,
-              occurredAt: { gte: windowStart, lte: windowEnd },
-              OR: [{ source: { in: ["manual", "receipt"] } }, { accountId: acc.id, source: "bank" }],
-            },
-          })
-        ).filter(
+        // within the same account. force = the hint-driven recovery path: the model
+        // confirmed this row is new, so only the exact-key check above applies.
+        const candidates = row.force
+          ? []
+          : (
+              await db.transaction.findMany({
+                where: {
+                  userId,
+                  currency: cur,
+                  occurredAt: { gte: windowStart, lte: windowEnd },
+                  OR: [{ source: { in: ["manual", "receipt"] } }, { accountId: acc.id, source: "bank" }],
+                },
+              })
+            ).filter(
           (c) =>
             !createdIds.has(c.id) &&
             !usedCandidates.has(c.id) &&
@@ -442,6 +451,7 @@ export function registerFinanceTools(server: McpServer, userId: string): void {
           if (!dryRun && !isRealId(bankTwin.externalId)) {
             await db.transaction.update({ where: { id: bankTwin.id }, data: { externalId } });
           }
+          if (!row.external_id) noIdSkips++;
           skipped.push({ row: idx + 1, reason: "already_imported", existing_id: bankTwin.id });
           continue;
         }
@@ -518,6 +528,11 @@ export function registerFinanceTools(server: McpServer, userId: string): void {
           statement_total === undefined ? "not_checked" : Math.abs(diff!) < 0.01 ? "ok" : `MISMATCH by ${diff}`,
         ...(skipped.length > 0 ? { skipped: skipped.slice(0, SKIP_REPORT_CAP) } : {}),
         ...(skipped.length > SKIP_REPORT_CAP ? { skipped_not_listed: skipped.length - SKIP_REPORT_CAP } : {}),
+        ...(noIdSkips > 0
+          ? {
+              hint: `${noIdSkips} row(s) without external_id matched existing records by derived key (amount+date+occurrence). If they are re-imported rows, this is correct. If they are NEW rows (e.g. this call is a continuation chunk of a statement with several identical rows), re-send ONLY those rows with an explicit external_id (bank reference or statement row number) and force=true.`,
+            }
+          : {}),
       });
     }
   );

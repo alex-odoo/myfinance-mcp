@@ -520,6 +520,47 @@ async function main(): Promise<void> {
       JSON.stringify({ up2, up3 })
     );
 
+    // 12i. Chunk-collision recovery protocol: a second call with an identical no-id row
+    // looks like a re-import (skipped + hint); re-sending with external_id + force recovers it.
+    const chunkA = payload(
+      await call("import_transactions", {
+        account: "Revolut",
+        transactions: [{ date: "2026-03-06", amount: -33, currency: "RON", merchant: "Shop A" }],
+      })
+    );
+    const chunkB = payload(
+      await call("import_transactions", {
+        account: "Revolut",
+        transactions: [{ date: "2026-03-06", amount: -33, currency: "RON", merchant: "Shop B" }],
+      })
+    );
+    ok(
+      "continuation chunk without ids collides and returns hint",
+      chunkA.imported === 1 && chunkB.imported === 0 && typeof chunkB.hint === "string" && chunkB.hint.includes("force"),
+      JSON.stringify(chunkB)
+    );
+    const chunkRetry = payload(
+      await call("import_transactions", {
+        account: "Revolut",
+        transactions: [
+          { date: "2026-03-06", amount: -33, currency: "RON", merchant: "Shop B", external_id: "e2e-chunk-b1", force: true },
+        ],
+      })
+    );
+    const chunkReplay = payload(
+      await call("import_transactions", {
+        account: "Revolut",
+        transactions: [
+          { date: "2026-03-06", amount: -33, currency: "RON", merchant: "Shop B", external_id: "e2e-chunk-b1", force: true },
+        ],
+      })
+    );
+    ok(
+      "forced re-send recovers the row, stays idempotent",
+      chunkRetry.imported === 1 && chunkReplay.imported === 0 && chunkReplay.skipped?.[0]?.reason === "external_id_exists",
+      JSON.stringify({ chunkRetry, chunkReplay })
+    );
+
     // 12f. Bulk delete
     const listForDel = payload(await call("get_transactions", { limit: 3 }));
     const delIds = listForDel.transactions.map((t: any) => t.id);
