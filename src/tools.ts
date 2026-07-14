@@ -22,6 +22,8 @@ const dateSchema = z
   .regex(DATE_RE)
   .describe("Date as YYYY-MM-DD. Omit for today.");
 
+const entitySchema = z.enum(["personal", "business"]);
+
 const itemsSchema = z
   .array(
     z.object({
@@ -59,6 +61,7 @@ interface LogInput {
   date?: string;
   items?: unknown;
   account?: string;
+  entity?: "personal" | "business";
 }
 
 async function logTransaction(userId: string, type: TxType, input: LogInput) {
@@ -85,6 +88,7 @@ async function logTransaction(userId: string, type: TxType, input: LogInput) {
       items: input.items ? (input.items as object) : undefined,
       occurredAt,
       source: input.items ? "receipt" : "manual",
+      entity: input.entity ?? account.entity,
     },
   });
   logEvent("logged", userId, { type, source: tx.source });
@@ -98,6 +102,7 @@ async function logTransaction(userId: string, type: TxType, input: LogInput) {
     base_currency: user.baseCurrency,
     category: tx.categoryKey,
     merchant: tx.merchant ?? undefined,
+    entity: tx.entity,
   };
 }
 
@@ -148,6 +153,9 @@ export function registerFinanceTools(server: McpServer, userId: string): void {
         date: dateSchema.optional(),
         items: itemsSchema.optional(),
         account: z.string().optional().describe("Account name (see get_accounts). Default: Manual."),
+        entity: entitySchema
+          .optional()
+          .describe("Override the account's default scope, e.g. a personal dinner paid with the business card."),
       },
     },
     async (input) => text(await logTransaction(userId, "expense", input as LogInput))
@@ -166,6 +174,9 @@ export function registerFinanceTools(server: McpServer, userId: string): void {
         note: z.string().optional(),
         date: dateSchema.optional(),
         account: z.string().optional().describe("Account name (see get_accounts). Default: Manual."),
+        entity: entitySchema
+          .optional()
+          .describe("Override the account's default scope, e.g. a client payment landing on a personal card."),
       },
     },
     async (input) => text(await logTransaction(userId, "income", input as LogInput))
@@ -181,17 +192,20 @@ export function registerFinanceTools(server: McpServer, userId: string): void {
         name: z.string().min(1).max(40).describe("Short name, e.g. 'Revolut', 'Mono black', 'IBKR'."),
         type: z.enum(ACCOUNT_TYPES).describe("cash | bank | card | investment"),
         currency: currencySchema.describe("Main currency of this account."),
+        entity: entitySchema
+          .optional()
+          .describe("Whose money: personal (default) or business. Sets the default scope for this account's transactions."),
       },
     },
-    async ({ name, type, currency }) => {
+    async ({ name, type, currency, entity }) => {
       const existing = await db.account.findMany({ where: { userId } });
       if (existing.some((a) => a.name.toLowerCase() === name.toLowerCase())) {
         throw new Error(`Account "${name}" already exists.`);
       }
       const acc = await db.account.create({
-        data: { userId, name, type, currency: currency.toUpperCase() },
+        data: { userId, name, type, currency: currency.toUpperCase(), entity: entity ?? "personal" },
       });
-      return text({ ok: true, account: acc.name, type: acc.type, currency: acc.currency });
+      return text({ ok: true, account: acc.name, type: acc.type, currency: acc.currency, entity: acc.entity });
     }
   );
 
@@ -201,22 +215,30 @@ export function registerFinanceTools(server: McpServer, userId: string): void {
       _meta: DASHBOARD_TOOL_META,
       title: "Accounts & net worth",
       description:
-        "All accounts with computed balances (latest snapshot + tracked flows) and total net worth in the base currency.",
-      inputSchema: {},
+        "All accounts with computed balances (latest snapshot + tracked flows) and total net worth in the base currency. Optionally filtered to personal or business scope.",
+      inputSchema: {
+        entity: entitySchema.optional().describe("Only accounts of this scope. Omit for all."),
+      },
     },
-    async () => {
+    async ({ entity }) => {
       const user = await getUser(userId);
-      const accounts = await db.account.findMany({ where: { userId }, orderBy: { name: "asc" } });
+      const accounts = await db.account.findMany({
+        where: { userId, ...(entity ? { entity } : {}) },
+        orderBy: { name: "asc" },
+      });
       const today = parseDate(todayIn(user.timezone));
       const out = [];
       let netWorth = 0;
+      const byEntity: Record<string, number> = {};
       for (const a of accounts) {
         const b = await computeBalance(a);
         const { converted } = await convert(b.balance, b.currency, user.baseCurrency, today);
         netWorth += converted;
+        byEntity[a.entity] = round2((byEntity[a.entity] ?? 0) + converted);
         out.push({
           name: a.name,
           type: a.type,
+          entity: a.entity,
           currency: b.currency,
           balance: b.balance,
           balance_base: converted,
@@ -226,6 +248,7 @@ export function registerFinanceTools(server: McpServer, userId: string): void {
       return text({
         base_currency: user.baseCurrency,
         net_worth: round2(netWorth),
+        ...(entity ? {} : Object.keys(byEntity).length > 1 ? { net_worth_by_entity: byEntity } : {}),
         accounts: out,
         hint: out.some((a) => !a.anchored_at)
           ? "Accounts without a snapshot show tracked flows only. Anchor real balances with log_balance."
@@ -271,6 +294,7 @@ export function registerFinanceTools(server: McpServer, userId: string): void {
           fxRate: fx.rate,
           note,
           occurredAt,
+          entity: from.entity,
           counterAccountId: to.id,
           counterAmount: received_amount,
           counterCurrency: received_currency?.toUpperCase() ?? (received_amount ? (to.currency ?? undefined) : undefined),
@@ -349,6 +373,9 @@ export function registerFinanceTools(server: McpServer, userId: string): void {
                 .boolean()
                 .optional()
                 .describe("Import even if a similar row exists. Use ONLY when a previous response's hint asked to re-send this row. Exact external_id duplicates are still skipped."),
+              entity: entitySchema
+                .optional()
+                .describe("Scope override for THIS row, e.g. a personal dinner inside a business-account statement. Default: the account's entity."),
             })
           )
           .min(1)
@@ -471,7 +498,7 @@ export function registerFinanceTools(server: McpServer, userId: string): void {
           if (!dryRun) {
             await db.transaction.update({
               where: { id: manualTwin.id },
-              data: { accountId: acc.id, externalId },
+              data: { accountId: acc.id, externalId, entity: row.entity ?? acc.entity },
             });
           }
           merged++;
@@ -504,6 +531,7 @@ export function registerFinanceTools(server: McpServer, userId: string): void {
               occurredAt,
               source: "bank",
               externalId,
+              entity: row.entity ?? acc.entity,
             },
           });
           createdIds.add(created.id);
@@ -549,13 +577,19 @@ export function registerFinanceTools(server: McpServer, userId: string): void {
         from: dateSchema.optional(),
         to: dateSchema.optional(),
         group_by: z.enum(["category", "merchant", "month"]).optional().describe("Default: category."),
+        entity: entitySchema.optional().describe("personal or business only. Omit for everything."),
       },
     },
-    async ({ period, from, to, group_by }) => {
+    async ({ period, from, to, group_by, entity }) => {
       const user = await getUser(userId);
       const range = periodRange(period, from, to);
       const rows = await db.transaction.findMany({
-        where: { userId, occurredAt: { gte: range.start, lt: range.end }, type: { not: "transfer" } },
+        where: {
+          userId,
+          occurredAt: { gte: range.start, lt: range.end },
+          type: { not: "transfer" },
+          ...(entity ? { entity } : {}),
+        },
         select: { type: true, amountBase: true, categoryKey: true, merchant: true, occurredAt: true },
       });
       const expenses = rows.filter((r) => r.type === "expense");
@@ -575,6 +609,7 @@ export function registerFinanceTools(server: McpServer, userId: string): void {
       logEvent("summary_run", userId, { period: range.label });
       return text({
         period: range.label,
+        entity: entity ?? "all",
         base_currency: user.baseCurrency,
         total_expense: totalExpense,
         total_income: totalIncome,
@@ -603,14 +638,16 @@ export function registerFinanceTools(server: McpServer, userId: string): void {
         category: z.string().optional(),
         merchant: z.string().optional().describe("Substring match, case-insensitive."),
         query: z.string().optional().describe("Searches note and merchant."),
+        entity: entitySchema.optional().describe("personal or business only."),
         limit: z.number().int().min(1).max(100).optional().describe("Default 20."),
       },
     },
-    async ({ from, to, category, merchant, query, limit }) => {
+    async ({ from, to, category, merchant, query, entity, limit }) => {
       const user = await getUser(userId);
       const txs = await db.transaction.findMany({
         where: {
           userId,
+          ...(entity ? { entity } : {}),
           ...(from || to
             ? { occurredAt: { ...(from ? { gte: parseDate(from) } : {}), ...(to ? { lt: new Date(parseDate(to).getTime() + 86_400_000) } : {}) } }
             : {}),
@@ -644,6 +681,7 @@ export function registerFinanceTools(server: McpServer, userId: string): void {
           note: t.note ?? undefined,
           account: t.account.name,
           source: t.source,
+          entity: t.entity,
         })),
       });
     }
@@ -653,7 +691,7 @@ export function registerFinanceTools(server: McpServer, userId: string): void {
     "update_transaction",
     {
       title: "Update transaction",
-      description: "Fix a logged record: wrong category, amount, merchant, or date.",
+      description: "Fix a logged record: wrong category, amount, merchant, date, or personal/business scope.",
       inputSchema: {
         id: z.string().uuid(),
         amount: z.number().optional(),
@@ -662,9 +700,10 @@ export function registerFinanceTools(server: McpServer, userId: string): void {
         merchant: z.string().optional(),
         note: z.string().optional(),
         date: dateSchema.optional(),
+        entity: entitySchema.optional(),
       },
     },
-    async ({ id, amount, currency, category, merchant, note, date }) => {
+    async ({ id, amount, currency, category, merchant, note, date, entity }) => {
       const user = await getUser(userId);
       const existing = await db.transaction.findFirst({ where: { id, userId } });
       if (!existing) throw new Error("Transaction not found.");
@@ -689,9 +728,10 @@ export function registerFinanceTools(server: McpServer, userId: string): void {
           ...(category ? { categoryKey: category } : {}),
           ...(merchant !== undefined ? { merchant } : {}),
           ...(note !== undefined ? { note } : {}),
+          ...(entity ? { entity } : {}),
         },
       });
-      return text({ updated: true, id: tx.id, amount_base: Number(tx.amountBase), category: tx.categoryKey });
+      return text({ updated: true, id: tx.id, amount_base: Number(tx.amountBase), category: tx.categoryKey, entity: tx.entity });
     }
   );
 
@@ -731,13 +771,14 @@ export function registerFinanceTools(server: McpServer, userId: string): void {
     {
       _meta: DASHBOARD_TOOL_META,
       title: "Monthly trends",
-      description: "Month-over-month expense/income dynamics, optionally for one category.",
+      description: "Month-over-month expense/income dynamics, optionally for one category or scope.",
       inputSchema: {
         months: z.number().int().min(2).max(24).optional().describe("How many months back. Default 6."),
         category: z.enum(EXPENSE_CATEGORIES).optional(),
+        entity: entitySchema.optional().describe("personal or business only. Omit for everything."),
       },
     },
-    async ({ months, category }) => {
+    async ({ months, category, entity }) => {
       const user = await getUser(userId);
       const n = months ?? 6;
       const now = new Date();
@@ -748,6 +789,7 @@ export function registerFinanceTools(server: McpServer, userId: string): void {
           occurredAt: { gte: start },
           type: { not: "transfer" },
           ...(category ? { categoryKey: category, type: "expense" } : {}),
+          ...(entity ? { entity } : {}),
         },
         select: { type: true, amountBase: true, occurredAt: true },
       });
@@ -771,7 +813,7 @@ export function registerFinanceTools(server: McpServer, userId: string): void {
           expense_change_pct: prev && prev > 0 ? round2(((v.expense - prev) / prev) * 100) : null,
         };
       });
-      return text({ base_currency: user.baseCurrency, category: category ?? "all", months: series });
+      return text({ base_currency: user.baseCurrency, category: category ?? "all", entity: entity ?? "all", months: series });
     }
   );
 
@@ -802,7 +844,7 @@ export function registerFinanceTools(server: McpServer, userId: string): void {
     {
       _meta: DASHBOARD_TOOL_META,
       title: "Budget progress",
-      description: "Current month: spent vs cap for every budget.",
+      description: "Current month: spent vs cap for every budget. Budgets track PERSONAL spending only; business-scope transactions never count against them.",
       inputSchema: {},
     },
     async () => {
@@ -811,7 +853,7 @@ export function registerFinanceTools(server: McpServer, userId: string): void {
       if (budgets.length === 0) return text({ budgets: [], hint: "No budgets set. Use set_budget." });
       const range = periodRange(undefined);
       const rows = await db.transaction.findMany({
-        where: { userId, type: "expense", occurredAt: { gte: range.start, lt: range.end } },
+        where: { userId, type: "expense", entity: "personal", occurredAt: { gte: range.start, lt: range.end } },
         select: { amountBase: true, categoryKey: true },
       });
       const total = rows.reduce((s, r) => s + Number(r.amountBase), 0);
@@ -892,14 +934,15 @@ export function registerFinanceTools(server: McpServer, userId: string): void {
     "export_transactions",
     {
       title: "Export CSV",
-      description: "All transactions as CSV (GDPR portability).",
-      inputSchema: { from: dateSchema.optional(), to: dateSchema.optional() },
+      description: "All transactions as CSV (GDPR portability). Optionally one scope only, e.g. business rows for the accountant.",
+      inputSchema: { from: dateSchema.optional(), to: dateSchema.optional(), entity: entitySchema.optional() },
     },
-    async ({ from, to }) => {
+    async ({ from, to, entity }) => {
       const user = await getUser(userId);
       const txs = await db.transaction.findMany({
         where: {
           userId,
+          ...(entity ? { entity } : {}),
           ...(from || to
             ? { occurredAt: { ...(from ? { gte: parseDate(from) } : {}), ...(to ? { lt: new Date(parseDate(to).getTime() + 86_400_000) } : {}) } }
             : {}),
@@ -910,7 +953,7 @@ export function registerFinanceTools(server: McpServer, userId: string): void {
         const s = String(v ?? "");
         return /[",\n]/.test(s) ? `"${s.replaceAll('"', '""')}"` : s;
       };
-      const header = "date,type,amount,currency,amount_base,base_currency,category,merchant,note,source";
+      const header = "date,type,amount,currency,amount_base,base_currency,category,merchant,note,source,entity";
       const lines = txs.map((t) =>
         [
           t.occurredAt.toISOString().slice(0, 10),
@@ -923,6 +966,7 @@ export function registerFinanceTools(server: McpServer, userId: string): void {
           esc(t.merchant),
           esc(t.note),
           t.source,
+          t.entity,
         ].join(",")
       );
       return { content: [{ type: "text" as const, text: [header, ...lines].join("\n") }] };

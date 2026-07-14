@@ -48,6 +48,7 @@ model Account {
   provider   String? // monobank | ... (M2)
   externalId String?
   currency   String? @db.Char(3)
+  entity     String  @default("personal") // personal | business - default scope for new transactions
 
   user         User              @relation(fields: [userId], references: [id], onDelete: Cascade)
   transactions Transaction[]
@@ -82,6 +83,7 @@ model Transaction {
   occurredAt      DateTime
   source          TxSource @default(manual)
   externalId      String? // bank/import idempotency
+  entity          String   @default("personal") // personal | business, resolved from account at write time
   counterAccountId String? @db.Uuid // transfer destination (own account)
   counterAmount   Decimal? @db.Decimal(14, 2) // received amount for cross-currency transfers
   counterCurrency String?  @db.Char(3)

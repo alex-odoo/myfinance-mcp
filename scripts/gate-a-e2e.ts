@@ -561,6 +561,83 @@ async function main(): Promise<void> {
       JSON.stringify({ chunkRetry, chunkReplay })
     );
 
+    // 12j. Entity scope: personal vs business separation
+    const biz = payload(await call("create_account", { name: "BizBank", type: "bank", currency: "EUR", entity: "business" }));
+    ok("create_account with entity", biz.ok === true && biz.entity === "business", JSON.stringify(biz));
+
+    const bizExp = payload(
+      await call("log_expense", { amount: 200, account: "BizBank", category: "business", merchant: "Hetzner", date: "2026-02-10" })
+    );
+    ok("expense inherits account entity", bizExp.entity === "business", JSON.stringify(bizExp));
+
+    const persOnBiz = payload(
+      await call("log_expense", {
+        amount: 40,
+        account: "BizBank",
+        category: "restaurants",
+        merchant: "Dinner Bali",
+        date: "2026-02-10",
+        entity: "personal",
+      })
+    );
+    ok("entity override on business card", persOnBiz.entity === "personal", JSON.stringify(persOnBiz));
+
+    const impEnt = payload(
+      await call("import_transactions", {
+        account: "BizBank",
+        transactions: [
+          { date: "2026-02-11", amount: -60, merchant: "AWS", category: "business" },
+          { date: "2026-02-11", amount: -25, merchant: "Vienna Shopping", category: "clothing", entity: "personal" },
+        ],
+      })
+    );
+    ok("import: rows scoped by account + override", impEnt.imported === 2, JSON.stringify(impEnt));
+
+    const sumBiz = payload(await call("get_summary", { period: "2026-02", entity: "business" }));
+    const sumPers = payload(await call("get_summary", { period: "2026-02", entity: "personal" }));
+    const sumAll = payload(await call("get_summary", { period: "2026-02" }));
+    ok(
+      "summary splits by entity",
+      sumBiz.total_expense === 260 && sumPers.total_expense === 65 && sumAll.total_expense === 325,
+      JSON.stringify({ business: sumBiz.total_expense, personal: sumPers.total_expense, all: sumAll.total_expense })
+    );
+
+    const txPers = payload(await call("get_transactions", { from: "2026-02-01", to: "2026-02-28", entity: "personal" }));
+    ok(
+      "transactions filtered by entity",
+      txPers.count === 2 && txPers.transactions.every((t: any) => t.entity === "personal"),
+      JSON.stringify(txPers.count)
+    );
+
+    const flip = payload(await call("update_transaction", { id: bizExp.id, entity: "personal" }));
+    const sumPers2 = payload(await call("get_summary", { period: "2026-02", entity: "personal" }));
+    ok("update_transaction reclassifies scope", flip.entity === "personal" && sumPers2.total_expense === 265, JSON.stringify(sumPers2.total_expense));
+
+    const progBefore = payload(await call("get_budget_progress", {}));
+    await call("log_expense", { amount: 999, account: "BizBank", category: "business", merchant: "Big Biz Spend" });
+    const progAfter = payload(await call("get_budget_progress", {}));
+    ok(
+      "business spend never hits budgets",
+      JSON.stringify(progBefore.budgets) === JSON.stringify(progAfter.budgets),
+      JSON.stringify({ before: progBefore.budgets?.[0], after: progAfter.budgets?.[0] })
+    );
+
+    const accsEnt = payload(await call("get_accounts", {}));
+    const bizAcc = accsEnt.accounts.find((a: any) => a.name === "BizBank");
+    ok(
+      "accounts expose entity + split net worth",
+      bizAcc.entity === "business" && !!accsEnt.net_worth_by_entity,
+      JSON.stringify(accsEnt.net_worth_by_entity)
+    );
+
+    const csvEnt = await call("export_transactions", { entity: "business" });
+    const csvText: string = csvEnt.json?.result?.content?.[0]?.text ?? "";
+    ok(
+      "export filters by entity + column",
+      csvText.split("\n")[0]!.endsWith(",entity") && csvText.includes(",business") && !csvText.includes(",personal"),
+      csvText.split("\n")[0]
+    );
+
     // 12f. Bulk delete
     const listForDel = payload(await call("get_transactions", { limit: 3 }));
     const delIds = listForDel.transactions.map((t: any) => t.id);
