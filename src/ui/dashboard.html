@@ -22,7 +22,7 @@
   .sub { color: var(--ink-2); font-size: 12px; margin-bottom: 12px; }
   .tiles { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 14px; }
   .tile { background: var(--tile); border-radius: 10px; padding: 10px 14px; min-width: 108px; flex: 1; }
-  .tile .v { font-size: 19px; font-weight: 700; letter-spacing: -0.02em; }
+  .tile .v { font-size: 19px; font-weight: 700; letter-spacing: -0.02em; white-space: nowrap; }
   .tile .v.neg { color: var(--critical); }
   .tile .k { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; margin-top: 2px; }
   .row { display: grid; grid-template-columns: minmax(84px, 30%) 1fr auto; gap: 10px; align-items: center; padding: 5px 0; }
@@ -137,8 +137,9 @@
     var h = "<h2>Accounts</h2><div class='sub'>net worth in " + esc(p.base_currency) + "</div>";
     h += '<div class="tiles">' + tile(p.net_worth, "net worth", p.base_currency, true) + "</div><div class='tiles'>";
     h += (p.accounts || []).map(function (a) {
+      var label = String(a.name).toLowerCase() === String(a.type).toLowerCase() ? esc(a.name) : esc(a.name) + " &middot; " + esc(a.type);
       return '<div class="tile"><div class="v' + (a.balance < 0 ? " neg" : "") + '">' + fmt(a.balance, a.currency) + '</div><div class="k">' +
-        esc(a.name) + " &middot; " + esc(a.type) + (a.anchored_at ? "" : " &middot; flows only") + "</div></div>";
+        label + (a.anchored_at ? "" : " &middot; flows only") + "</div></div>";
     }).join("");
     return h + "</div>";
   }
