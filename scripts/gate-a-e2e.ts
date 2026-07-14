@@ -383,7 +383,20 @@ async function main(): Promise<void> {
         transactions: [{ date: today(), amount: -33.33, merchant: "ZARA ROMANIA SRL" }],
       })
     );
-    ok("import: manual twin on other account deduped", impCross.duplicates_skipped === 1 && impCross.imported === 0, JSON.stringify(impCross));
+    ok(
+      "import: manual twin on other account merged",
+      impCross.duplicates_skipped === 1 &&
+        impCross.imported === 0 &&
+        impCross.manual_twins_merged === 1 &&
+        impCross.skipped?.[0]?.reason === "manual_twin_merged",
+      JSON.stringify(impCross)
+    );
+    const zaraAfter = payload(await call("get_transactions", { merchant: "Zara" }));
+    ok(
+      "merged twin moved to bank account, category kept",
+      zaraAfter.transactions[0].account === "Revolut" && zaraAfter.transactions[0].category === "clothing",
+      JSON.stringify(zaraAfter.transactions[0])
+    );
 
     // 12g. Dedup precision: recurring merchants, same-day twins, external_id authority
     const lime = payload(
@@ -434,8 +447,78 @@ async function main(): Promise<void> {
         ],
       })
     );
-    ok("import: manual twin absorbs ONE bank row only", impCoffee.duplicates_skipped === 1 && impCoffee.imported === 1, JSON.stringify(impCoffee));
+    ok(
+      "import: manual twin absorbs ONE bank row only",
+      impCoffee.duplicates_skipped === 1 && impCoffee.imported === 1 && impCoffee.manual_twins_merged === 1,
+      JSON.stringify(impCoffee)
+    );
     void coffeeManual;
+
+    // 12h. Dry run, synthetic-key idempotency under merchant drift, real-id upgrade
+    const dryRows = [
+      { date: "2026-04-28", amount: -77.7, currency: "RON", merchant: "AAA Market" },
+      { date: "2026-04-28", amount: -77.7, currency: "RON", merchant: "AAA Market" },
+    ];
+    const dry = payload(await call("import_transactions", { account: "Revolut", dry_run: true, transactions: dryRows }));
+    ok("dry_run: previews without writing", dry.dry_run === true && dry.imported === 2, JSON.stringify(dry));
+    const wet = payload(await call("import_transactions", { account: "Revolut", transactions: dryRows }));
+    ok("dry_run wrote nothing: same rows import for real", wet.imported === 2 && wet.duplicates_skipped === 0, JSON.stringify(wet));
+    const drift = payload(
+      await call("import_transactions", {
+        account: "Revolut",
+        transactions: [
+          { date: "2026-04-28", amount: -77.7, currency: "RON", merchant: "AAA MARKET SRL CLUJ 042" },
+          { date: "2026-04-28", amount: -77.7, currency: "RON", merchant: "aaa market" },
+        ],
+      })
+    );
+    ok(
+      "re-import with drifted merchant wording deduped",
+      drift.imported === 0 && drift.duplicates_skipped === 2 && drift.skipped?.length === 2,
+      JSON.stringify(drift)
+    );
+
+    const leg1 = payload(
+      await call("import_transactions", {
+        account: "Revolut",
+        transactions: [{ date: "2026-05-02", amount: -55, currency: "RON", merchant: "Carrefour", external_id: "e2e-leg-1" }],
+      })
+    );
+    const leg2 = payload(
+      await call("import_transactions", {
+        account: "Revolut",
+        transactions: [{ date: "2026-05-02", amount: -55, currency: "RON", merchant: "CARREFOUR ROMANIA SA" }],
+      })
+    );
+    ok(
+      "row without id matches existing bank row same day+amount",
+      leg1.imported === 1 && leg2.imported === 0 && leg2.skipped?.[0]?.reason === "already_imported",
+      JSON.stringify(leg2)
+    );
+
+    const up1 = payload(
+      await call("import_transactions", {
+        account: "Revolut",
+        transactions: [{ date: "2026-05-03", amount: -21.4, currency: "RON", merchant: "Mega Image" }],
+      })
+    );
+    const up2 = payload(
+      await call("import_transactions", {
+        account: "Revolut",
+        transactions: [{ date: "2026-05-03", amount: -21.4, currency: "RON", merchant: "Mega Image", external_id: "e2e-up-1" }],
+      })
+    );
+    const up3 = payload(
+      await call("import_transactions", {
+        account: "Revolut",
+        transactions: [{ date: "2026-05-03", amount: -21.4, currency: "RON", merchant: "Mega Image", external_id: "e2e-up-1" }],
+      })
+    );
+    ok(
+      "bank row upgraded from synthetic to real external_id",
+      up1.imported === 1 && up2.duplicates_skipped === 1 && up3.skipped?.[0]?.reason === "external_id_exists",
+      JSON.stringify({ up2, up3 })
+    );
 
     // 12f. Bulk delete
     const listForDel = payload(await call("get_transactions", { limit: 3 }));

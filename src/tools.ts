@@ -320,13 +320,17 @@ export function registerFinanceTools(server: McpServer, userId: string): void {
     {
       title: "Bulk import",
       description:
-        "Import bank-statement / statement-screenshot rows in bulk. ALWAYS send the ENTIRE statement as ONE call with the full transactions array (up to 500 rows) - never split into chunks, never log rows one-by-one via log_expense. Safe to re-run: a row is skipped only if its external_id is already stored, if an identical bank row (same date + amount + merchant) already exists on the account, or if a hand-logged twin exists within 2 days. Rows with distinct external_ids are never merged; repeated purchases (same merchant and amount on different days) import normally. Unknown categories become 'other'. Pass statement_total to get a reconciliation check. Sign convention: negative amount = money out, positive = money in.",
+        "Import bank-statement / statement-screenshot rows in bulk. ALWAYS send the ENTIRE statement as ONE call with the full transactions array (up to 500 rows) - never split into chunks, never log rows one-by-one via log_expense. Safe to re-run: every row is keyed by external_id (or a server-derived stable key) and re-imports are skipped; a hand-logged twin is merged into the bank row instead of duplicating; repeated purchases (same merchant and amount on different days, or twice the same day) import normally. The response lists each skipped or merged row with a reason. Unknown categories become 'other'. Pass statement_total to get a reconciliation check. Sign convention: negative amount = money out, positive = money in.",
       inputSchema: {
         account: z.string().optional().describe("Target account name. Default: Manual."),
         statement_total: z
           .number()
           .optional()
           .describe("Signed sum of ALL rows in the source statement, for reconciliation."),
+        dry_run: z
+          .boolean()
+          .optional()
+          .describe("Preview only: report what would be imported/skipped/merged without writing anything."),
         transactions: z
           .array(
             z.object({
@@ -337,79 +341,131 @@ export function registerFinanceTools(server: McpServer, userId: string): void {
               category: z.string().optional(),
               merchant: z.string().optional(),
               note: z.string().optional(),
-              external_id: z.string().optional().describe("Bank transaction reference, best dedup key."),
+              external_id: z
+                .string()
+                .optional()
+                .describe("Bank transaction reference - the strongest dedup key. If absent, the server derives a stable key from amount + date + position."),
             })
           )
           .min(1)
           .max(500),
       },
     },
-    async ({ account, statement_total, transactions }) => {
+    async ({ account, statement_total, dry_run, transactions }) => {
       const user = await getUser(userId);
       const acc = await resolveAccount(userId, account);
+      const dryRun = dry_run === true;
       let imported = 0;
-      let duplicates = 0;
+      let merged = 0;
       let coerced = 0;
       let rowsSum = 0;
+      const skipped: Array<{ row: number; reason: string; existing_id: string }> = [];
 
       const normalize = (s?: string | null) => (s ?? "").toLowerCase().replace(/[^\p{L}\p{N}]/gu, "");
+      const SYN_PREFIX = "fmcp:";
+      const isRealId = (id?: string | null): id is string => !!id && !id.startsWith(SYN_PREFIX);
 
       // The statement itself is the source of truth: rows inserted by THIS call are
       // never dedup candidates (two identical rides on one day = two real rides),
       // and each pre-existing row can absorb at most one statement row.
       const createdIds = new Set<string>();
       const usedCandidates = new Set<string>();
+      // Rows without a bank reference get a deterministic synthetic key
+      // (amount + currency + date + occurrence counter, YNAB pattern), so re-importing
+      // the same statement stays idempotent even when merchant wording drifts
+      // between extractions. Counted per row SENT, not per row imported.
+      const occurrence = new Map<string, number>();
 
-      for (const row of transactions) {
+      for (const [idx, row] of transactions.entries()) {
         rowsSum += row.amount;
         const cur = (row.currency ?? acc.currency ?? user.baseCurrency).toUpperCase();
         const occurredAt = parseDate(row.date);
         const type: TxType = row.type ?? (row.amount < 0 ? "expense" : "income");
-        const amountAbs = round2(Math.abs(row.amount));
+        const amountSigned = round2(row.amount);
+        const amountAbs = Math.abs(amountSigned);
 
-        if (row.external_id) {
-          const byExt = await db.transaction.findFirst({
-            where: { accountId: acc.id, externalId: row.external_id },
+        const occKey = `${amountSigned}:${cur}:${row.date}`;
+        const occ = (occurrence.get(occKey) ?? 0) + 1;
+        occurrence.set(occKey, occ);
+        const externalId = row.external_id ?? `${SYN_PREFIX}${occKey}:${occ}`;
+
+        const byExt = await db.transaction.findFirst({
+          where: { accountId: acc.id, externalId },
+        });
+        if (byExt) {
+          skipped.push({
+            row: idx + 1,
+            reason: row.external_id ? "external_id_exists" : "already_imported",
+            existing_id: byExt.id,
           });
-          if (byExt) {
-            duplicates++;
-            continue;
-          }
+          continue;
         }
+
         const windowStart = new Date(occurredAt.getTime() - 2 * 86_400_000);
         const windowEnd = new Date(occurredAt.getTime() + 2 * 86_400_000);
         // Manual/receipt entries live on the Manual account by default: match them
         // user-wide or hand-logged rows duplicate on import. Bank rows only compete
         // within the same account.
-        const candidates = await db.transaction.findMany({
-          where: {
-            userId,
-            currency: cur,
-            occurredAt: { gte: windowStart, lte: windowEnd },
-            OR: [{ source: { in: ["manual", "receipt"] } }, { accountId: acc.id, source: "bank" }],
-          },
-        });
+        const candidates = (
+          await db.transaction.findMany({
+            where: {
+              userId,
+              currency: cur,
+              occurredAt: { gte: windowStart, lte: windowEnd },
+              OR: [{ source: { in: ["manual", "receipt"] } }, { accountId: acc.id, source: "bank" }],
+            },
+          })
+        ).filter(
+          (c) =>
+            !createdIds.has(c.id) &&
+            !usedCandidates.has(c.id) &&
+            Math.abs(Math.abs(Number(c.amount)) - amountAbs) <= 0.009
+        );
         const rm = normalize(row.merchant);
-        const dup = candidates.find((c) => {
-          if (createdIds.has(c.id) || usedCandidates.has(c.id)) return false;
-          if (Math.abs(Math.abs(Number(c.amount)) - amountAbs) > 0.009) return false;
-          if (c.source === "bank") {
-            // Bank-vs-bank: only an exact re-import counts - same day AND same merchant.
-            // Distinct external_ids mean the bank says these are different transactions,
-            // no matter how similar they look.
-            if (row.external_id && c.externalId) return false;
-            if (c.occurredAt.getTime() !== occurredAt.getTime()) return false;
-            return normalize(c.merchant) === rm;
+
+        // Bank-vs-bank (checked first: exact evidence beats fuzzy): same day only.
+        // Two REAL bank references that differ mean distinct transactions no matter
+        // how similar the rows look. Same-merchant candidates are preferred, but
+        // merchant wording drifts between exports, so any remaining same-day
+        // same-amount bank row still counts as the re-imported twin.
+        const bankPool = candidates.filter(
+          (c) =>
+            c.source === "bank" &&
+            c.occurredAt.getTime() === occurredAt.getTime() &&
+            !(isRealId(row.external_id) && isRealId(c.externalId))
+        );
+        const bankTwin = bankPool.find((c) => normalize(c.merchant) === rm) ?? bankPool[0];
+        if (bankTwin) {
+          usedCandidates.add(bankTwin.id);
+          // Self-heal: stamp the dedup key on legacy/synthetic rows so the next
+          // re-run matches by key directly instead of by day+amount.
+          if (!dryRun && !isRealId(bankTwin.externalId)) {
+            await db.transaction.update({ where: { id: bankTwin.id }, data: { externalId } });
           }
-          // Hand-logged twin: fuzzy merchant within the +-2 day window
+          skipped.push({ row: idx + 1, reason: "already_imported", existing_id: bankTwin.id });
+          continue;
+        }
+
+        // Hand-logged twin (fuzzy merchant, +-2 days): merge instead of skip - the
+        // bank feed confirms the entry, so it moves to the real account and gains
+        // the dedup key. User-entered category/note/date stay untouched.
+        const manualTwin = candidates.find((c) => {
+          if (c.source === "bank") return false;
           const cm = normalize(c.merchant);
           if (rm && cm) return cm.includes(rm) || rm.includes(cm);
           // no merchant info to compare: only exact same day counts as duplicate (conservative)
           return c.occurredAt.getTime() === occurredAt.getTime();
         });
-        if (dup) {
-          usedCandidates.add(dup.id);
-          duplicates++;
+        if (manualTwin) {
+          usedCandidates.add(manualTwin.id);
+          if (!dryRun) {
+            await db.transaction.update({
+              where: { id: manualTwin.id },
+              data: { accountId: acc.id, externalId },
+            });
+          }
+          merged++;
+          skipped.push({ row: idx + 1, reason: "manual_twin_merged", existing_id: manualTwin.id });
           continue;
         }
 
@@ -421,40 +477,47 @@ export function registerFinanceTools(server: McpServer, userId: string): void {
           }
         }
 
-        const fx = await convert(amountAbs, cur, user.baseCurrency, occurredAt);
-        const created = await db.transaction.create({
-          data: {
-            userId,
-            accountId: acc.id,
-            type,
-            amount: amountAbs,
-            currency: cur,
-            amountBase: fx.converted,
-            fxRate: fx.rate,
-            categoryKey: type === "transfer" ? null : category,
-            merchant: row.merchant,
-            note: row.note,
-            occurredAt,
-            source: "bank",
-            externalId: row.external_id,
-          },
-        });
-        createdIds.add(created.id);
+        if (!dryRun) {
+          const fx = await convert(amountAbs, cur, user.baseCurrency, occurredAt);
+          const created = await db.transaction.create({
+            data: {
+              userId,
+              accountId: acc.id,
+              type,
+              amount: amountAbs,
+              currency: cur,
+              amountBase: fx.converted,
+              fxRate: fx.rate,
+              categoryKey: type === "transfer" ? null : category,
+              merchant: row.merchant,
+              note: row.note,
+              occurredAt,
+              source: "bank",
+              externalId,
+            },
+          });
+          createdIds.add(created.id);
+        }
         imported++;
       }
 
       rowsSum = round2(rowsSum);
       const diff = statement_total !== undefined ? round2(statement_total - rowsSum) : undefined;
-      logEvent("bank_imported", userId, { imported, duplicates });
+      logEvent("bank_imported", userId, { imported, duplicates: skipped.length, merged, dry_run: dryRun });
+      const SKIP_REPORT_CAP = 100;
       return text({
         account: acc.name,
+        ...(dryRun ? { dry_run: true } : {}),
         imported,
-        duplicates_skipped: duplicates,
+        duplicates_skipped: skipped.length,
+        manual_twins_merged: merged,
         unknown_categories_coerced_to_other: coerced,
         rows_sum: rowsSum,
         statement_total,
         reconciliation:
           statement_total === undefined ? "not_checked" : Math.abs(diff!) < 0.01 ? "ok" : `MISMATCH by ${diff}`,
+        ...(skipped.length > 0 ? { skipped: skipped.slice(0, SKIP_REPORT_CAP) } : {}),
+        ...(skipped.length > SKIP_REPORT_CAP ? { skipped_not_listed: skipped.length - SKIP_REPORT_CAP } : {}),
       });
     }
   );
