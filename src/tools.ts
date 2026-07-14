@@ -40,7 +40,7 @@ function text(payload: unknown) {
 
 async function getUser(userId: string) {
   const user = await db.user.findUnique({ where: { id: userId } });
-  if (!user) throw new Error("Account not found. Reconnect the FinanceMCP connector.");
+  if (!user) throw new Error("Account not found. Reconnect the MyFinance MCP connector.");
   return user;
 }
 
@@ -129,12 +129,12 @@ export function registerFinanceTools(server: McpServer, userId: string): void {
     "ping",
     {
       title: "Ping",
-      description: "Health check for the FinanceMCP connection.",
+      description: "Health check for the MyFinance MCP connection.",
       inputSchema: {},
     },
     async () => {
       const user = await getUser(userId);
-      return text({ ok: true, server: "financemcp", version: SERVER_VERSION, user: user.email, time: new Date().toISOString() });
+      return text({ ok: true, server: "myfinancemcp", version: SERVER_VERSION, user: user.email, time: new Date().toISOString() });
     }
   );
 

@@ -12,7 +12,7 @@ export function buildMcpServer(userId: string): McpServer {
     "dashboard",
     DASHBOARD_URI,
     {
-      description: "FinanceMCP dashboard: budgets, trends, summary, accounts",
+      description: "MyFinance MCP dashboard: budgets, trends, summary, accounts",
       mimeType: DASHBOARD_MIME,
       _meta: { ui: { prefersBorder: true } },
     },

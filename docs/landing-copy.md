@@ -1,7 +1,7 @@
 # MyFinance MCP - Landing Skeleton + Copy Draft v1
 
 > Domain: myfinance-mcp.com (purchase pending). Server URL: https://myfinance-mcp.com/mcp
-> Pattern source: nutrition-mcp.com teardown 2026-07-14 (full verdict in vault Projects/FinanceMCP.md Session Log).
+> Pattern source: nutrition-mcp.com teardown 2026-07-14 (full verdict in vault Projects/MyFinanceMCP.md Session Log).
 > Posture DECIDED: open source, MIT, free while in beta. No Patreon.
 > Site = static, no build step, served by nginx on the same origin as the MCP server (/ = landing, /mcp = server).
 > All copy below is final-draft quality but expects one review pass by Alex.

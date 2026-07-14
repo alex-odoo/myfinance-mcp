@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 
-export const DASHBOARD_URI = "ui://financemcp/dashboard";
+export const DASHBOARD_URI = "ui://myfinancemcp/dashboard";
 export const DASHBOARD_MIME = "text/html;profile=mcp-app";
 
 export const DASHBOARD_HTML = readFileSync(new URL("./ui/dashboard.html", import.meta.url), "utf8");

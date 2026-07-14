@@ -64,8 +64,8 @@ async function main(): Promise<void> {
         ...process.env,
         PORT: String(PORT),
         BASE_URL: BASE,
-        FINANCE_MCP_EMAIL: EMAIL,
-        FINANCE_MCP_PASSWORD_HASH: hash,
+        MYFINANCE_MCP_EMAIL: EMAIL,
+        MYFINANCE_MCP_PASSWORD_HASH: hash,
       },
       stdout: "pipe",
       stderr: "pipe",
@@ -210,7 +210,7 @@ async function main(): Promise<void> {
       clientInfo: { name: "gate-a-e2e", version: "1.0.0" },
     },
   });
-  ok("MCP initialize", init.status === 200 && init.json?.result?.serverInfo?.name === "financemcp", JSON.stringify(init.json));
+  ok("MCP initialize", init.status === 200 && init.json?.result?.serverInfo?.name === "myfinancemcp", JSON.stringify(init.json));
 
   // 11. tools/list
   const list = await mcpCall(tokens.access_token, { jsonrpc: "2.0", id: 2, method: "tools/list", params: {} });
@@ -221,14 +221,14 @@ async function main(): Promise<void> {
   const sumTool = (list.json?.result?.tools ?? []).find((t: any) => t.name === "get_summary");
   ok(
     "get_summary linked to dashboard UI",
-    sumTool?._meta?.ui?.resourceUri === "ui://financemcp/dashboard",
+    sumTool?._meta?.ui?.resourceUri === "ui://myfinancemcp/dashboard",
     JSON.stringify(sumTool?._meta)
   );
   const uiRes = await mcpCall(tokens.access_token, {
     jsonrpc: "2.0",
     id: 21,
     method: "resources/read",
-    params: { uri: "ui://financemcp/dashboard" },
+    params: { uri: "ui://myfinancemcp/dashboard" },
   });
   const uiContent = uiRes.json?.result?.contents?.[0];
   ok(

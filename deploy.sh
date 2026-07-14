@@ -5,7 +5,7 @@ set -euo pipefail
 
 SERVER="root@23.88.115.126"
 SSH_KEY="$HOME/.ssh/rteam_hetzner"
-REMOTE_DIR="/opt/finance-mcp"
+REMOTE_DIR="/opt/myfinance-mcp"
 DOMAIN="finance.rteam.agency"
 
 MSG="${1:?Usage: ./deploy.sh \"what changed\"}"

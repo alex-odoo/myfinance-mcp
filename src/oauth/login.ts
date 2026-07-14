@@ -14,7 +14,7 @@ export function loginPage(requestId: string, clientName?: string, error?: string
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex">
-<title>FinanceMCP - Sign in</title>
+<title>MyFinance MCP - Sign in</title>
 <style>
   body { font-family: -apple-system, system-ui, sans-serif; background: #f5f6f8; margin: 0;
          display: flex; align-items: center; justify-content: center; min-height: 100vh; }
@@ -33,7 +33,7 @@ export function loginPage(requestId: string, clientName?: string, error?: string
 </head>
 <body>
 <div class="card">
-  <h1>FinanceMCP</h1>
+  <h1>MyFinance MCP</h1>
   <p>Sign in to connect ${app} to your finances.</p>
   ${error ? `<div class="error">${escapeHtml(error)}</div>` : ""}
   ${

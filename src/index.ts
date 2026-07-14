@@ -39,7 +39,7 @@ app.use(
     provider,
     issuerUrl: new URL(config.baseUrl),
     resourceServerUrl: new URL(`${config.baseUrl}/mcp`),
-    resourceName: "FinanceMCP",
+    resourceName: "MyFinance MCP",
     scopesSupported: ["finance"],
   })
 );
@@ -84,9 +84,9 @@ app.get("/health", (_req, res) => {
 app.get("/", (_req, res) => {
   res
     .type("text/plain")
-    .send(`FinanceMCP - personal finance for your AI.\nMCP endpoint: ${config.baseUrl}/mcp\n`);
+    .send(`MyFinance MCP - personal finance for your AI.\nMCP endpoint: ${config.baseUrl}/mcp\n`);
 });
 
 app.listen(config.port, () => {
-  console.log(`[financemcp] ${SERVER_VERSION} listening on :${config.port}, issuer ${config.baseUrl}`);
+  console.log(`[myfinancemcp] ${SERVER_VERSION} listening on :${config.port}, issuer ${config.baseUrl}`);
 });
