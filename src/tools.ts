@@ -617,7 +617,8 @@ export function registerFinanceTools(server: McpServer, userId: string): void {
         transactions: rows.length,
         expense_by: group_by ?? "category",
         groups: [...groups.entries()]
-          .sort((a, b) => b[1] - a[1])
+          // months read as a timeline, categories/merchants as a ranking
+          .sort(group_by === "month" ? (a, b) => a[0].localeCompare(b[0]) : (a, b) => b[1] - a[1])
           .map(([k, v]) => ({
             key: k,
             total: round2(v),

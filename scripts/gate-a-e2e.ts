@@ -602,6 +602,14 @@ async function main(): Promise<void> {
       JSON.stringify({ business: sumBiz.total_expense, personal: sumPers.total_expense, all: sumAll.total_expense })
     );
 
+    const sumMon = payload(await call("get_summary", { from: "2026-02-01", to: "2099-01-01", group_by: "month" }));
+    const monthKeys = sumMon.groups.map((g: any) => g.key);
+    ok(
+      "summary by month is chronological",
+      monthKeys.length >= 2 && monthKeys.every((k: string, i: number) => i === 0 || k > monthKeys[i - 1]!),
+      JSON.stringify(monthKeys)
+    );
+
     const txPers = payload(await call("get_transactions", { from: "2026-02-01", to: "2026-02-28", entity: "personal" }));
     ok(
       "transactions filtered by entity",
