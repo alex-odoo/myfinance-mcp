@@ -385,6 +385,58 @@ async function main(): Promise<void> {
     );
     ok("import: manual twin on other account deduped", impCross.duplicates_skipped === 1 && impCross.imported === 0, JSON.stringify(impCross));
 
+    // 12g. Dedup precision: recurring merchants, same-day twins, external_id authority
+    const lime = payload(
+      await call("import_transactions", {
+        account: "Revolut",
+        transactions: [
+          { date: "2026-04-17", amount: -9.5, currency: "RON", merchant: "Lime Ride", category: "transport" },
+          { date: "2026-04-18", amount: -9.5, currency: "RON", merchant: "Lime Ride", category: "transport" },
+          { date: "2026-04-20", amount: -9.5, currency: "RON", merchant: "Lime Ride", category: "transport" },
+          { date: "2026-04-20", amount: -9.5, currency: "RON", merchant: "Lime Ride", category: "transport" },
+        ],
+      })
+    );
+    ok("import: recurring merchant+amount not deduped", lime.imported === 4 && lime.duplicates_skipped === 0, JSON.stringify(lime));
+
+    const limeReplay = payload(
+      await call("import_transactions", {
+        account: "Revolut",
+        transactions: [
+          { date: "2026-04-17", amount: -9.5, currency: "RON", merchant: "Lime Ride", category: "transport" },
+          { date: "2026-04-20", amount: -9.5, currency: "RON", merchant: "Lime Ride", category: "transport" },
+          { date: "2026-04-20", amount: -9.5, currency: "RON", merchant: "Lime Ride", category: "transport" },
+        ],
+      })
+    );
+    ok("import replay: exact bank rows deduped", limeReplay.imported === 0 && limeReplay.duplicates_skipped === 3, JSON.stringify(limeReplay));
+
+    const atm = payload(
+      await call("import_transactions", {
+        account: "Revolut",
+        transactions: [
+          { date: "2026-05-17", amount: -900, currency: "RON", merchant: "Cash withdrawal at Str. Vasile Alecsandri", type: "transfer", external_id: "e2e-atm-1" },
+          { date: "2026-05-18", amount: -900, currency: "RON", merchant: "Cash withdrawal at Str. Vasile Alecsandri", type: "transfer", external_id: "e2e-atm-2" },
+        ],
+      })
+    );
+    ok("import: distinct external_ids never merged", atm.imported === 2 && atm.duplicates_skipped === 0, JSON.stringify(atm));
+
+    const coffeeManual = payload(
+      await call("log_expense", { amount: 4.5, currency: "RON", category: "restaurants", merchant: "5 to go", date: "2026-04-25" })
+    );
+    const impCoffee = payload(
+      await call("import_transactions", {
+        account: "Revolut",
+        transactions: [
+          { date: "2026-04-25", amount: -4.5, currency: "RON", merchant: "5 TO GO SRL" },
+          { date: "2026-04-26", amount: -4.5, currency: "RON", merchant: "5 TO GO SRL" },
+        ],
+      })
+    );
+    ok("import: manual twin absorbs ONE bank row only", impCoffee.duplicates_skipped === 1 && impCoffee.imported === 1, JSON.stringify(impCoffee));
+    void coffeeManual;
+
     // 12f. Bulk delete
     const listForDel = payload(await call("get_transactions", { limit: 3 }));
     const delIds = listForDel.transactions.map((t: any) => t.id);

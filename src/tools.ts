@@ -320,7 +320,7 @@ export function registerFinanceTools(server: McpServer, userId: string): void {
     {
       title: "Bulk import",
       description:
-        "Import bank-statement / statement-screenshot rows in bulk. ALWAYS send the ENTIRE statement as ONE call with the full transactions array (up to 500 rows) - never split into chunks, never log rows one-by-one via log_expense. Safe to re-run: dedupes against existing records (by external_id, then amount+date+merchant). Unknown categories become 'other'. Pass statement_total to get a reconciliation check. Sign convention: negative amount = money out, positive = money in.",
+        "Import bank-statement / statement-screenshot rows in bulk. ALWAYS send the ENTIRE statement as ONE call with the full transactions array (up to 500 rows) - never split into chunks, never log rows one-by-one via log_expense. Safe to re-run: a row is skipped only if its external_id is already stored, if an identical bank row (same date + amount + merchant) already exists on the account, or if a hand-logged twin exists within 2 days. Rows with distinct external_ids are never merged; repeated purchases (same merchant and amount on different days) import normally. Unknown categories become 'other'. Pass statement_total to get a reconciliation check. Sign convention: negative amount = money out, positive = money in.",
       inputSchema: {
         account: z.string().optional().describe("Target account name. Default: Manual."),
         statement_total: z
@@ -354,6 +354,12 @@ export function registerFinanceTools(server: McpServer, userId: string): void {
 
       const normalize = (s?: string | null) => (s ?? "").toLowerCase().replace(/[^\p{L}\p{N}]/gu, "");
 
+      // The statement itself is the source of truth: rows inserted by THIS call are
+      // never dedup candidates (two identical rides on one day = two real rides),
+      // and each pre-existing row can absorb at most one statement row.
+      const createdIds = new Set<string>();
+      const usedCandidates = new Set<string>();
+
       for (const row of transactions) {
         rowsSum += row.amount;
         const cur = (row.currency ?? acc.currency ?? user.baseCurrency).toUpperCase();
@@ -372,25 +378,37 @@ export function registerFinanceTools(server: McpServer, userId: string): void {
         }
         const windowStart = new Date(occurredAt.getTime() - 2 * 86_400_000);
         const windowEnd = new Date(occurredAt.getTime() + 2 * 86_400_000);
-        // Same account for bank rows, but manual/receipt entries live on the Manual
-        // account by default: match them user-wide or hand-logged rows duplicate on import
+        // Manual/receipt entries live on the Manual account by default: match them
+        // user-wide or hand-logged rows duplicate on import. Bank rows only compete
+        // within the same account.
         const candidates = await db.transaction.findMany({
           where: {
             userId,
             currency: cur,
             occurredAt: { gte: windowStart, lte: windowEnd },
-            OR: [{ accountId: acc.id }, { source: { in: ["manual", "receipt"] } }],
+            OR: [{ source: { in: ["manual", "receipt"] } }, { accountId: acc.id, source: "bank" }],
           },
         });
         const rm = normalize(row.merchant);
-        const isDup = candidates.some((c) => {
+        const dup = candidates.find((c) => {
+          if (createdIds.has(c.id) || usedCandidates.has(c.id)) return false;
           if (Math.abs(Math.abs(Number(c.amount)) - amountAbs) > 0.009) return false;
+          if (c.source === "bank") {
+            // Bank-vs-bank: only an exact re-import counts - same day AND same merchant.
+            // Distinct external_ids mean the bank says these are different transactions,
+            // no matter how similar they look.
+            if (row.external_id && c.externalId) return false;
+            if (c.occurredAt.getTime() !== occurredAt.getTime()) return false;
+            return normalize(c.merchant) === rm;
+          }
+          // Hand-logged twin: fuzzy merchant within the +-2 day window
           const cm = normalize(c.merchant);
           if (rm && cm) return cm.includes(rm) || rm.includes(cm);
           // no merchant info to compare: only exact same day counts as duplicate (conservative)
           return c.occurredAt.getTime() === occurredAt.getTime();
         });
-        if (isDup) {
+        if (dup) {
+          usedCandidates.add(dup.id);
           duplicates++;
           continue;
         }
@@ -404,7 +422,7 @@ export function registerFinanceTools(server: McpServer, userId: string): void {
         }
 
         const fx = await convert(amountAbs, cur, user.baseCurrency, occurredAt);
-        await db.transaction.create({
+        const created = await db.transaction.create({
           data: {
             userId,
             accountId: acc.id,
@@ -421,6 +439,7 @@ export function registerFinanceTools(server: McpServer, userId: string): void {
             externalId: row.external_id,
           },
         });
+        createdIds.add(created.id);
         imported++;
       }
 
