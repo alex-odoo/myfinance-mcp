@@ -45,10 +45,15 @@
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
-html { scroll-behavior: smooth; }
+html { scroll-behavior: smooth; -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
 /* Safety net: nothing may cause sideways scroll on phones. `clip` (not `hidden`)
    does not create a scroll container, so the sticky header keeps working. */
 html, body { overflow-x: clip; }
+/* Anchor jumps must not bury the section title under the sticky header. */
+:root { --header-h: 64px; }
+[id] { scroll-margin-top: calc(var(--header-h) + 14px); }
+/* Touch: no gray tap flash, no double-tap-zoom delay on interactive elements. */
+a, button, summary { -webkit-tap-highlight-color: transparent; touch-action: manipulation; }
 body {
   background: var(--paper);
   color: var(--ink);
@@ -71,10 +76,12 @@ a:focus-visible, button:focus-visible, summary:focus-visible { outline: 2px soli
 header.site {
   border-bottom: 1px solid var(--rule);
   position: sticky; top: 0; z-index: 50;
+  background: var(--paper); /* solid fallback: older iOS without color-mix support */
   background: color-mix(in srgb, var(--paper) 88%, transparent);
+  -webkit-backdrop-filter: blur(10px);
   backdrop-filter: blur(10px);
 }
-.site-inner { display: flex; align-items: center; gap: 28px; height: 64px; }
+.site-inner { display: flex; align-items: center; gap: 28px; height: var(--header-h); }
 .logo { font-weight: 700; letter-spacing: -.01em; text-decoration: none; font-size: 17px; display: flex; align-items: center; gap: 10px; }
 .logo b { color: var(--accent); }
 
@@ -110,8 +117,9 @@ nav.main + .gh-link { margin-left: 0; }
 /* Phones: the header must fit without sideways scroll. Below ~480px the logo +
    GitHub + Connect no longer fit (intrinsic width ~456px), so GitHub folds into
    the footer (still on every page) and Connect stays as the primary CTA with a
-   comfortable tap size. */
+   comfortable tap size. Header goes compact (56px), app-like. */
 @media (max-width: 480px) {
+  :root { --header-h: 56px; }
   .wrap { padding: 0 18px; }
   .site-inner { gap: 12px; }
   .gh-link { display: none; }
@@ -119,8 +127,14 @@ nav.main + .gh-link { margin-left: 0; }
 }
 /* Roomier tap targets for the footer links on touch screens. */
 @media (max-width: 600px) {
-  .foot-inner { gap: 13px 22px; }
-  .foot-inner a { padding: 6px 0; }
+  .foot-inner { gap: 8px 22px; }
+  .foot-inner a { padding: 9px 0; }
+}
+/* Touch feedback where hover does not exist: instant, subtle. */
+@media (hover: none) {
+  .hd-cta:active, .gh-link:active, .btn-ghost:active { border-color: var(--accent); color: var(--accent); }
+  nav.main a:active, .foot-inner a:active, .crumbs a:active { color: var(--accent); }
+  .faq summary:active { color: var(--accent); }
 }
 
 /* ---------- hero ---------- */
@@ -294,6 +308,17 @@ h2 {
 .tab[aria-selected="true"] { background: var(--accent); color: var(--paper); }
 .panel { display: none; border: 1px solid var(--rule); border-radius: 14px; background: var(--surface); padding: 30px 32px; }
 .panel.on { display: block; }
+/* Phones: tabs become a full-width segmented control; cards trade oversized
+   padding for content width (32px sides eat ~20% of a 360px screen). */
+@media (max-width: 480px) {
+  .tabs { display: flex; width: 100%; }
+  .tab { flex: 1 1 0; padding: 12px 8px; font-size: 14.5px; text-align: center; }
+  .panel { padding: 22px 18px; }
+  .step { padding: 24px 20px 26px; }
+  .cmp-col { padding: 24px 20px 22px; }
+  .feat { padding: 22px 18px 24px; }
+  .demo-body { padding: 18px 14px 20px; }
+}
 .panel ol { padding-left: 22px; display: flex; flex-direction: column; gap: 9px; font-size: 16px; }
 .panel .warn-line {
   margin-top: 18px; border-left: 3px solid var(--warn); background: var(--warn-tint);
@@ -370,7 +395,8 @@ pre.code .srv-url { font-size: inherit; }
 
 /* alternatives subpages */
 .crumbs { font-family: var(--mono); font-size: 12.5px; color: var(--muted); margin-bottom: 34px; }
-.crumbs a { color: var(--muted); text-decoration: none; }
+/* Inflate the hit area without moving the text (negative-margin trick). */
+.crumbs a { color: var(--muted); text-decoration: none; display: inline-block; padding: 12px 6px; margin: -12px -6px; }
 .crumbs a:hover { color: var(--accent); }
 .alt-hero { padding: 64px 0 88px; }
 .alt-hero h1 { max-width: 17em; }
