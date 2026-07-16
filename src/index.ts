@@ -89,20 +89,37 @@ const STATS_CACHE_MS = 5 * 60 * 1000;
 app.get("/api/stats", async (_req, res) => {
   try {
     if (!statsCache || Date.now() - statsCache.at > STATS_CACHE_MS) {
-      const [transactions, currencies, tzRows, imports, dryRuns] = await Promise.all([
+      const [transactions, currencies, tzRows, importEvents, receipts] = await Promise.all([
         db.transaction.count(),
         db.transaction.findMany({ distinct: ["currency"], select: { currency: true } }),
         db.user.findMany({ distinct: ["timezone"], select: { timezone: true } }),
-        db.event.count({ where: { type: "bank_imported" } }),
-        db.event.count({ where: { type: "bank_imported", meta: { path: ["dry_run"], equals: true } } }),
+        db.event.findMany({
+          where: { type: "bank_imported" },
+          orderBy: { createdAt: "asc" },
+          select: { userId: true, meta: true, createdAt: true },
+        }),
+        db.transaction.count({ where: { source: "receipt" } }),
       ]);
+      // "Files processed" = statement files + receipt photos. LLM clients chunk
+      // one statement into several import calls, so raw call counts overstate
+      // files ~7x; calls from the same user within 10 minutes are one file.
+      const FILE_GAP_MS = 10 * 60 * 1000;
+      const lastCall = new Map<string, number>();
+      let statementFiles = 0;
+      for (const e of importEvents) {
+        const m = e.meta as { dry_run?: boolean; imported?: number } | null;
+        if (!m || m.dry_run || !m.imported) continue;
+        const key = e.userId ?? "";
+        if (e.createdAt.getTime() - (lastCall.get(key) ?? 0) > FILE_GAP_MS) statementFiles++;
+        lastCall.set(key, e.createdAt.getTime());
+      }
       const timezone_list = tzRows.map((r) => r.timezone).filter((tz) => tz !== "UTC");
       statsCache = {
         at: Date.now(),
         body: {
           transactions,
           currencies: currencies.length,
-          files: imports - dryRuns,
+          files: statementFiles + receipts,
           timezones: timezone_list.length,
           timezone_list,
         },
