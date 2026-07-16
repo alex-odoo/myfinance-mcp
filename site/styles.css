@@ -99,8 +99,10 @@ nav.main + .gh-link { margin-left: 0; }
 .gh-link:hover { border-color: var(--accent); color: var(--accent); }
 .hd-cta {
   font-family: var(--mono); font-size: 13px; font-weight: 600;
+  border: 1px solid var(--rule); text-decoration: none;
   padding: 7px 14px; border-radius: 8px; white-space: nowrap;
 }
+.hd-cta:hover { border-color: var(--accent); color: var(--accent); }
 @media (max-width: 900px) { nav.main { display: none; } }
 
 /* ---------- hero ---------- */
@@ -320,7 +322,8 @@ pre.code .srv-url { font-size: inherit; }
 .sec-item p { font-size: 14.5px; color: var(--muted); }
 
 /* stats */
-.stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 26px; }
+.stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 26px; }
+@media (max-width: 900px) { .stats { grid-template-columns: repeat(2, 1fr); } }
 @media (max-width: 700px) { .stats { grid-template-columns: 1fr; } }
 .stat { border-left: 1px solid var(--rule); padding-left: 26px; }
 .stat .sv { font-family: var(--mono); font-size: clamp(2.2rem, 4.5vw, 3.4rem); font-weight: 700; letter-spacing: -.02em; font-variant-numeric: tabular-nums; line-height: 1.1; }
