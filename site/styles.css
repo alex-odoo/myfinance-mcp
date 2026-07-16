@@ -46,6 +46,9 @@
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
 html { scroll-behavior: smooth; }
+/* Safety net: nothing may cause sideways scroll on phones. `clip` (not `hidden`)
+   does not create a scroll container, so the sticky header keeps working. */
+html, body { overflow-x: clip; }
 body {
   background: var(--paper);
   color: var(--ink);
@@ -104,6 +107,21 @@ nav.main + .gh-link { margin-left: 0; }
 }
 .hd-cta:hover { border-color: var(--accent); color: var(--accent); }
 @media (max-width: 900px) { nav.main { display: none; } }
+/* Phones: the header must fit without sideways scroll. Below ~480px the logo +
+   GitHub + Connect no longer fit (intrinsic width ~456px), so GitHub folds into
+   the footer (still on every page) and Connect stays as the primary CTA with a
+   comfortable tap size. */
+@media (max-width: 480px) {
+  .wrap { padding: 0 18px; }
+  .site-inner { gap: 12px; }
+  .gh-link { display: none; }
+  .hd-cta { margin-left: auto; padding: 9px 15px; font-size: 13.5px; }
+}
+/* Roomier tap targets for the footer links on touch screens. */
+@media (max-width: 600px) {
+  .foot-inner { gap: 13px 22px; }
+  .foot-inner a { padding: 6px 0; }
+}
 
 /* ---------- hero ---------- */
 .hero { position: relative; overflow: hidden; border-bottom: 1px solid var(--rule); }
@@ -115,9 +133,9 @@ nav.main + .gh-link { margin-left: 0; }
 .hero-grid {
   position: relative; z-index: 1;
   display: grid; grid-template-columns: 1.05fr .95fr; gap: 56px;
-  padding: 84px 0 88px; align-items: center;
+  padding-block: 84px 88px; align-items: center;
 }
-@media (max-width: 960px) { .hero-grid { grid-template-columns: 1fr; padding: 56px 0 64px; } }
+@media (max-width: 960px) { .hero-grid { grid-template-columns: 1fr; padding-block: 56px 64px; } }
 .chip-row { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 26px; }
 .chip {
   font-family: var(--mono); font-size: 12px; letter-spacing: .06em; text-transform: uppercase;
