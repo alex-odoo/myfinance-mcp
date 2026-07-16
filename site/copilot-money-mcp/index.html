@@ -1,0 +1,203 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Copilot Money MCP Server? Track Money in Claude &amp; ChatGPT</title>
+<meta name="description" content="Copilot Money has no MCP server and runs only on Apple devices. MyFinance MCP is the free, open-source way to track money by talking to Claude or ChatGPT on any platform.">
+<link rel="canonical" href="https://myfinance-mcp.com/copilot-money-mcp">
+<meta name="theme-color" content="#FAF8F3" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#181712" media="(prefers-color-scheme: dark)">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="icon" href="/favicon.ico" sizes="48x48">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<link rel="preload" href="/fonts/Switzer-Variable.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="/styles.css">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://myfinance-mcp.com/copilot-money-mcp">
+<meta property="og:title" content="Copilot Money MCP Server? Track Money in Claude &amp; ChatGPT">
+<meta property="og:description" content="Copilot Money has no MCP server and runs only on Apple devices. MyFinance MCP is the free, open-source way to track money by talking to Claude or ChatGPT on any platform.">
+<meta property="og:image" content="https://myfinance-mcp.com/og.png">
+<meta name="twitter:card" content="summary_large_image">
+<script type="application/ld+json">{"@context": "https://schema.org", "@type": "FAQPage", "mainEntity": [{"@type": "Question", "name": "Does Copilot Money have an MCP server?", "acceptedAnswer": {"@type": "Answer", "text": "No official hosted one. Copilot Money cannot run inside Claude or ChatGPT directly. MyFinance MCP is built as an MCP server, so it connects with one URL and an OAuth sign-in."}}, {"@type": "Question", "name": "Does MyFinance MCP work on Android and Windows?", "acceptedAnswer": {"@type": "Answer", "text": "Yes. It runs inside your AI client, so anywhere Claude or ChatGPT works (web, desktop, iOS, Android), your tracking works too."}}, {"@type": "Question", "name": "Is MyFinance MCP free?", "acceptedAnswer": {"@type": "Answer", "text": "Yes, free while in beta. No ads, no card required. It is open source under MIT, so self-hosting is always an option too."}}, {"@type": "Question", "name": "Does it work with ChatGPT?", "acceptedAnswer": {"@type": "Answer", "text": "Yes. Settings, then Apps, then create a custom app with the server URL using OAuth. It works on every ChatGPT plan, and with Claude, Cursor, Windsurf and any MCP client with OAuth."}}, {"@type": "Question", "name": "Is my data private?", "acceptedAnswer": {"@type": "Answer", "text": "Your data is linked to your account and only you can access it. EU hosting, row-level isolation, no amounts or merchants in server logs, and receipt photos never reach the server at all."}}]}</script>
+<script type="application/ld+json">{"@context": "https://schema.org", "@type": "BreadcrumbList", "itemListElement": [{"@type": "ListItem", "position": 1, "name": "Home", "item": "https://myfinance-mcp.com/"}, {"@type": "ListItem", "position": 2, "name": "Alternatives", "item": "https://myfinance-mcp.com/alternatives"}, {"@type": "ListItem", "position": 3, "name": "Copilot Money", "item": "https://myfinance-mcp.com/copilot-money-mcp"}]}</script>
+</head>
+<body>
+<header class="site">
+  <div class="wrap site-inner">
+    <a class="logo" href="/">
+      <svg class="mark" width="26" height="26" viewBox="0 0 64 64" aria-hidden="true">
+        <g>
+          <polygon class="mk-top" points="18,6 52,6 46,14 27,14 27,24 40,24 40,32 18,32"/>
+          <polygon class="mk-bot" points="18,38 27,38 27,53 21,58 18,58 18,49 8,49 8,42 18,42"/>
+        </g>
+        <clipPath id="mkclip">
+          <polygon points="18,6 52,6 46,14 27,14 27,24 40,24 40,32 18,32"/>
+          <polygon points="18,38 27,38 27,53 21,58 18,58 18,49 8,49 8,42 18,42"/>
+        </clipPath>
+        <g clip-path="url(#mkclip)"><rect class="mk-sheen" x="-24" y="-12" width="14" height="88"/></g>
+      </svg>
+      MyFinance&nbsp;<b>MCP</b></a>
+    <nav class="main" aria-label="Main">
+      <a href="/#how">How it works</a>
+      <a href="/#install">Install</a>
+      <a href="/#examples">Examples</a>
+      <a href="/alternatives">Alternatives</a>
+      <a href="/#faq">FAQ</a>
+    </nav>
+    <a class="gh-link" href="https://github.com/alex-odoo/myfinance-mcp">★ GitHub</a>
+    <a class="hd-cta" href="/#install">Connect</a>
+  </div>
+</header>
+
+<main>
+
+<section class="alt-hero">
+  <div class="wrap">
+    <nav class="crumbs" aria-label="Breadcrumb"><a href="/">Home</a> / <a href="/alternatives">Alternatives</a> / Copilot Money</nav>
+    <span class="eyebrow">Copilot Money alternative</span>
+    <h1>Looking for a Copilot Money <span class="talk">MCP</span> server?</h1>
+    <p class="sec-sub">Copilot has no MCP server and lives only on iPhone and Mac. MyFinance MCP works inside Claude or ChatGPT on any device, free and open source.</p>
+    <div class="cta-row">
+      <a class="btn btn-solid" href="/#install">Connect in under a minute</a>
+      <a class="btn btn-ghost" href="#compare">See the comparison</a>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <span class="eyebrow">The short answer</span>
+    <h2>No, Copilot Money has no MCP server.</h2>
+    <p class="prose">No. The Model Context Protocol (MCP) is the open standard that lets AI assistants like Claude and ChatGPT use outside tools, and Copilot Money does not publish an MCP server. It is also Apple-only (iPhone and Mac) and built around US bank connections. MyFinance MCP runs inside any MCP client on any platform, in any currency.</p>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <span class="eyebrow">What you get instead</span>
+    <h2>The same tracking, just by talking</h2>
+    <div class="feat-grid cols3 reveal in">
+      <div class="feat"><span class="fi num">log</span><h3>Plain-language logging</h3><p>"Spent 24.50 eur on groceries at Lidl" is the whole workflow. Category, currency and date extracted for you.</p></div>
+      <div class="feat"><span class="fi num">scan</span><h3>Receipt photos</h3><p>Snap a receipt; your AI parses it in the chat and saves the line items. Images never reach the server.</p></div>
+      <div class="feat"><span class="fi num">import</span><h3>Statement import</h3><p>Drop a CSV or PDF export: hundreds of rows in one call, duplicates detected, totals reconciled.</p></div>
+      <div class="feat"><span class="fi num">cap</span><h3>Budgets</h3><p>Monthly caps per category or overall, with live progress. Alerts only when you actually exceed one.</p></div>
+      <div class="feat"><span class="fi num">fx</span><h3>Any currency</h3><p>Log in whatever you paid in; summaries answer in your base currency with the rate frozen at transaction date.</p></div>
+      <div class="feat"><span class="fi num">own</span><h3>Open source and yours</h3><p>MIT-licensed. Full CSV export anytime, instant account deletion, self-hosting supported.</p></div>
+    </div>
+  </div>
+</section>
+
+<section id="compare">
+  <div class="wrap">
+    <span class="eyebrow">Copilot Money vs. MyFinance MCP</span>
+    <h2>How they stack up</h2>
+    <div class="cmp reveal in">
+      <div class="cmp-col old">
+        <h3>Copilot Money</h3>
+        <ul>
+          <li>No MCP server; can't run inside Claude or ChatGPT</li>
+          <li>Apple-only: iPhone and Mac apps</li>
+          <li>Subscription after the trial</li>
+          <li>US bank connections at its core</li>
+        </ul>
+      </div>
+      <div class="cmp-col ours">
+        <h3>MyFinance MCP</h3>
+        <ul>
+          <li>Works in any MCP client on any device</li>
+          <li>Built as an MCP server: your AI is the app</li>
+          <li>Free while in beta, open source (MIT)</li>
+          <li>Any currency, any bank via statement import</li>
+        </ul>
+      </div>
+    </div>
+    <p class="soften">Copilot is a beautifully designed app, arguably the best-looking tracker on iOS. This is for people whose money does not live inside one ecosystem.</p>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <span class="eyebrow">Moving from Copilot Money</span>
+    <h2>Off the walled garden</h2>
+    <p class="prose">Copilot's design shines on an iPhone, but the moment you are on Android, Windows or just a browser, your tracker is out of reach. An MCP server has no such boundary: wherever you can open Claude or ChatGPT, your finances are one question away.</p>
+    <p class="prose">Export your transactions as CSV from Copilot and drop the file into the chat; the importer deduplicates, merges hand-logged twins and reconciles the total.</p>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <span class="eyebrow">How to switch</span>
+    <h2>Connect in under a minute</h2>
+    <p class="sec-sub">Works with any MCP client that supports OAuth 2.0 with PKCE. On first connect you sign in with Google or register with an email and password.</p>
+    <div class="panel on">
+      <ol>
+        <li>Open Claude and click <b>Customize</b></li>
+        <li>Click <b>Connectors</b></li>
+        <li>Click <b>+</b>, then <b>Add custom connector</b></li>
+        <li>Name it, for example "MyFinance"</li>
+        <li>Paste <span class="srv-url">https://myfinance-mcp.com/mcp</span> into Remote MCP server URL</li>
+        <li><b>Leave the OAuth Client ID and Client Secret fields empty</b></li>
+        <li>Click <b>Add</b>, then <b>Connect</b> and sign in</li>
+      </ol>
+      <p class="soft">On ChatGPT: Settings, then Apps, then Create app with the same URL using OAuth. Full guide on the <a href="/#install">home page</a>.</p>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <span class="eyebrow">FAQ</span>
+    <h2>Questions, answered</h2>
+    <div class="faq reveal in">
+      <details>
+        <summary>Does Copilot Money have an MCP server?</summary>
+        <p class="fa">No official hosted one. Copilot Money cannot run inside Claude or ChatGPT directly. MyFinance MCP is built as an MCP server, so it connects with one URL and an OAuth sign-in.</p>
+      </details>
+      <details>
+        <summary>Does MyFinance MCP work on Android and Windows?</summary>
+        <p class="fa">Yes. It runs inside your AI client, so anywhere Claude or ChatGPT works (web, desktop, iOS, Android), your tracking works too.</p>
+      </details>
+      <details>
+        <summary>Is MyFinance MCP free?</summary>
+        <p class="fa">Yes, free while in beta. No ads, no card required. It is open source under MIT, so self-hosting is always an option too.</p>
+      </details>
+      <details>
+        <summary>Does it work with ChatGPT?</summary>
+        <p class="fa">Yes. Settings, then Apps, then create a custom app with the server URL using OAuth. It works on every ChatGPT plan, and with Claude, Cursor, Windsurf and any MCP client with OAuth.</p>
+      </details>
+      <details>
+        <summary>Is my data private?</summary>
+        <p class="fa">Your data is linked to your account and only you can access it. EU hosting, row-level isolation, no amounts or merchants in server logs, and receipt photos never reach the server at all.</p>
+      </details>
+    </div>
+    <p class="fineprint">Mint, YNAB, Monarch Money, Lunch Money, Copilot Money, Actual Budget, Firefly III, PocketGuard and other product names are trademarks of their respective owners. MyFinance MCP is an independent, open-source project and is not affiliated with or endorsed by them. Comparisons reflect publicly available information at the time of writing and may change.</p>
+  </div>
+</section>
+
+</main>
+
+<div class="final">
+  <div class="wrap">
+    <h2>Track money inside the AI you already use.</h2>
+    <p>Free and open source. It works with Claude, ChatGPT and any MCP client.</p>
+    <div class="cta-row center">
+      <a class="btn btn-solid" href="/#install">Quick install</a>
+      <a class="btn btn-ghost" href="https://github.com/alex-odoo/myfinance-mcp">★ Star on GitHub</a>
+    </div>
+  </div>
+</div>
+
+<footer class="site">
+  <div class="wrap foot-inner">
+    <a href="/">Home</a>
+    <a href="/alternatives">Alternatives</a>
+    <a href="https://github.com/alex-odoo/myfinance-mcp">GitHub</a>
+    <a href="/#contact">Contact</a>
+    <a href="/privacy">Privacy &amp; Terms</a>
+    <span class="cr">Open source under MIT. Built by <a href="https://rteam.agency">Rteam</a>.</span>
+  </div>
+</footer>
+
+</body>
+</html>

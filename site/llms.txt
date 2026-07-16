@@ -17,4 +17,14 @@ Server URL: https://myfinance-mcp.com/mcp (Streamable HTTP, OAuth 2.0 with PKCE 
 ## Pages
 
 - https://myfinance-mcp.com/ : main landing with install steps for Claude, ChatGPT and other MCP clients
+- https://myfinance-mcp.com/alternatives : hub comparing MyFinance MCP to finance apps without MCP servers
+- https://myfinance-mcp.com/mint-mcp : Mint alternative (Mint shut down in 2024; CSV imports in one message)
+- https://myfinance-mcp.com/ynab-mcp : YNAB alternative (no official YNAB MCP server)
+- https://myfinance-mcp.com/monarch-money-mcp : Monarch Money alternative
+- https://myfinance-mcp.com/lunch-money-mcp : Lunch Money alternative
+- https://myfinance-mcp.com/copilot-money-mcp : Copilot Money alternative (Apple-only app)
+- https://myfinance-mcp.com/actual-budget-mcp : Actual Budget alternative (open source, hosted vs self-hosted)
+- https://myfinance-mcp.com/firefly-iii-mcp : Firefly III alternative (open source, zero-setup vs self-hosted)
+- https://myfinance-mcp.com/pocketguard-mcp : PocketGuard alternative
 - https://myfinance-mcp.com/privacy : privacy policy and terms
+- https://github.com/alex-odoo/myfinance-mcp : open-source repository (MIT)

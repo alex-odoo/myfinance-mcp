@@ -6,6 +6,51 @@
     <priority>1.0</priority>
   </url>
   <url>
+    <loc>https://myfinance-mcp.com/alternatives</loc>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+  </url>
+  <url>
+    <loc>https://myfinance-mcp.com/mint-mcp</loc>
+    <changefreq>monthly</changefreq>
+    <priority>0.7</priority>
+  </url>
+  <url>
+    <loc>https://myfinance-mcp.com/ynab-mcp</loc>
+    <changefreq>monthly</changefreq>
+    <priority>0.7</priority>
+  </url>
+  <url>
+    <loc>https://myfinance-mcp.com/monarch-money-mcp</loc>
+    <changefreq>monthly</changefreq>
+    <priority>0.7</priority>
+  </url>
+  <url>
+    <loc>https://myfinance-mcp.com/lunch-money-mcp</loc>
+    <changefreq>monthly</changefreq>
+    <priority>0.7</priority>
+  </url>
+  <url>
+    <loc>https://myfinance-mcp.com/copilot-money-mcp</loc>
+    <changefreq>monthly</changefreq>
+    <priority>0.7</priority>
+  </url>
+  <url>
+    <loc>https://myfinance-mcp.com/actual-budget-mcp</loc>
+    <changefreq>monthly</changefreq>
+    <priority>0.7</priority>
+  </url>
+  <url>
+    <loc>https://myfinance-mcp.com/firefly-iii-mcp</loc>
+    <changefreq>monthly</changefreq>
+    <priority>0.7</priority>
+  </url>
+  <url>
+    <loc>https://myfinance-mcp.com/pocketguard-mcp</loc>
+    <changefreq>monthly</changefreq>
+    <priority>0.7</priority>
+  </url>
+  <url>
     <loc>https://myfinance-mcp.com/privacy</loc>
     <changefreq>monthly</changefreq>
     <priority>0.3</priority>
