@@ -20,10 +20,12 @@ DATA and the MATH; the AI client owns the ADVICE.
 
 ## Domains (both live)
 
-- `https://myfinance-mcp.com` - primary (public launch)
-- `https://finance.rteam.agency` - legacy, still serving
+- `https://myfinance-mcp.com` - primary (OAuth issuer/BASE_URL since 2026-07-16); landing = repo `site/`, static on same origin
+- `https://finance.rteam.agency` - legacy, still serving (old connectors)
+- `myfinancemcp.com` - defensive twin, GoDaddy Forwarding 301 -> primary (NOT our nginx; DNS stays on GoDaddy parking IPs)
 - MCP endpoint: `POST /mcp` (Bearer token). Connect via Claude.ai -> Connectors
-  -> Add custom connector -> `https://finance.rteam.agency/mcp` -> sign in.
+  -> Add custom connector -> `https://myfinance-mcp.com/mcp` -> sign in
+  (OAuth Client ID/Secret fields stay EMPTY).
 
 ## Deploy (rule 7 - never manual)
 
@@ -42,7 +44,7 @@ nginx sync, health check. **Never edit code on the box.** Secrets live in
 bun install
 bun run dev            # server on :8788
 bun run e2e            # self-contained E2E proof
-bun run e2e https://finance.rteam.agency   # same suite vs prod (E2E_EMAIL/E2E_PASSWORD)
+bun run e2e https://myfinance-mcp.com      # same suite vs prod (E2E_EMAIL/E2E_PASSWORD)
 bun run lint
 ```
 
@@ -66,5 +68,5 @@ Password hash: `bun -e "console.log(await Bun.password.hash(process.argv[1]))" '
 
 ## Keys (values in vault, not here)
 
-- MCP login: `finance.rteam.agency`, user `alex@rteam.top`
+- MCP login: `myfinance-mcp.com` (legacy `finance.rteam.agency`), user `alex@rteam.top`
 - Supabase Management token + Postgres password: vault APIKeys
