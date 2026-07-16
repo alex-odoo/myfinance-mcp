@@ -1,0 +1,20 @@
+# MyFinance MCP
+
+> A free, open-source (MIT) remote MCP server for personal finance tracking. Users connect it to Claude, ChatGPT, Cursor or any MCP client with OAuth 2.0 + PKCE, then track expenses, income, budgets and net worth by talking in plain language or dropping receipt photos and bank statements.
+
+Server URL: https://myfinance-mcp.com/mcp (Streamable HTTP, OAuth 2.0 with PKCE and dynamic client registration; leave Client ID/Secret empty when adding as a Claude custom connector).
+
+## Key facts
+
+- Every number is computed in SQL on the server; the LLM never does arithmetic over raw records.
+- Multi-currency: transactions keep the original amount and currency; the exchange rate to the user's base currency is frozen at transaction date.
+- Receipt photos are parsed client-side by the user's own AI; images never reach the server.
+- Bank statement import: hundreds of rows in one call with idempotent deduplication and total reconciliation.
+- Personal vs business entity tagging on accounts and transactions.
+- Privacy: EU data residency, row-level security, no amounts or merchants in server logs, CSV export and instant full account deletion (GDPR).
+- Free while in beta. Built by Rteam (https://rteam.agency).
+
+## Pages
+
+- https://myfinance-mcp.com/ : main landing with install steps for Claude, ChatGPT and other MCP clients
+- https://myfinance-mcp.com/privacy : privacy policy and terms

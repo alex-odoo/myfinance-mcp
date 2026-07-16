@@ -1,0 +1,387 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MyFinance MCP - Track your money by talking to your AI</title>
+<meta name="description" content="Free, open-source MCP server for personal finance. Connect Claude or ChatGPT and just say what you spent: expenses, income, budgets and net worth, logged and computed for you, in any currency.">
+<link rel="canonical" href="https://myfinance-mcp.com/">
+<meta name="theme-color" content="#FAF8F3" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#181712" media="(prefers-color-scheme: dark)">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="preload" href="/fonts/Switzer-Variable.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="/styles.css">
+
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://myfinance-mcp.com/">
+<meta property="og:title" content="MyFinance MCP - Track your money by talking to your AI">
+<meta property="og:description" content="Free, open-source MCP server for personal finance. Connect Claude or ChatGPT and just say what you spent.">
+<meta property="og:image" content="https://myfinance-mcp.com/og.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="MyFinance MCP - Track your money by talking to your AI">
+<meta name="twitter:description" content="Free, open-source MCP server for personal finance. Connect Claude or ChatGPT and just say what you spent.">
+<meta name="twitter:image" content="https://myfinance-mcp.com/og.png">
+
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "SoftwareApplication",
+  "name": "MyFinance MCP",
+  "url": "https://myfinance-mcp.com/",
+  "applicationCategory": "FinanceApplication",
+  "operatingSystem": "Web",
+  "description": "A free, open-source Model Context Protocol server that lets you track expenses, income, budgets and net worth through natural conversation with Claude or ChatGPT.",
+  "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
+  "license": "https://opensource.org/licenses/MIT",
+  "author": { "@type": "Organization", "name": "Rteam", "url": "https://rteam.agency" }
+}
+</script>
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "FAQPage",
+  "mainEntity": [
+    { "@type": "Question", "name": "What is MyFinance MCP?", "acceptedAnswer": { "@type": "Answer", "text": "A free Model Context Protocol server that lets you track expenses, income, budgets and net worth through natural conversation with Claude or ChatGPT. You tell your AI what you spent; it logs everything and the server does the math." } },
+    { "@type": "Question", "name": "What is the Model Context Protocol (MCP)?", "acceptedAnswer": { "@type": "Answer", "text": "An open standard that lets AI assistants connect to external tools. An MCP server provides specific capabilities, here personal finance tracking, that the AI can use during a conversation. Think of it as a plugin system for AI assistants." } },
+    { "@type": "Question", "name": "Does it work with ChatGPT?", "acceptedAnswer": { "@type": "Answer", "text": "Yes. Settings, then Apps, then create a custom app with the server URL using OAuth. Works on every ChatGPT plan." } },
+    { "@type": "Question", "name": "Which clients are supported?", "acceptedAnswer": { "@type": "Answer", "text": "Any MCP client with OAuth 2.0 + PKCE: Claude.ai, Claude desktop and mobile, Claude Code, Cursor, Windsurf, VS Code." } },
+    { "@type": "Question", "name": "Is it free?", "acceptedAnswer": { "@type": "Answer", "text": "Yes, free while in beta. No ads, no card." } },
+    { "@type": "Question", "name": "Is my data private?", "acceptedAnswer": { "@type": "Answer", "text": "Your data is linked to your account and only you can access it. EU hosting, no third-party sharing, no amounts in logs, and you can export or delete everything at any time." } },
+    { "@type": "Question", "name": "Can it read my bank account?", "acceptedAnswer": { "@type": "Answer", "text": "Not directly, by design. You log by voice, text, receipt photos or statement exports; nothing connects to your bank credentials. Direct bank sync via licensed providers is on the roadmap." } },
+    { "@type": "Question", "name": "What about duplicates when I import a statement?", "acceptedAnswer": { "@type": "Answer", "text": "The importer detects rows you already logged by hand and merges them instead of duplicating, and re-importing the same statement is safe: already-imported rows are skipped and reported." } },
+    { "@type": "Question", "name": "Can I split personal and business?", "acceptedAnswer": { "@type": "Answer", "text": "Yes. Accounts and individual transactions carry a personal/business tag; every report can be filtered by it, and the CSV export includes it for your accountant." } },
+    { "@type": "Question", "name": "Can I self-host it?", "acceptedAnswer": { "@type": "Answer", "text": "Yes. MIT-licensed, runs from a Dockerfile with your own Postgres (Supabase works). The GitHub repository includes a self-hosting guide." } }
+  ]
+}
+</script>
+</head>
+<body>
+
+<a class="skip" href="#how">Skip to content</a>
+
+<header class="site">
+  <div class="wrap site-inner">
+    <a class="logo" href="/"><span class="logo-mark">M</span>MyFinance&nbsp;<b>MCP</b></a>
+    <nav class="main" aria-label="Main">
+      <a href="#how">How it works</a>
+      <a href="#install">Install</a>
+      <a href="#examples">Examples</a>
+      <a href="#security">Security</a>
+      <a href="#faq">FAQ</a>
+      <a href="#contact">Contact</a>
+    </nav>
+    <a class="gh-link" href="https://github.com/alex-odoo/myfinance-mcp">★ GitHub</a>
+  </div>
+</header>
+
+<div class="hero">
+  <div class="hero-wm" aria-hidden="true">€</div>
+  <div class="wrap hero-grid">
+    <div>
+      <div class="chip-row">
+        <span class="chip acc">Free</span>
+        <span class="chip acc">Open source · MIT</span>
+        <span class="chip">OAuth 2.0</span>
+      </div>
+      <h1>Track your money by <span class="talk">talking</span> to your AI.</h1>
+      <p class="hero-sub">Connect Claude or ChatGPT, then just say what you spent. Expenses, income, budgets and net worth, logged and computed for you, in any currency.</p>
+      <div class="cta-row">
+        <a class="btn btn-solid" href="#install">Quick install</a>
+        <a class="btn btn-ghost" href="#examples">See it in action</a>
+      </div>
+      <p class="hero-note">No app. No forms. No spreadsheet. Every number computed in SQL.</p>
+    </div>
+
+    <div class="demo" aria-label="Live product demo">
+      <div class="demo-bar">
+        <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+        <span class="demo-title">Claude · MyFinance connected</span>
+        <span class="live"><span class="live-dot"></span>live demo</span>
+      </div>
+      <div class="demo-body" id="demoBody"></div>
+    </div>
+  </div>
+</div>
+
+<main>
+
+<section id="how">
+  <div class="wrap">
+    <span class="eyebrow">How it works</span>
+    <h2>Three steps. No app to learn.</h2>
+    <p class="sec-sub">It works the moment you connect. Your base currency comes from your first transaction, your timezone from the conversation.</p>
+    <div class="steps reveal">
+      <div class="step">
+        <span class="n">Step 1 / 3</span>
+        <h3>Connect once.</h3>
+        <p>Works with any AI client that supports remote MCP servers: Claude, ChatGPT, Cursor and more. No install, no API keys.</p>
+      </div>
+      <div class="step">
+        <span class="n">Step 2 / 3</span>
+        <h3>Just say what you spent.</h3>
+        <p>Plain language, a receipt photo, or a whole bank statement. Categories, currencies and duplicates handled automatically.</p>
+      </div>
+      <div class="step">
+        <span class="n">Step 3 / 3</span>
+        <h3>Ask anything.</h3>
+        <p>Monthly summaries, trends, budgets, net worth. Every number is computed in SQL on the server. The AI reads the math, it never guesses it.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="examples">
+  <div class="wrap">
+    <span class="eyebrow">Examples</span>
+    <h2>Try saying</h2>
+    <p class="sec-sub">Just talk to it. Each line below is a real conversation, and every result on the right was computed on the server, not guessed by the AI.</p>
+    <div class="ledger reveal">
+      <div class="lrow">
+        <span class="ln num">01</span>
+        <span class="say">"Spent 20 eur on lunch"</span>
+        <span class="res num">20.00 EUR · restaurants · <b>180 / 300 budget</b></span>
+      </div>
+      <div class="lrow">
+        <span class="ln num">02</span>
+        <span class="say"><span class="ph">[receipt photo]</span> "Log this"</span>
+        <span class="res num">Lidl · 47.20 EUR · <b>12 line items saved</b></span>
+      </div>
+      <div class="lrow">
+        <span class="ln num">03</span>
+        <span class="say">"Here's my June bank statement" <span class="ph">[CSV]</span></span>
+        <span class="res num">152 imported · 3 merged · <b>totals reconciled</b></span>
+      </div>
+      <div class="lrow">
+        <span class="ln num">04</span>
+        <span class="say">"How much did I spend on restaurants in June?"</span>
+        <span class="res num">412 EUR · 18 visits · <b>+6% vs May</b></span>
+      </div>
+      <div class="lrow">
+        <span class="ln num">05</span>
+        <span class="say">"Set a 400 eur monthly budget for groceries"</span>
+        <span class="res num">310 / 400 EUR · <b>78% with 9 days left</b></span>
+      </div>
+      <div class="lrow">
+        <span class="ln num">06</span>
+        <span class="say">"That dinner on the business card was personal"</span>
+        <span class="res num">entity → personal · <b>business report stays clean</b></span>
+      </div>
+      <div class="lrow">
+        <span class="ln num">07</span>
+        <span class="say">"What's my net worth?"</span>
+        <span class="res num">24,300 EUR · 5 accounts · <b>3 currencies</b></span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="install">
+  <div class="wrap">
+    <span class="eyebrow">Quick install</span>
+    <h2>Connect in under a minute</h2>
+    <p class="sec-sub">Works with any MCP client that supports OAuth 2.0 with PKCE. On first connect you create an account; sign in the same way to keep your data.</p>
+
+    <div class="tabs" role="tablist" aria-label="Install instructions">
+      <button class="tab" role="tab" aria-selected="true" data-p="p-claude">Claude</button>
+      <button class="tab" role="tab" aria-selected="false" data-p="p-chatgpt">ChatGPT</button>
+      <button class="tab" role="tab" aria-selected="false" data-p="p-other">Other agents</button>
+    </div>
+
+    <div class="panel on" id="p-claude" role="tabpanel">
+      <ol>
+        <li>Open Claude and click <b>Customize</b></li>
+        <li>Click <b>Connectors</b></li>
+        <li>Click <b>+</b>, then <b>Add custom connector</b></li>
+        <li>Name it, for example "MyFinance"</li>
+        <li>Paste <span class="srv-url">https://myfinance-mcp.com/mcp</span> into Remote MCP server URL</li>
+        <li><b>Leave the OAuth Client ID and Client Secret fields empty</b></li>
+        <li>Click <b>Add</b>, then <b>Connect</b> and sign in</li>
+      </ol>
+      <div class="warn-line">Filling the Client ID or Secret fields breaks sign-in. Your credentials go on the MyFinance sign-in page instead.</div>
+      <p class="soft">Works on every Claude plan. The free plan allows one connected MCP server at a time.</p>
+    </div>
+
+    <div class="panel" id="p-chatgpt" role="tabpanel">
+      <ol>
+        <li>Open <b>Settings</b>, then <b>Apps</b></li>
+        <li>Click <b>Create app</b></li>
+        <li>Paste <span class="srv-url">https://myfinance-mcp.com/mcp</span> as the URL</li>
+        <li>Choose <b>OAuth</b> as authentication</li>
+        <li>Click <b>Create</b>, then sign in</li>
+      </ol>
+      <p class="soft">Works right away and shows up in your iOS and Android apps automatically.</p>
+    </div>
+
+    <div class="panel" id="p-other" role="tabpanel">
+<pre class="code">{
+  "mcpServers": {
+    "myfinance": {
+      "url": "<span class="srv-url">https://myfinance-mcp.com/mcp</span>"
+    }
+  }
+}</pre>
+      <p class="soft">In Claude Code: <code class="inline">claude mcp add --transport http myfinance <span class="srv-url">https://myfinance-mcp.com/mcp</span></code><br>Windsurf uses <code class="inline">serverUrl</code> instead of <code class="inline">url</code>. Your client handles the OAuth login automatically.</p>
+    </div>
+  </div>
+</section>
+
+<section id="features">
+  <div class="wrap">
+    <span class="eyebrow">Features</span>
+    <h2>Everything, just by chatting</h2>
+    <p class="sec-sub">Few tools, forgiving inputs, sane defaults. A feature that needs a manual gets cut.</p>
+    <div class="feat-grid reveal">
+      <div class="feat"><span class="fi num">log</span><h3>Plain-language logging</h3><p>Say what you spent or earned; category, currency and date are extracted for you.</p></div>
+      <div class="feat"><span class="fi num">scan</span><h3>Receipt photos</h3><p>Snap a receipt; your AI parses it in the chat. Images never reach our server.</p></div>
+      <div class="feat"><span class="fi num">import</span><h3>Bank statement import</h3><p>Drop a CSV or PDF export; hundreds of rows in one call, duplicates detected, totals reconciled.</p></div>
+      <div class="feat"><span class="fi num">fx</span><h3>Every currency</h3><p>Log in whatever you paid in; summaries answer in your base currency, rate frozen at transaction date.</p></div>
+      <div class="feat"><span class="fi num">cap</span><h3>Budgets</h3><p>Monthly caps per category or overall, with live progress. Alerts only when you actually exceed one.</p></div>
+      <div class="feat"><span class="fi num">trend</span><h3>Summaries and trends</h3><p>By category, merchant or month; month-over-month deltas computed server-side.</p></div>
+      <div class="feat"><span class="fi num">split</span><h3>Personal vs business</h3><p>Tag accounts and transactions; a founder's combined view with a clean business cut for your accountant.</p></div>
+      <div class="feat"><span class="fi num">own</span><h3>Export and own your data</h3><p>Full CSV export anytime; delete your account and everything with it, instantly.</p></div>
+    </div>
+  </div>
+</section>
+
+<section id="why">
+  <div class="wrap">
+    <span class="eyebrow">Why MyFinance MCP</span>
+    <h2>Talking beats spreadsheets.</h2>
+    <p class="sec-sub">You already tried the other way. It's why you're here.</p>
+    <div class="cmp reveal">
+      <div class="cmp-col old">
+        <h3>The old way</h3>
+        <ul>
+          <li>The spreadsheet you stopped updating in March</li>
+          <li>Budget app #4, another account, another subscription</li>
+          <li>Typing every coffee into a form</li>
+          <li>One currency, wrong totals</li>
+        </ul>
+      </div>
+      <div class="cmp-col ours">
+        <h3>MyFinance MCP</h3>
+        <ul>
+          <li>Say it, snap it, or import the statement</li>
+          <li>Works inside Claude or ChatGPT, free</li>
+          <li>Math in SQL, never AI guessing</li>
+          <li>Any currency, honest totals</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="security">
+  <div class="wrap">
+    <span class="eyebrow">Security</span>
+    <h2>Built like your money depends on it</h2>
+    <p class="sec-sub">Finance-grade by construction, not by badge.</p>
+    <div class="sec-grid reveal">
+      <div class="sec-item"><span class="sk num">no image storage</span><h3>Receipts never leave the chat</h3><p>Your AI parses photos client-side; the server receives structured numbers only. There is no image storage to breach.</p></div>
+      <div class="sec-item"><span class="sk num">eu residency</span><h3>EU data residency</h3><p>Postgres hosted in the EU with row-level security keyed to your account.</p></div>
+      <div class="sec-item"><span class="sk num">blind logs</span><h3>Blind logs</h3><p>Amounts, merchants and notes are never written to server logs. Telemetry stores event types and ids only.</p></div>
+      <div class="sec-item"><span class="sk num">oauth 2.0 + pkce</span><h3>Standard authorization</h3><p>OAuth 2.0 with PKCE, encrypted tokens, rate-limited sign-in.</p></div>
+      <div class="sec-item"><span class="sk num">mit license</span><h3>Open source</h3><p>Read the code, audit it, or self-host with your own database.</p></div>
+      <div class="sec-item"><span class="sk num">gdpr</span><h3>GDPR by construction</h3><p>CSV export (portability) and instant full deletion (erasure) are tools, not support tickets.</p></div>
+    </div>
+  </div>
+</section>
+
+<section id="stats" hidden>
+  <div class="wrap">
+    <span class="eyebrow">Logged so far, together</span>
+    <h2>A growing global ledger</h2>
+    <p class="sec-sub">Counts only, never amounts. Your numbers stay yours.</p>
+    <div class="stats reveal">
+      <div class="stat"><div class="sv num" id="stTx" data-count="0">0</div><div class="sl">transactions logged</div></div>
+      <div class="stat"><div class="sv num" id="stCur" data-count="0">0</div><div class="sl">currencies</div></div>
+      <div class="stat"><div class="sv num" id="stCty" data-count="0">0</div><div class="sl">countries</div></div>
+    </div>
+  </div>
+</section>
+
+<section id="faq">
+  <div class="wrap">
+    <span class="eyebrow">FAQ</span>
+    <h2>Questions, answered</h2>
+    <p class="sec-sub">The short version. The privacy page has the long one.</p>
+    <div class="faq reveal">
+      <details>
+        <summary>What is MyFinance MCP?</summary>
+        <p class="fa">A free Model Context Protocol server that lets you track expenses, income, budgets and net worth through natural conversation with Claude or ChatGPT. You tell your AI what you spent; it logs everything and the server does the math.</p>
+      </details>
+      <details>
+        <summary>What is the Model Context Protocol (MCP)?</summary>
+        <p class="fa">An open standard that lets AI assistants connect to external tools. An MCP server provides specific capabilities, here personal finance tracking, that the AI can use during a conversation. Think of it as a plugin system for AI assistants.</p>
+      </details>
+      <details>
+        <summary>Does it work with ChatGPT?</summary>
+        <p class="fa">Yes. Settings, then Apps, then create a custom app with the server URL using OAuth. Works on every ChatGPT plan.</p>
+      </details>
+      <details>
+        <summary>Which clients are supported?</summary>
+        <p class="fa">Any MCP client with OAuth 2.0 + PKCE: Claude.ai, Claude desktop and mobile, Claude Code, Cursor, Windsurf, VS Code.</p>
+      </details>
+      <details>
+        <summary>Is it free?</summary>
+        <p class="fa">Yes, free while in beta. No ads, no card.</p>
+      </details>
+      <details>
+        <summary>Is my data private?</summary>
+        <p class="fa">Your data is linked to your account and only you can access it. EU hosting, no third-party sharing, no amounts in logs, and you can export or delete everything at any time.</p>
+      </details>
+      <details>
+        <summary>Can it read my bank account?</summary>
+        <p class="fa">Not directly, by design. You log by voice, text, receipt photos or statement exports; nothing connects to your bank credentials. Direct bank sync via licensed providers is on the roadmap.</p>
+      </details>
+      <details>
+        <summary>What about duplicates when I import a statement?</summary>
+        <p class="fa">The importer detects rows you already logged by hand and merges them instead of duplicating, and re-importing the same statement is safe: already-imported rows are skipped and reported.</p>
+      </details>
+      <details>
+        <summary>Can I split personal and business?</summary>
+        <p class="fa">Yes. Accounts and individual transactions carry a personal/business tag; every report can be filtered by it, and the CSV export includes it for your accountant.</p>
+      </details>
+      <details>
+        <summary>Can I self-host it?</summary>
+        <p class="fa">Yes. MIT-licensed, runs from a Dockerfile with your own Postgres (Supabase works). The GitHub repository includes a self-hosting guide.</p>
+      </details>
+    </div>
+  </div>
+</section>
+
+<section id="contact">
+  <div class="wrap">
+    <span class="eyebrow">Contact</span>
+    <h2>Questions or feedback?</h2>
+    <p class="sec-sub">Found a bug, want a feature, or just have a question? Email me directly. I read every message.</p>
+    <p><a class="btn btn-ghost" id="mailLink" href="#contact">Show email</a></p>
+  </div>
+</section>
+
+</main>
+
+<div class="final">
+  <div class="wrap">
+    <h2>Start tracking in under a minute.</h2>
+    <p>Free and open source. It works with the AI you already use.</p>
+    <div class="cta-row center">
+      <a class="btn btn-solid" href="#install">Quick install</a>
+      <a class="btn btn-ghost" href="https://github.com/alex-odoo/myfinance-mcp">★ Star on GitHub</a>
+    </div>
+    <p class="beta-line">MyFinance MCP is <b>free while in beta</b>, no ads, no card required. Built and run by <a href="https://rteam.agency">Rteam</a>.</p>
+  </div>
+</div>
+
+<footer class="site">
+  <div class="wrap foot-inner">
+    <a href="https://github.com/alex-odoo/myfinance-mcp">GitHub</a>
+    <a href="#contact">Contact</a>
+    <a href="/privacy">Privacy &amp; Terms</a>
+    <span class="cr">Open source under MIT. Built by <a href="https://rteam.agency">Rteam</a>.</span>
+  </div>
+</footer>
+
+<script src="/app.js" defer></script>
+</body>
+</html>

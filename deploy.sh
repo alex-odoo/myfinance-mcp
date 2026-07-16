@@ -54,6 +54,32 @@ ssh -i "$SSH_KEY" "$SERVER" "set -e
 # NOTE: after certbot rewrites the vhost with TLS blocks, deploy.sh intentionally
 # stops overwriting it (the repo copy is the pre-TLS bootstrap version).
 
+echo "==> Landing: ensure vhost serves site/ at / (one-time include patch)"
+ssh -i "$SSH_KEY" "$SERVER" "set -e
+  VHOST=/etc/nginx/sites-available/finance-rteam-agency
+  if grep -q 'nginx-landing-locations.conf' \$VHOST; then
+    echo '    landing include already present'
+  else
+    cp \$VHOST /root/finance-vhost.bak.\$(date +%s)
+    python3 - <<'PY'
+path = '/etc/nginx/sites-available/finance-rteam-agency'
+old = '''    location / {
+        proxy_pass http://127.0.0.1:8788;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+    }'''
+new = '    include /opt/myfinance-mcp/deploy/nginx-landing-locations.conf;'
+src = open(path).read()
+if src.count(old) != 1:
+    raise SystemExit('FATAL: catch-all location / block not found exactly once; patch vhost manually')
+open(path, 'w').write(src.replace(old, new))
+print('    vhost patched: landing include installed')
+PY
+    nginx -t && systemctl reload nginx
+  fi
+"
+
 echo "==> Health check"
 sleep 2
 ssh -i "$SSH_KEY" "$SERVER" "curl -sf http://127.0.0.1:8788/health" && echo "    container healthy"

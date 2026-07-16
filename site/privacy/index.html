@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Privacy &amp; Terms - MyFinance MCP</title>
+<meta name="description" content="Privacy policy and terms for MyFinance MCP: what we store, what we never store, and how to export or delete your data.">
+<link rel="canonical" href="https://myfinance-mcp.com/privacy">
+<meta name="theme-color" content="#FAF8F3" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#181712" media="(prefers-color-scheme: dark)">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+
+<header class="site">
+  <div class="wrap site-inner">
+    <a class="logo" href="/"><span class="logo-mark">M</span>MyFinance&nbsp;<b>MCP</b></a>
+    <a class="gh-link" href="https://github.com/alex-odoo/myfinance-mcp">★ GitHub</a>
+  </div>
+</header>
+
+<main class="wrap doc">
+  <h1>Privacy &amp; Terms</h1>
+  <span class="updated num">Last updated: 2026-07-16</span>
+
+  <h2>The short version</h2>
+  <p>Your financial records belong to you. We store the structured data you log (amounts, categories, merchants, dates) so we can compute your summaries, and nothing else. No ads, no selling data, no third-party analytics. You can export everything as CSV or delete your account, with all its data, at any moment, directly from a conversation.</p>
+
+  <h2>What we store</h2>
+  <ul>
+    <li><strong>Account:</strong> your email address and a password hash (argon2id). Used only for sign-in.</li>
+    <li><strong>Financial records you log:</strong> transactions (amount, currency, category, merchant, note, date, optional receipt line items), accounts, budgets and settings (base currency, timezone).</li>
+    <li><strong>Exchange rates:</strong> daily reference rates (ECB and national banks) used to convert into your base currency.</li>
+    <li><strong>Technical events:</strong> anonymous usage events (tool name, timestamp, error codes) kept for 90 days to keep the service reliable. These events never contain amounts, merchants or notes.</li>
+  </ul>
+
+  <h2>What we never store</h2>
+  <ul>
+    <li><strong>Receipt photos.</strong> Your AI client parses images on its side; only structured numbers reach our server. There is no image storage at all.</li>
+    <li><strong>Bank credentials.</strong> Nothing connects to your bank. You log by text, photos or statement exports.</li>
+    <li><strong>Amounts in logs.</strong> Server logs and telemetry contain event types and record ids only, never money values, merchants or notes.</li>
+    <li><strong>Your conversations.</strong> What you say to Claude or ChatGPT stays between you and your AI provider; we only receive the structured tool calls the AI makes.</li>
+  </ul>
+
+  <h2>Where your data lives</h2>
+  <p>All data is stored in a PostgreSQL database hosted in the <strong>European Union</strong>, with row-level security keyed to your account: the database itself enforces that only your session can read your rows. Access tokens are issued via OAuth 2.0 with PKCE and can be revoked at any time by disconnecting the server from your AI client.</p>
+
+  <h2>Your rights (GDPR)</h2>
+  <ul>
+    <li><strong>Portability:</strong> say "export my transactions" and you get a full CSV, anytime.</li>
+    <li><strong>Erasure:</strong> say "delete my account" and your account with every record is removed. This is a built-in tool, not a support ticket.</li>
+    <li><strong>Access and correction:</strong> every record can be listed, searched and edited through the same conversation.</li>
+  </ul>
+
+  <h2>Terms of use</h2>
+  <ul>
+    <li>MyFinance MCP is provided free of charge while in beta, "as is", without warranty of any kind. It is a personal finance tracking tool, not financial, tax or accounting advice.</li>
+    <li>The software is open source under the MIT license; you may self-host it with your own database, in which case this policy does not apply to your instance.</li>
+    <li>We may update these terms; material changes will be noted on this page with a new date above.</li>
+  </ul>
+
+  <h2>Contact</h2>
+  <p>Questions about privacy or your data: <a id="mailLink" href="#contact">show email</a>. Operated by Rteam FZE LLC.</p>
+</main>
+
+<footer class="site">
+  <div class="wrap foot-inner">
+    <a href="/">Home</a>
+    <a href="https://github.com/alex-odoo/myfinance-mcp">GitHub</a>
+    <span class="cr">Open source under MIT. Built by <a href="https://rteam.agency">Rteam</a>.</span>
+  </div>
+</footer>
+
+<script src="/app.js" defer></script>
+</body>
+</html>

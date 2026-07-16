@@ -1,0 +1,9 @@
+User-agent: *
+Allow: /
+Disallow: /mcp
+Disallow: /login
+Disallow: /authorize
+Disallow: /token
+Disallow: /register
+
+Sitemap: https://myfinance-mcp.com/sitemap.xml
