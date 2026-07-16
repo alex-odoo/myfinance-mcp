@@ -1,0 +1,817 @@
+{
+  "serverInfo": {
+    "name": "myfinancemcp",
+    "version": "0.6.2"
+  },
+  "authentication": {
+    "required": true,
+    "schemes": [
+      "oauth2"
+    ]
+  },
+  "tools": [
+    {
+      "name": "ping",
+      "description": "Health check for the MyFinance MCP connection.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "$schema": "http://json-schema.org/draft-07/schema#"
+      }
+    },
+    {
+      "name": "log_expense",
+      "description": "Record ONE purchase, bill, or receipt. Negative amount = refund to the same category. NEVER use this for bank-statement rows or any batch of 3+ records: use import_transactions with the whole array instead (one-by-one logging hits the per-turn tool limit).",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "amount": {
+            "type": "number",
+            "description": "Amount spent in the original currency. Negative = refund."
+          },
+          "currency": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 3,
+            "description": "3-letter ISO currency code (EUR, USD, UAH, AED, ...). Omit to use the user's base currency."
+          },
+          "category": {
+            "type": "string",
+            "enum": [
+              "groceries",
+              "restaurants",
+              "transport",
+              "fuel",
+              "housing",
+              "utilities",
+              "health",
+              "pharmacy",
+              "clothing",
+              "electronics",
+              "entertainment",
+              "subscriptions",
+              "education",
+              "travel",
+              "gifts",
+              "family",
+              "personal_care",
+              "business",
+              "fees",
+              "other"
+            ],
+            "description": "Omit only if nothing fits; defaults to 'other'."
+          },
+          "merchant": {
+            "type": "string",
+            "description": "Store/service name, e.g. 'Silpo', 'Netflix'."
+          },
+          "note": {
+            "type": "string"
+          },
+          "date": {
+            "type": "string",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+            "description": "Date as YYYY-MM-DD. Omit for today."
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string"
+                },
+                "qty": {
+                  "type": "number"
+                },
+                "price": {
+                  "type": "number",
+                  "description": "Line price in the receipt's currency"
+                }
+              },
+              "required": [
+                "name"
+              ],
+              "additionalProperties": false
+            },
+            "description": "Receipt line items, when logging from a receipt photo."
+          },
+          "account": {
+            "type": "string",
+            "description": "Account name (see get_accounts). Default: Manual."
+          },
+          "entity": {
+            "type": "string",
+            "enum": [
+              "personal",
+              "business"
+            ],
+            "description": "Override the account's default scope, e.g. a personal dinner paid with the business card."
+          }
+        },
+        "required": [
+          "amount"
+        ],
+        "additionalProperties": false,
+        "$schema": "http://json-schema.org/draft-07/schema#"
+      }
+    },
+    {
+      "name": "log_income",
+      "description": "Record incoming money: salary, client payment, gift.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "amount": {
+            "type": "number",
+            "exclusiveMinimum": 0,
+            "description": "Amount received in the original currency."
+          },
+          "currency": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 3,
+            "description": "3-letter ISO currency code (EUR, USD, UAH, AED, ...). Omit to use the user's base currency."
+          },
+          "category": {
+            "type": "string",
+            "enum": [
+              "salary",
+              "business",
+              "freelance",
+              "investments",
+              "gifts",
+              "refunds",
+              "other"
+            ],
+            "description": "Defaults to 'other'."
+          },
+          "merchant": {
+            "type": "string",
+            "description": "Payer / source, e.g. client or employer name."
+          },
+          "note": {
+            "type": "string"
+          },
+          "date": {
+            "type": "string",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+            "description": "Date as YYYY-MM-DD. Omit for today."
+          },
+          "account": {
+            "type": "string",
+            "description": "Account name (see get_accounts). Default: Manual."
+          },
+          "entity": {
+            "type": "string",
+            "enum": [
+              "personal",
+              "business"
+            ],
+            "description": "Override the account's default scope, e.g. a client payment landing on a personal card."
+          }
+        },
+        "required": [
+          "amount"
+        ],
+        "additionalProperties": false,
+        "$schema": "http://json-schema.org/draft-07/schema#"
+      }
+    },
+    {
+      "name": "create_account",
+      "description": "Add a money account: bank, card, cash, or investment (brokerage). Transfers between own accounts are then tracked without counting as spending.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 40,
+            "description": "Short name, e.g. 'Revolut', 'Mono black', 'IBKR'."
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "cash",
+              "bank",
+              "card",
+              "investment",
+              "manual"
+            ],
+            "description": "cash | bank | card | investment"
+          },
+          "currency": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 3,
+            "description": "Main currency of this account."
+          },
+          "entity": {
+            "type": "string",
+            "enum": [
+              "personal",
+              "business"
+            ],
+            "description": "Whose money: personal (default) or business. Sets the default scope for this account's transactions."
+          }
+        },
+        "required": [
+          "name",
+          "type",
+          "currency"
+        ],
+        "additionalProperties": false,
+        "$schema": "http://json-schema.org/draft-07/schema#"
+      }
+    },
+    {
+      "name": "get_accounts",
+      "description": "All accounts with computed balances (latest snapshot + tracked flows) and total net worth in the base currency. Optionally filtered to personal or business scope.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "entity": {
+            "type": "string",
+            "enum": [
+              "personal",
+              "business"
+            ],
+            "description": "Only accounts of this scope. Omit for all."
+          }
+        },
+        "additionalProperties": false,
+        "$schema": "http://json-schema.org/draft-07/schema#"
+      }
+    },
+    {
+      "name": "log_transfer",
+      "description": "Move money between OWN accounts: card to brokerage, cash withdrawal, currency exchange. Never counted as spending or income.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "amount": {
+            "type": "number",
+            "exclusiveMinimum": 0,
+            "description": "Amount leaving the source account."
+          },
+          "currency": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 3,
+            "description": "Default: source account currency."
+          },
+          "from_account": {
+            "type": "string"
+          },
+          "to_account": {
+            "type": "string"
+          },
+          "received_amount": {
+            "type": "number",
+            "exclusiveMinimum": 0,
+            "description": "Amount arriving, for cross-currency transfers."
+          },
+          "received_currency": {
+            "$ref": "#/properties/currency",
+            "description": "3-letter ISO currency code (EUR, USD, UAH, AED, ...). Omit to use the user's base currency."
+          },
+          "note": {
+            "type": "string"
+          },
+          "date": {
+            "type": "string",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+            "description": "Date as YYYY-MM-DD. Omit for today."
+          }
+        },
+        "required": [
+          "amount",
+          "from_account",
+          "to_account"
+        ],
+        "additionalProperties": false,
+        "$schema": "http://json-schema.org/draft-07/schema#"
+      }
+    },
+    {
+      "name": "log_balance",
+      "description": "Anchor an account's REAL balance at end of a date (from the bank app). Balances are then snapshot + later flows.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "account": {
+            "type": "string"
+          },
+          "amount": {
+            "type": "number",
+            "description": "Actual balance shown by the bank/broker."
+          },
+          "currency": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 3,
+            "description": "Default: account currency."
+          },
+          "date": {
+            "type": "string",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+            "description": "Balance as of end of this date. Default: today."
+          }
+        },
+        "required": [
+          "account",
+          "amount"
+        ],
+        "additionalProperties": false,
+        "$schema": "http://json-schema.org/draft-07/schema#"
+      }
+    },
+    {
+      "name": "import_transactions",
+      "description": "Import bank-statement / statement-screenshot rows in bulk. ALWAYS send the ENTIRE statement as ONE call with the full transactions array (up to 500 rows) - never split into chunks, never log rows one-by-one via log_expense. If one statement truly cannot fit in a single call, EVERY row of EVERY chunk must carry external_id (bank reference; or the statement row number, e.g. 'r017') - rows without external_id are keyed by amount+date+occurrence WITHIN one call, so identical rows arriving in different calls are indistinguishable from re-imports. Safe to re-run: keyed rows are skipped, a hand-logged twin is merged into the bank row instead of duplicating, and repeated purchases (same merchant and amount on different days, or twice the same day) import normally. Unknown categories become 'other'. Pass statement_total to get a reconciliation check. Sign convention: negative amount = money out, positive = money in.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "account": {
+            "type": "string",
+            "description": "Target account name. Default: Manual."
+          },
+          "statement_total": {
+            "type": "number",
+            "description": "Signed sum of ALL rows in the source statement, for reconciliation."
+          },
+          "dry_run": {
+            "type": "boolean",
+            "description": "Preview only: report what would be imported/skipped/merged without writing anything."
+          },
+          "transactions": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "date": {
+                  "type": "string",
+                  "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+                  "description": "Date as YYYY-MM-DD. Omit for today."
+                },
+                "amount": {
+                  "type": "number",
+                  "description": "Signed: negative = expense/out, positive = income/in."
+                },
+                "currency": {
+                  "type": "string",
+                  "minLength": 3,
+                  "maxLength": 3,
+                  "description": "3-letter ISO currency code (EUR, USD, UAH, AED, ...). Omit to use the user's base currency."
+                },
+                "type": {
+                  "type": "string",
+                  "enum": [
+                    "expense",
+                    "income",
+                    "transfer"
+                  ],
+                  "description": "Override sign-based detection."
+                },
+                "category": {
+                  "type": "string"
+                },
+                "merchant": {
+                  "type": "string"
+                },
+                "note": {
+                  "type": "string"
+                },
+                "external_id": {
+                  "type": "string",
+                  "description": "Bank transaction reference - the strongest dedup key. If absent, the server derives a stable key from amount + date + position."
+                },
+                "force": {
+                  "type": "boolean",
+                  "description": "Import even if a similar row exists. Use ONLY when a previous response's hint asked to re-send this row. Exact external_id duplicates are still skipped."
+                },
+                "entity": {
+                  "type": "string",
+                  "enum": [
+                    "personal",
+                    "business"
+                  ],
+                  "description": "Scope override for THIS row, e.g. a personal dinner inside a business-account statement. Default: the account's entity."
+                }
+              },
+              "required": [
+                "date",
+                "amount"
+              ],
+              "additionalProperties": false
+            },
+            "minItems": 1,
+            "maxItems": 500
+          }
+        },
+        "required": [
+          "transactions"
+        ],
+        "additionalProperties": false,
+        "$schema": "http://json-schema.org/draft-07/schema#"
+      }
+    },
+    {
+      "name": "get_summary",
+      "description": "Totals for a period, computed server-side in the user's base currency. Answers 'how much did I spend on X in July'.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "period": {
+            "type": "string",
+            "description": "YYYY-MM or YYYY. Defaults to the current month."
+          },
+          "from": {
+            "type": "string",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+            "description": "Date as YYYY-MM-DD. Omit for today."
+          },
+          "to": {
+            "$ref": "#/properties/from",
+            "description": "Date as YYYY-MM-DD. Omit for today."
+          },
+          "group_by": {
+            "type": "string",
+            "enum": [
+              "category",
+              "merchant",
+              "month"
+            ],
+            "description": "Default: category."
+          },
+          "entity": {
+            "type": "string",
+            "enum": [
+              "personal",
+              "business"
+            ],
+            "description": "personal or business only. Omit for everything."
+          }
+        },
+        "additionalProperties": false,
+        "$schema": "http://json-schema.org/draft-07/schema#"
+      }
+    },
+    {
+      "name": "get_transactions",
+      "description": "Find records: 'what was that 40 eur charge', recent spending, by category or merchant.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "from": {
+            "type": "string",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+            "description": "Date as YYYY-MM-DD. Omit for today."
+          },
+          "to": {
+            "$ref": "#/properties/from",
+            "description": "Date as YYYY-MM-DD. Omit for today."
+          },
+          "category": {
+            "type": "string"
+          },
+          "merchant": {
+            "type": "string",
+            "description": "Substring match, case-insensitive."
+          },
+          "query": {
+            "type": "string",
+            "description": "Searches note and merchant."
+          },
+          "entity": {
+            "type": "string",
+            "enum": [
+              "personal",
+              "business"
+            ],
+            "description": "personal or business only."
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100,
+            "description": "Default 20."
+          }
+        },
+        "additionalProperties": false,
+        "$schema": "http://json-schema.org/draft-07/schema#"
+      }
+    },
+    {
+      "name": "update_transaction",
+      "description": "Fix a logged record: wrong category, amount, merchant, date, or personal/business scope.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "amount": {
+            "type": "number"
+          },
+          "currency": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 3,
+            "description": "3-letter ISO currency code (EUR, USD, UAH, AED, ...). Omit to use the user's base currency."
+          },
+          "category": {
+            "type": "string",
+            "enum": [
+              "groceries",
+              "restaurants",
+              "transport",
+              "fuel",
+              "housing",
+              "utilities",
+              "health",
+              "pharmacy",
+              "clothing",
+              "electronics",
+              "entertainment",
+              "subscriptions",
+              "education",
+              "travel",
+              "gifts",
+              "family",
+              "personal_care",
+              "business",
+              "fees",
+              "other",
+              "salary",
+              "business",
+              "freelance",
+              "investments",
+              "gifts",
+              "refunds",
+              "other"
+            ]
+          },
+          "merchant": {
+            "type": "string"
+          },
+          "note": {
+            "type": "string"
+          },
+          "date": {
+            "type": "string",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+            "description": "Date as YYYY-MM-DD. Omit for today."
+          },
+          "entity": {
+            "type": "string",
+            "enum": [
+              "personal",
+              "business"
+            ]
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "additionalProperties": false,
+        "$schema": "http://json-schema.org/draft-07/schema#"
+      }
+    },
+    {
+      "name": "delete_transaction",
+      "description": "Remove ONE wrongly logged record. For 3+ records use delete_transactions (bulk) with the ids array.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "additionalProperties": false,
+        "$schema": "http://json-schema.org/draft-07/schema#"
+      }
+    },
+    {
+      "name": "delete_transactions",
+      "description": "Delete MANY transactions in ONE call by ids (from get_transactions). Always prefer this over repeated delete_transaction calls - one-by-one deletion hits the per-turn tool limit.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "minItems": 1,
+            "maxItems": 500
+          }
+        },
+        "required": [
+          "ids"
+        ],
+        "additionalProperties": false,
+        "$schema": "http://json-schema.org/draft-07/schema#"
+      }
+    },
+    {
+      "name": "get_trends",
+      "description": "Month-over-month expense/income dynamics, optionally for one category or scope.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "months": {
+            "type": "integer",
+            "minimum": 2,
+            "maximum": 24,
+            "description": "How many months back. Default 6."
+          },
+          "category": {
+            "type": "string",
+            "enum": [
+              "groceries",
+              "restaurants",
+              "transport",
+              "fuel",
+              "housing",
+              "utilities",
+              "health",
+              "pharmacy",
+              "clothing",
+              "electronics",
+              "entertainment",
+              "subscriptions",
+              "education",
+              "travel",
+              "gifts",
+              "family",
+              "personal_care",
+              "business",
+              "fees",
+              "other"
+            ]
+          },
+          "entity": {
+            "type": "string",
+            "enum": [
+              "personal",
+              "business"
+            ],
+            "description": "personal or business only. Omit for everything."
+          }
+        },
+        "additionalProperties": false,
+        "$schema": "http://json-schema.org/draft-07/schema#"
+      }
+    },
+    {
+      "name": "set_budget",
+      "description": "Monthly spending cap, overall or per category, in the user's base currency.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "amount": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          },
+          "category": {
+            "type": "string",
+            "enum": [
+              "groceries",
+              "restaurants",
+              "transport",
+              "fuel",
+              "housing",
+              "utilities",
+              "health",
+              "pharmacy",
+              "clothing",
+              "electronics",
+              "entertainment",
+              "subscriptions",
+              "education",
+              "travel",
+              "gifts",
+              "family",
+              "personal_care",
+              "business",
+              "fees",
+              "other"
+            ],
+            "description": "Omit for the overall monthly budget."
+          }
+        },
+        "required": [
+          "amount"
+        ],
+        "additionalProperties": false,
+        "$schema": "http://json-schema.org/draft-07/schema#"
+      }
+    },
+    {
+      "name": "get_budget_progress",
+      "description": "Current month: spent vs cap for every budget. Budgets track PERSONAL spending only; business-scope transactions never count against them.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "$schema": "http://json-schema.org/draft-07/schema#"
+      }
+    },
+    {
+      "name": "get_settings",
+      "description": "Base currency and timezone.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "$schema": "http://json-schema.org/draft-07/schema#"
+      }
+    },
+    {
+      "name": "update_settings",
+      "description": "Change base currency (recomputes all historical stats at each transaction's original date rate) or timezone.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "base_currency": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 3,
+            "description": "3-letter ISO currency code (EUR, USD, UAH, AED, ...). Omit to use the user's base currency."
+          },
+          "timezone": {
+            "type": "string",
+            "description": "IANA timezone, e.g. Europe/Kyiv, Asia/Dubai."
+          }
+        },
+        "additionalProperties": false,
+        "$schema": "http://json-schema.org/draft-07/schema#"
+      }
+    },
+    {
+      "name": "export_transactions",
+      "description": "All transactions as CSV (GDPR portability). Optionally one scope only, e.g. business rows for the accountant.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "from": {
+            "type": "string",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+            "description": "Date as YYYY-MM-DD. Omit for today."
+          },
+          "to": {
+            "$ref": "#/properties/from",
+            "description": "Date as YYYY-MM-DD. Omit for today."
+          },
+          "entity": {
+            "type": "string",
+            "enum": [
+              "personal",
+              "business"
+            ]
+          }
+        },
+        "additionalProperties": false,
+        "$schema": "http://json-schema.org/draft-07/schema#"
+      }
+    },
+    {
+      "name": "delete_account",
+      "description": "Erase the account and ALL financial data permanently (GDPR). Requires confirm='DELETE'.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "confirm": {
+            "type": "string",
+            "const": "DELETE"
+          }
+        },
+        "required": [
+          "confirm"
+        ],
+        "additionalProperties": false,
+        "$schema": "http://json-schema.org/draft-07/schema#"
+      }
+    }
+  ],
+  "resources": [
+    {
+      "name": "dashboard",
+      "uri": "ui://myfinancemcp/dashboard",
+      "description": "MyFinance MCP dashboard: budgets, trends, summary, accounts",
+      "mimeType": "text/html;profile=mcp-app",
+      "_meta": {
+        "ui": {
+          "prefersBorder": true
+        }
+      }
+    }
+  ],
+  "prompts": []
+}
