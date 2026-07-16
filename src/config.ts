@@ -12,6 +12,9 @@ export const config = {
   resendApiKey: process.env.RESEND_API_KEY ?? "",
   notifyEmail: process.env.NOTIFY_EMAIL ?? "",
   fromEmail: process.env.FROM_EMAIL ?? "",
+  // Signup notifications via Telegram (off unless token + chat are set).
+  telegramBotToken: process.env.TELEGRAM_BOT_TOKEN ?? "",
+  telegramChatId: process.env.TELEGRAM_CHAT_ID ?? "",
 };
 
 export function assertConfig(): void {
