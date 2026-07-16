@@ -187,6 +187,7 @@
     });
   }, { threshold: 0.15 });
   document.querySelectorAll(".reveal").forEach(function (r) { io.observe(r); });
+  document.querySelectorAll(".swm").forEach(function (w) { io.observe(w); });
 
   /* ---------- global stats (section stays hidden until /api/stats exists) ---------- */
   var statsSec = document.getElementById("stats");

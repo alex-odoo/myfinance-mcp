@@ -74,10 +74,19 @@ header.site {
 .site-inner { display: flex; align-items: center; gap: 28px; height: 64px; }
 .logo { font-weight: 700; letter-spacing: -.01em; text-decoration: none; font-size: 17px; display: flex; align-items: center; gap: 10px; }
 .logo b { color: var(--accent); }
-.logo-mark {
-  width: 22px; height: 22px; border-radius: 6px; background: var(--accent);
-  display: inline-flex; align-items: center; justify-content: center;
-  color: var(--paper); font-family: var(--mono); font-size: 12px; font-weight: 700;
+
+/* The mark: a fictional currency glyph (franc-based F, split like a cut gem). */
+.mark { color: var(--accent); display: block; overflow: visible; }
+.mark polygon { fill: currentColor; }
+.mark .mk-top, .mark .mk-bot { transition: transform .25s ease; }
+.logo:hover .mk-top, a:hover > .mark .mk-top { transform: translateY(-1.5px); }
+.logo:hover .mk-bot, a:hover > .mark .mk-bot { transform: translateY(1.5px); }
+.mark .mk-sheen { fill: #fff; opacity: 0; animation: mksheen 7s ease-in-out infinite; }
+@keyframes mksheen {
+  0%, 74% { transform: rotate(18deg) translateX(-30px); opacity: 0; }
+  78%     { opacity: .55; }
+  90%     { transform: rotate(18deg) translateX(96px); opacity: .55; }
+  91%, 100% { transform: rotate(18deg) translateX(96px); opacity: 0; }
 }
 nav.main { display: flex; gap: 22px; margin-left: auto; }
 nav.main a { text-decoration: none; font-size: 14.5px; color: var(--muted); }
@@ -194,8 +203,21 @@ h1 .talk { color: var(--accent); }
 .acct .av { font-family: var(--mono); font-size: 13.5px; font-variant-numeric: tabular-nums; white-space: nowrap; }
 
 /* ---------- sections ---------- */
-section { border-bottom: 1px solid var(--rule); padding: 88px 0; }
+section { border-bottom: 1px solid var(--rule); padding: 88px 0; position: relative; overflow: hidden; }
 @media (max-width: 700px) { section { padding: 60px 0; } }
+section > .wrap { position: relative; z-index: 1; }
+
+/* Currency watermarks: one glyph per section, fades in on scroll. */
+.swm {
+  position: absolute; top: 2%;
+  font-family: var(--mono); font-weight: 700; line-height: 1;
+  font-size: min(24vw, 300px); color: var(--rule-soft);
+  user-select: none; pointer-events: none; z-index: 0;
+  opacity: 0; transition: opacity 1.4s ease;
+}
+.swm.right { right: -2%; }
+.swm.left { left: -2%; }
+.swm.in { opacity: 1; }
 .eyebrow {
   font-family: var(--mono); font-size: 12px; letter-spacing: .14em; text-transform: uppercase;
   color: var(--accent); margin-bottom: 14px; display: block;
@@ -348,4 +370,5 @@ footer.site { padding: 36px 0 52px; font-size: 14px; color: var(--muted); border
   .reveal { opacity: 1; transform: none; }
   .render { opacity: 1; transform: none; }
   .fill { width: var(--tw, 60%) !important; }
+  .swm { opacity: 1; }
 }
