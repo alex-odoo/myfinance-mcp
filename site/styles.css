@@ -75,19 +75,9 @@ header.site {
 .logo { font-weight: 700; letter-spacing: -.01em; text-decoration: none; font-size: 17px; display: flex; align-items: center; gap: 10px; }
 .logo b { color: var(--accent); }
 
-/* The mark: a fictional currency glyph (franc-based F, split like a cut gem). */
-.mark { color: var(--accent); display: block; overflow: visible; }
-.mark polygon { fill: currentColor; }
-.mark .mk-top, .mark .mk-bot { transition: transform .25s ease; }
-.logo:hover .mk-top, a:hover > .mark .mk-top { transform: translateY(-1.5px); }
-.logo:hover .mk-bot, a:hover > .mark .mk-bot { transform: translateY(1.5px); }
-.mark .mk-sheen { fill: #fff; opacity: 0; animation: mksheen 7s ease-in-out infinite; }
-@keyframes mksheen {
-  0%, 74% { transform: rotate(18deg) translateX(-30px); opacity: 0; }
-  78%     { opacity: .55; }
-  90%     { transform: rotate(18deg) translateX(96px); opacity: .55; }
-  91%, 100% { transform: rotate(18deg) translateX(96px); opacity: 0; }
-}
+/* The mark: gold coin stack with sparkles (site/logo.png). */
+.mark { display: block; transition: transform .25s ease; }
+.logo:hover .mark, a:hover > .mark { transform: translateY(-1.5px); }
 nav.main { display: flex; gap: 22px; margin-left: auto; }
 nav.main a { text-decoration: none; font-size: 14.5px; color: var(--muted); }
 nav.main a:hover { color: var(--ink); }
