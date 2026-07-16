@@ -55,11 +55,6 @@ ssh -i "$SSH_KEY" "$SERVER" "set -e
     ln -sf /etc/nginx/sites-available/myfinance-mcp-com /etc/nginx/sites-enabled/myfinance-mcp-com
     changed=1
   fi
-  if [ ! -f /etc/nginx/sites-available/myfinancemcp-com ]; then
-    cp $REMOTE_DIR/deploy/nginx-myfinancemcp-com.conf /etc/nginx/sites-available/myfinancemcp-com
-    ln -sf /etc/nginx/sites-available/myfinancemcp-com /etc/nginx/sites-enabled/myfinancemcp-com
-    changed=1
-  fi
   if [ \$changed = 1 ]; then nginx -t && systemctl reload nginx; fi
 "
 # NOTE: after certbot rewrites the vhost with TLS blocks, deploy.sh intentionally
