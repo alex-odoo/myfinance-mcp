@@ -19,8 +19,10 @@ await client.connect(clientTransport);
 
 const tools = (await client.listTools()).tools.map((t) => ({
   name: t.name,
+  title: t.title,
   description: t.description,
   inputSchema: t.inputSchema,
+  annotations: t.annotations,
 }));
 const resources = await client
   .listResources()

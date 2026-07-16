@@ -129,6 +129,7 @@ export function registerFinanceTools(server: McpServer, userId: string): void {
     "ping",
     {
       title: "Ping",
+      annotations: { readOnlyHint: true, openWorldHint: false },
       description: "Health check for the MyFinance MCP connection.",
       inputSchema: {},
     },
@@ -142,6 +143,7 @@ export function registerFinanceTools(server: McpServer, userId: string): void {
     "log_expense",
     {
       title: "Log expense",
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
       description:
         "Record ONE purchase, bill, or receipt. Negative amount = refund to the same category. NEVER use this for bank-statement rows or any batch of 3+ records: use import_transactions with the whole array instead (one-by-one logging hits the per-turn tool limit).",
       inputSchema: {
@@ -165,6 +167,7 @@ export function registerFinanceTools(server: McpServer, userId: string): void {
     "log_income",
     {
       title: "Log income",
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
       description: "Record incoming money: salary, client payment, gift.",
       inputSchema: {
         amount: z.number().positive().describe("Amount received in the original currency."),
@@ -186,6 +189,7 @@ export function registerFinanceTools(server: McpServer, userId: string): void {
     "create_account",
     {
       title: "Create account",
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
       description:
         "Add a money account: bank, card, cash, or investment (brokerage). Transfers between own accounts are then tracked without counting as spending.",
       inputSchema: {
@@ -214,6 +218,7 @@ export function registerFinanceTools(server: McpServer, userId: string): void {
     {
       _meta: DASHBOARD_TOOL_META,
       title: "Accounts & net worth",
+      annotations: { readOnlyHint: true, openWorldHint: false },
       description:
         "All accounts with computed balances (latest snapshot + tracked flows) and total net worth in the base currency. Optionally filtered to personal or business scope.",
       inputSchema: {
@@ -261,6 +266,7 @@ export function registerFinanceTools(server: McpServer, userId: string): void {
     "log_transfer",
     {
       title: "Log transfer",
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
       description:
         "Move money between OWN accounts: card to brokerage, cash withdrawal, currency exchange. Never counted as spending or income.",
       inputSchema: {
@@ -315,6 +321,7 @@ export function registerFinanceTools(server: McpServer, userId: string): void {
     "log_balance",
     {
       title: "Log balance snapshot",
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
       description:
         "Anchor an account's REAL balance at end of a date (from the bank app). Balances are then snapshot + later flows.",
       inputSchema: {
@@ -343,6 +350,7 @@ export function registerFinanceTools(server: McpServer, userId: string): void {
     "import_transactions",
     {
       title: "Bulk import",
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
       description:
         "Import bank-statement / statement-screenshot rows in bulk. ALWAYS send the ENTIRE statement as ONE call with the full transactions array (up to 500 rows) - never split into chunks, never log rows one-by-one via log_expense. If one statement truly cannot fit in a single call, EVERY row of EVERY chunk must carry external_id (bank reference; or the statement row number, e.g. 'r017') - rows without external_id are keyed by amount+date+occurrence WITHIN one call, so identical rows arriving in different calls are indistinguishable from re-imports. Safe to re-run: keyed rows are skipped, a hand-logged twin is merged into the bank row instead of duplicating, and repeated purchases (same merchant and amount on different days, or twice the same day) import normally. Unknown categories become 'other'. Pass statement_total to get a reconciliation check. Sign convention: negative amount = money out, positive = money in.",
       inputSchema: {
@@ -570,6 +578,7 @@ export function registerFinanceTools(server: McpServer, userId: string): void {
     {
       _meta: DASHBOARD_TOOL_META,
       title: "Spending summary",
+      annotations: { readOnlyHint: true, openWorldHint: false },
       description:
         "Totals for a period, computed server-side in the user's base currency. Answers 'how much did I spend on X in July'.",
       inputSchema: {
@@ -632,6 +641,7 @@ export function registerFinanceTools(server: McpServer, userId: string): void {
     "get_transactions",
     {
       title: "List transactions",
+      annotations: { readOnlyHint: true, openWorldHint: false },
       description: "Find records: 'what was that 40 eur charge', recent spending, by category or merchant.",
       inputSchema: {
         from: dateSchema.optional(),
@@ -692,6 +702,7 @@ export function registerFinanceTools(server: McpServer, userId: string): void {
     "update_transaction",
     {
       title: "Update transaction",
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
       description: "Fix a logged record: wrong category, amount, merchant, date, or personal/business scope.",
       inputSchema: {
         id: z.string().uuid(),
@@ -740,6 +751,7 @@ export function registerFinanceTools(server: McpServer, userId: string): void {
     "delete_transaction",
     {
       title: "Delete transaction",
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
       description: "Remove ONE wrongly logged record. For 3+ records use delete_transactions (bulk) with the ids array.",
       inputSchema: { id: z.string().uuid() },
     },
@@ -754,6 +766,7 @@ export function registerFinanceTools(server: McpServer, userId: string): void {
     "delete_transactions",
     {
       title: "Bulk delete",
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
       description:
         "Delete MANY transactions in ONE call by ids (from get_transactions). Always prefer this over repeated delete_transaction calls - one-by-one deletion hits the per-turn tool limit.",
       inputSchema: {
@@ -772,6 +785,7 @@ export function registerFinanceTools(server: McpServer, userId: string): void {
     {
       _meta: DASHBOARD_TOOL_META,
       title: "Monthly trends",
+      annotations: { readOnlyHint: true, openWorldHint: false },
       description: "Month-over-month expense/income dynamics, optionally for one category or scope.",
       inputSchema: {
         months: z.number().int().min(2).max(24).optional().describe("How many months back. Default 6."),
@@ -822,6 +836,7 @@ export function registerFinanceTools(server: McpServer, userId: string): void {
     "set_budget",
     {
       title: "Set budget",
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
       description: "Monthly spending cap, overall or per category, in the user's base currency.",
       inputSchema: {
         amount: z.number().positive(),
@@ -845,6 +860,7 @@ export function registerFinanceTools(server: McpServer, userId: string): void {
     {
       _meta: DASHBOARD_TOOL_META,
       title: "Budget progress",
+      annotations: { readOnlyHint: true, openWorldHint: false },
       description: "Current month: spent vs cap for every budget. Budgets track PERSONAL spending only; business-scope transactions never count against them.",
       inputSchema: {},
     },
@@ -883,6 +899,7 @@ export function registerFinanceTools(server: McpServer, userId: string): void {
     "get_settings",
     {
       title: "Get settings",
+      annotations: { readOnlyHint: true, openWorldHint: false },
       description: "Base currency and timezone.",
       inputSchema: {},
     },
@@ -896,6 +913,7 @@ export function registerFinanceTools(server: McpServer, userId: string): void {
     "update_settings",
     {
       title: "Update settings",
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
       description:
         "Change base currency (recomputes all historical stats at each transaction's original date rate) or timezone.",
       inputSchema: {
@@ -935,6 +953,7 @@ export function registerFinanceTools(server: McpServer, userId: string): void {
     "export_transactions",
     {
       title: "Export CSV",
+      annotations: { readOnlyHint: true, openWorldHint: false },
       description: "All transactions as CSV (GDPR portability). Optionally one scope only, e.g. business rows for the accountant.",
       inputSchema: { from: dateSchema.optional(), to: dateSchema.optional(), entity: entitySchema.optional() },
     },
@@ -978,6 +997,7 @@ export function registerFinanceTools(server: McpServer, userId: string): void {
     "delete_account",
     {
       title: "Delete account",
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
       description: "Erase the account and ALL financial data permanently (GDPR). Requires confirm='DELETE'.",
       inputSchema: { confirm: z.literal("DELETE") },
     },
