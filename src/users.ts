@@ -1,5 +1,6 @@
 import { db } from "./db";
 import { config } from "./config";
+import { notifySignup } from "./notify";
 
 export interface SessionUser {
   id: string;
@@ -43,6 +44,7 @@ export async function findOrCreateGoogleUser(email: string, sub: string): Promis
   const created = await db.user.create({
     data: { email: normalized, googleSub: sub, baseCurrency: "EUR", timezone: "UTC" },
   });
+  notifySignup(created.email, "google");
   return { id: created.id, email: created.email };
 }
 
