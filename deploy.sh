@@ -6,7 +6,8 @@ set -euo pipefail
 SERVER="root@23.88.115.126"
 SSH_KEY="$HOME/.ssh/rteam_hetzner"
 REMOTE_DIR="/opt/myfinance-mcp"
-DOMAIN="finance.rteam.agency"
+DOMAIN="myfinance-mcp.com"
+LEGACY_DOMAIN="finance.rteam.agency"
 
 MSG="${1:?Usage: ./deploy.sh \"what changed\"}"
 
@@ -49,6 +50,11 @@ ssh -i "$SSH_KEY" "$SERVER" "set -e
     ln -sf /etc/nginx/sites-available/finance-rteam-agency /etc/nginx/sites-enabled/finance-rteam-agency
     changed=1
   fi
+  if [ ! -f /etc/nginx/sites-available/myfinance-mcp-com ]; then
+    cp $REMOTE_DIR/deploy/nginx-myfinance-mcp-com.conf /etc/nginx/sites-available/myfinance-mcp-com
+    ln -sf /etc/nginx/sites-available/myfinance-mcp-com /etc/nginx/sites-enabled/myfinance-mcp-com
+    changed=1
+  fi
   if [ \$changed = 1 ]; then nginx -t && systemctl reload nginx; fi
 "
 # NOTE: after certbot rewrites the vhost with TLS blocks, deploy.sh intentionally
@@ -83,10 +89,12 @@ PY
 echo "==> Health check"
 sleep 2
 ssh -i "$SSH_KEY" "$SERVER" "curl -sf http://127.0.0.1:8788/health" && echo "    container healthy"
-if curl -sf --max-time 10 "https://$DOMAIN/health" >/dev/null 2>&1; then
-  echo "    https://$DOMAIN healthy"
-else
-  echo "    (https://$DOMAIN not reachable yet: DNS or certbot pending)"
-fi
+for d in "$DOMAIN" "$LEGACY_DOMAIN"; do
+  if curl -sf --max-time 10 "https://$d/health" >/dev/null 2>&1; then
+    echo "    https://$d healthy"
+  else
+    echo "    (https://$d not reachable yet: DNS or certbot pending)"
+  fi
+done
 
 echo "==> Done: $MSG"
