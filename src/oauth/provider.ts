@@ -14,7 +14,8 @@ import type {
 import { InvalidGrantError, InvalidTokenError } from "@modelcontextprotocol/sdk/server/auth/errors.js";
 import { OAuthStore } from "./store";
 import { loginPage } from "./login";
-import { verifyLogin } from "../users";
+import { verifyLogin, findOrCreateGoogleUser, type SessionUser } from "../users";
+import { config } from "../config";
 
 const ACCESS_TOKEN_TTL_MS = 24 * 60 * 60 * 1000;
 const REFRESH_TOKEN_TTL_MS = 60 * 24 * 60 * 60 * 1000;
@@ -34,6 +35,12 @@ function newSecret(bytes = 32): string {
   return randomBytes(bytes).toString("base64url");
 }
 
+function decodeJwtPayload(jwt: string): Record<string, unknown> {
+  const parts = jwt.split(".");
+  if (parts.length !== 3) throw new Error("malformed jwt");
+  return JSON.parse(Buffer.from(parts[1]!, "base64url").toString("utf8"));
+}
+
 /**
  * OAuth 2.1 provider. Login is checked against the users table (M1: the one
  * bootstrapped account; signup comes later). Pending auth requests and login
@@ -43,6 +50,8 @@ function newSecret(bytes = 32): string {
 export class FinanceOAuthProvider implements OAuthServerProvider {
   private readonly pending = new Map<string, PendingAuthRequest>();
   private readonly loginAttempts = new Map<string, { count: number; resetAt: number }>();
+  /** Google OIDC state -> our pending auth request (CSRF binding). */
+  private readonly googleStates = new Map<string, { requestId: string; expiresAt: number }>();
 
   constructor(private readonly store: OAuthStore) {}
 
@@ -101,24 +110,123 @@ export class FinanceOAuthProvider implements OAuthServerProvider {
         return;
       }
 
-      this.pending.delete(requestId!);
-      const code = newSecret();
-      await this.store.saveCode(code, {
-        clientId: pendingReq.clientId,
-        codeChallenge: pendingReq.params.codeChallenge,
-        redirectUri: pendingReq.params.redirectUri,
-        scopes: pendingReq.params.scopes ?? [],
-        resource: pendingReq.params.resource?.href,
-        userId: user.id,
-        expiresAt: Date.now() + CODE_TTL_MS,
-      });
-
-      const redirect = new URL(pendingReq.params.redirectUri);
-      redirect.searchParams.set("code", code);
-      if (pendingReq.params.state) redirect.searchParams.set("state", pendingReq.params.state);
-      res.redirect(302, redirect.href);
+      await this.finishLogin(requestId!, pendingReq, user.id, res);
     });
+
+    router.get("/auth/google", (req, res) => {
+      if (!config.googleClientId || !config.googleClientSecret) {
+        res.status(404).send("Google sign-in is not configured");
+        return;
+      }
+      const requestId = String(req.query.request_id ?? "");
+      const pendingReq = requestId ? this.pending.get(requestId) : undefined;
+      if (!pendingReq || pendingReq.expiresAt < Date.now()) {
+        res.status(400).type("html").send(loginPage("", undefined, "Sign-in request expired. Retry from your AI client."));
+        return;
+      }
+      this.pruneGoogleStates();
+      const state = newSecret();
+      this.googleStates.set(state, { requestId, expiresAt: Date.now() + AUTH_REQUEST_TTL_MS });
+
+      const url = new URL("https://accounts.google.com/o/oauth2/v2/auth");
+      url.searchParams.set("client_id", config.googleClientId);
+      url.searchParams.set("redirect_uri", `${config.baseUrl}/auth/google/callback`);
+      url.searchParams.set("response_type", "code");
+      url.searchParams.set("scope", "openid email");
+      url.searchParams.set("state", state);
+      url.searchParams.set("prompt", "select_account");
+      res.redirect(302, url.href);
+    });
+
+    router.get("/auth/google/callback", async (req, res) => {
+      if (!config.googleClientId || !config.googleClientSecret) {
+        res.status(404).send("Google sign-in is not configured");
+        return;
+      }
+      const state = String(req.query.state ?? "");
+      const stateRec = state ? this.googleStates.get(state) : undefined;
+      if (stateRec) this.googleStates.delete(state); // single-use
+      const pendingReq = stateRec ? this.pending.get(stateRec.requestId) : undefined;
+      if (!stateRec || stateRec.expiresAt < Date.now() || !pendingReq || pendingReq.expiresAt < Date.now()) {
+        res.status(400).type("html").send(loginPage("", undefined, "Sign-in request expired. Retry from your AI client."));
+        return;
+      }
+      const code = String(req.query.code ?? "");
+      if (!code) {
+        res.status(400).type("html").send(loginPage(stateRec.requestId, pendingReq.clientName, "Google sign-in was cancelled."));
+        return;
+      }
+      try {
+        const user = await this.googleUserFromCode(code);
+        await this.finishLogin(stateRec.requestId, pendingReq, user.id, res);
+      } catch (err) {
+        console.error("google sign-in failed:", err instanceof Error ? err.message : String(err));
+        this.recordFailedLogin(req.ip ?? "unknown");
+        res.status(401).type("html").send(
+          loginPage(stateRec.requestId, pendingReq.clientName, "Google sign-in failed. Try again or use email and password.")
+        );
+      }
+    });
+
     return router;
+  }
+
+  /** Exchange the Google authorization code and provision/find the user. */
+  private async googleUserFromCode(code: string): Promise<SessionUser> {
+    const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        code,
+        client_id: config.googleClientId,
+        client_secret: config.googleClientSecret,
+        redirect_uri: `${config.baseUrl}/auth/google/callback`,
+        grant_type: "authorization_code",
+      }),
+    });
+    if (!tokenRes.ok) throw new Error(`google token endpoint returned ${tokenRes.status}`);
+    const tokens = (await tokenRes.json()) as { id_token?: string };
+    if (!tokens.id_token) throw new Error("google response missing id_token");
+
+    // The id_token arrived directly from Google's token endpoint over TLS,
+    // so claim validation (not signature verification) is what matters here.
+    const claims = decodeJwtPayload(tokens.id_token) as {
+      iss?: string; aud?: string; exp?: number; sub?: string; email?: string; email_verified?: boolean;
+    };
+    if (claims.iss !== "https://accounts.google.com" && claims.iss !== "accounts.google.com") {
+      throw new Error("id_token issuer mismatch");
+    }
+    if (claims.aud !== config.googleClientId) throw new Error("id_token audience mismatch");
+    if (typeof claims.exp !== "number" || claims.exp * 1000 < Date.now()) throw new Error("id_token expired");
+    if (!claims.sub) throw new Error("id_token missing sub");
+    if (!claims.email || claims.email_verified !== true) throw new Error("google email not verified");
+
+    return findOrCreateGoogleUser(claims.email, claims.sub);
+  }
+
+  /** Consume the pending auth request: issue our code and send the user back to the MCP client. */
+  private async finishLogin(
+    requestId: string,
+    pendingReq: PendingAuthRequest,
+    userId: string,
+    res: Response
+  ): Promise<void> {
+    this.pending.delete(requestId);
+    const code = newSecret();
+    await this.store.saveCode(code, {
+      clientId: pendingReq.clientId,
+      codeChallenge: pendingReq.params.codeChallenge,
+      redirectUri: pendingReq.params.redirectUri,
+      scopes: pendingReq.params.scopes ?? [],
+      resource: pendingReq.params.resource?.href,
+      userId,
+      expiresAt: Date.now() + CODE_TTL_MS,
+    });
+
+    const redirect = new URL(pendingReq.params.redirectUri);
+    redirect.searchParams.set("code", code);
+    if (pendingReq.params.state) redirect.searchParams.set("state", pendingReq.params.state);
+    res.redirect(302, redirect.href);
   }
 
   async challengeForAuthorizationCode(
@@ -227,6 +335,11 @@ export class FinanceOAuthProvider implements OAuthServerProvider {
   private prunePending(): void {
     const now = Date.now();
     for (const [id, req] of this.pending) if (req.expiresAt < now) this.pending.delete(id);
+  }
+
+  private pruneGoogleStates(): void {
+    const now = Date.now();
+    for (const [state, rec] of this.googleStates) if (rec.expiresAt < now) this.googleStates.delete(state);
   }
 
   private isRateLimited(ip: string): boolean {

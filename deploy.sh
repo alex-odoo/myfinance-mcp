@@ -55,6 +55,12 @@ ssh -i "$SSH_KEY" "$SERVER" "set -e
     ln -sf /etc/nginx/sites-available/myfinance-mcp-com /etc/nginx/sites-enabled/myfinance-mcp-com
     changed=1
   fi
+  # Landing locations are included from the vhosts by path; nginx only re-reads
+  # them on reload, so detect content changes via an applied-copy snapshot.
+  if ! cmp -s $REMOTE_DIR/deploy/nginx-landing-locations.conf /etc/nginx/.myfinance-landing.applied 2>/dev/null; then
+    cp $REMOTE_DIR/deploy/nginx-landing-locations.conf /etc/nginx/.myfinance-landing.applied
+    changed=1
+  fi
   if [ \$changed = 1 ]; then nginx -t && systemctl reload nginx; fi
 "
 # NOTE: after certbot rewrites the vhost with TLS blocks, deploy.sh intentionally

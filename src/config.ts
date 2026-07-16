@@ -4,6 +4,10 @@ export const config = {
   userEmail: (process.env.MYFINANCE_MCP_EMAIL ?? "").toLowerCase(),
   passwordHash: process.env.MYFINANCE_MCP_PASSWORD_HASH ?? "",
   databaseUrl: process.env.DATABASE_URL ?? "",
+  // Google sign-in is optional: the button and /auth/google routes activate
+  // only when both values are set.
+  googleClientId: process.env.GOOGLE_CLIENT_ID ?? "",
+  googleClientSecret: process.env.GOOGLE_CLIENT_SECRET ?? "",
 };
 
 export function assertConfig(): void {

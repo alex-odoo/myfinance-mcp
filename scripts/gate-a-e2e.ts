@@ -66,6 +66,10 @@ async function main(): Promise<void> {
         BASE_URL: BASE,
         MYFINANCE_MCP_EMAIL: EMAIL,
         MYFINANCE_MCP_PASSWORD_HASH: hash,
+        // Fake Google OAuth client: enables the button + start/callback routes
+        // so the redirect and CSRF-state negative paths are testable offline.
+        GOOGLE_CLIENT_ID: "e2e-google-client.apps.googleusercontent.com",
+        GOOGLE_CLIENT_SECRET: "e2e-google-secret",
       },
       stdout: "pipe",
       stderr: "pipe",
@@ -120,6 +124,23 @@ async function main(): Promise<void> {
   const authHtml = await authRes.text();
   const requestId = authHtml.match(/name="request_id" value="([^"]+)"/)?.[1];
   ok("authorize renders login form", authRes.status === 200 && !!requestId);
+
+  // 3b. Google sign-in wiring
+  if (!externalBase) {
+    ok("login page offers Google", authHtml.includes(`/auth/google?request_id=`));
+    const gStart = await fetch(`${BASE}/auth/google?request_id=${requestId}`, { redirect: "manual" });
+    const gLoc = gStart.headers.get("location") ?? "";
+    ok(
+      "google start -> 302 to accounts.google.com",
+      gStart.status === 302 && gLoc.startsWith("https://accounts.google.com/o/oauth2/v2/auth")
+    );
+    ok("google start carries state + client_id", /[?&]state=/.test(gLoc) && gLoc.includes("client_id="));
+  }
+  // Enabled -> 400 (bad request), not configured -> 404; both prove routing works.
+  const gBadReq = await fetch(`${BASE}/auth/google?request_id=bogus`, { redirect: "manual" });
+  ok("google start with bogus request rejected", gBadReq.status === 400 || gBadReq.status === 404);
+  const gBadState = await fetch(`${BASE}/auth/google/callback?state=bogus&code=x`, { redirect: "manual" });
+  ok("google callback with bogus state rejected", gBadState.status === 400 || gBadState.status === 404);
 
   // 4. Wrong password rejected
   const badLogin = await fetch(`${BASE}/login`, {

@@ -24,6 +24,28 @@ export async function bootstrapUser(): Promise<void> {
   });
 }
 
+/**
+ * Google sign-in provisioning. Identity anchor is Google's stable `sub`;
+ * a user who signed up by email first gets the sub linked on first Google
+ * login (same verified email = same person, Google enforces verification).
+ */
+export async function findOrCreateGoogleUser(email: string, sub: string): Promise<SessionUser> {
+  const bySub = await db.user.findUnique({ where: { googleSub: sub } });
+  if (bySub) return { id: bySub.id, email: bySub.email };
+
+  const normalized = email.trim().toLowerCase();
+  const byEmail = await db.user.findUnique({ where: { email: normalized } });
+  if (byEmail) {
+    await db.user.update({ where: { id: byEmail.id }, data: { googleSub: sub } });
+    return { id: byEmail.id, email: byEmail.email };
+  }
+
+  const created = await db.user.create({
+    data: { email: normalized, googleSub: sub, baseCurrency: "EUR", timezone: "UTC" },
+  });
+  return { id: created.id, email: created.email };
+}
+
 export async function verifyLogin(email: string, password: string): Promise<SessionUser | null> {
   const user = await db.user.findUnique({ where: { email: email.trim().toLowerCase() } });
   if (!user?.passwordHash) return null;
