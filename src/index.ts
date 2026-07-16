@@ -81,6 +81,39 @@ app.get("/health", (_req, res) => {
   res.json({ ok: true, server: SERVER_NAME, version: SERVER_VERSION });
 });
 
+// Public aggregate counters for the landing stats section.
+// Counts only, never amounts (privacy spec). Cached to keep a public
+// unauthenticated endpoint from becoming a DB load vector.
+let statsCache: { body: Record<string, unknown>; at: number } | null = null;
+const STATS_CACHE_MS = 5 * 60 * 1000;
+app.get("/api/stats", async (_req, res) => {
+  try {
+    if (!statsCache || Date.now() - statsCache.at > STATS_CACHE_MS) {
+      const [transactions, currencies, tzRows, imports, dryRuns] = await Promise.all([
+        db.transaction.count(),
+        db.transaction.findMany({ distinct: ["currency"], select: { currency: true } }),
+        db.user.findMany({ distinct: ["timezone"], select: { timezone: true } }),
+        db.event.count({ where: { type: "bank_imported" } }),
+        db.event.count({ where: { type: "bank_imported", meta: { path: ["dry_run"], equals: true } } }),
+      ]);
+      const timezone_list = tzRows.map((r) => r.timezone).filter((tz) => tz !== "UTC");
+      statsCache = {
+        at: Date.now(),
+        body: {
+          transactions,
+          currencies: currencies.length,
+          files: imports - dryRuns,
+          timezones: timezone_list.length,
+          timezone_list,
+        },
+      };
+    }
+    res.set("Cache-Control", "public, max-age=300").json(statsCache.body);
+  } catch {
+    res.status(500).json({ error: "stats_unavailable" });
+  }
+});
+
 app.get("/", (_req, res) => {
   res
     .type("text/plain")

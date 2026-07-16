@@ -60,8 +60,9 @@
       '<div class="nw">24,300 EUR</div>' +
       '<div class="nw-sub">5 accounts · 3 currencies · converted at today\'s rates</div>' +
       acct("Revolut", "", "6,420 EUR") +
-      acct("WIO", "business", "11,900 AED eq.") +
-      acct("Wise", "", "3,180 USD eq.") +
+      acct("Chase", "business", "11,900 USD eq.") +
+      acct("Santander", "", "4,700 EUR") +
+      acct("Wise", "", "1,850 GBP eq.") +
       acct("Cash", "", "800 EUR");
     return r;
   }
@@ -189,19 +190,81 @@
   document.querySelectorAll(".reveal").forEach(function (r) { io.observe(r); });
   document.querySelectorAll(".swm").forEach(function (w) { io.observe(w); });
 
-  /* ---------- global stats (section stays hidden until /api/stats exists) ---------- */
+  /* ---------- global stats + world map ---------- */
+  /* Early-days seed: timezones shown on the map while real coverage catches up.
+     Merged with the live timezone_list from /api/stats, dupes collapse by point. */
+  var SEED_TZS = [
+    "Europe/Kyiv", "Europe/Warsaw", "Europe/Berlin", "Europe/London", "Europe/Paris",
+    "Europe/Madrid", "Europe/Lisbon", "Europe/Amsterdam", "Europe/Prague", "Europe/Bucharest",
+    "Europe/Vienna", "Europe/Istanbul", "Asia/Dubai", "Asia/Jerusalem", "Asia/Singapore",
+    "Asia/Tokyo", "Asia/Bangkok", "Asia/Kolkata", "America/New_York", "America/Chicago",
+    "America/Los_Angeles", "America/Toronto", "America/Sao_Paulo", "America/Mexico_City",
+    "Australia/Sydney"
+  ];
+  var SVGNS = "http://www.w3.org/2000/svg";
+  /* UTC-equivalent zones resolve to [500,250] (lon 0, lat 0 - open ocean): skip. */
+  var UTC_TZS = { "UTC": 1, "Etc/UTC": 1, "Etc/GMT": 1 };
+
+  function buildMap(mapData, tzs) {
+    var svg = document.getElementById("worldSvg");
+    if (!svg || !mapData) return 0;
+    var frag = document.createDocumentFragment();
+    mapData.land.forEach(function (p) {
+      var c = document.createElementNS(SVGNS, "circle");
+      c.setAttribute("cx", p[0]);
+      c.setAttribute("cy", p[1]);
+      c.setAttribute("r", "1.9");
+      c.setAttribute("class", "land-dot");
+      frag.appendChild(c);
+    });
+    svg.appendChild(frag);
+    var seen = {};
+    var plotted = 0;
+    tzs.forEach(function (tz, i) {
+      if (UTC_TZS[tz]) return;
+      var pt = mapData.tz[tz];
+      if (!pt) return;
+      var k = pt[0] + "," + pt[1];
+      if (seen[k]) return;
+      seen[k] = true;
+      plotted++;
+      var halo = document.createElementNS(SVGNS, "circle");
+      halo.setAttribute("cx", pt[0]);
+      halo.setAttribute("cy", pt[1]);
+      halo.setAttribute("r", "9");
+      halo.setAttribute("class", "tz-halo");
+      if (!reduced) halo.style.animationDelay = (i % 6) * 0.45 + "s";
+      var core = document.createElementNS(SVGNS, "circle");
+      core.setAttribute("cx", pt[0]);
+      core.setAttribute("cy", pt[1]);
+      core.setAttribute("r", "3.2");
+      core.setAttribute("class", "tz-core");
+      svg.appendChild(halo);
+      svg.appendChild(core);
+    });
+    return plotted;
+  }
+
   var statsSec = document.getElementById("stats");
   if (statsSec) {
-    fetch("/api/stats").then(function (res) {
-      if (!res.ok) throw new Error("no stats");
-      return res.json();
-    }).then(function (s) {
+    Promise.all([
+      fetch("/api/stats").then(function (res) {
+        if (!res.ok) throw new Error("no stats");
+        return res.json();
+      }),
+      fetch("/map-data.json").then(function (res) {
+        return res.ok ? res.json() : null;
+      })
+    ]).then(function (res) {
+      var s = res[0];
       if (!s || !s.transactions) return;
       document.getElementById("stTx").setAttribute("data-count", s.transactions);
+      document.getElementById("stFiles").setAttribute("data-count", s.files || 0);
       document.getElementById("stCur").setAttribute("data-count", s.currencies || 0);
-      document.getElementById("stCty").setAttribute("data-count", s.countries || 0);
+      var plotted = buildMap(res[1], SEED_TZS.concat(s.timezone_list || []));
+      document.getElementById("mapCount").setAttribute("data-count", plotted);
       statsSec.hidden = false;
-      io.observe(statsSec.querySelector(".reveal"));
-    }).catch(function () { /* endpoint not built yet: section stays hidden */ });
+      statsSec.querySelectorAll(".reveal").forEach(function (r) { io.observe(r); });
+    }).catch(function () { /* stats unavailable: section stays hidden */ });
   }
 })();

@@ -88,6 +88,19 @@ async function main(): Promise<void> {
 
   console.log(`Gate A e2e against ${BASE}`);
 
+  // 0. Public landing stats: counts only, never amounts
+  const statsRes = await fetch(`${BASE}/api/stats`);
+  ok("stats endpoint responds", statsRes.ok);
+  const stats: any = await statsRes.json();
+  ok(
+    "stats shape (counts only)",
+    typeof stats.transactions === "number" &&
+      typeof stats.currencies === "number" &&
+      typeof stats.files === "number" &&
+      Array.isArray(stats.timezone_list),
+    JSON.stringify(stats).slice(0, 200)
+  );
+
   // 1. Discovery
   const asMeta: any = await (await fetch(`${BASE}/.well-known/oauth-authorization-server`)).json();
   ok("AS metadata", !!asMeta.authorization_endpoint && !!asMeta.token_endpoint);

@@ -326,6 +326,27 @@ pre.code .srv-url { font-size: inherit; }
 .stat .sv { font-family: var(--mono); font-size: clamp(2.2rem, 4.5vw, 3.4rem); font-weight: 700; letter-spacing: -.02em; font-variant-numeric: tabular-nums; line-height: 1.1; }
 .stat .sl { font-size: 14.5px; color: var(--muted); margin-top: 6px; }
 
+/* world map (stats section) */
+.map-block { margin-top: clamp(40px, 6vw, 64px); text-align: center; }
+.map-head { font-size: 15.5px; color: var(--muted); margin-bottom: 18px; }
+.map-count { font-family: var(--mono); font-weight: 700; color: var(--ink); font-variant-numeric: tabular-nums; }
+.world-map { width: 100%; max-width: 900px; margin: 0 auto; }
+.world-map svg { width: 100%; height: auto; display: block; overflow: visible; }
+.land-dot { fill: color-mix(in srgb, var(--muted) 45%, var(--paper)); }
+.tz-halo {
+  fill: var(--accent);
+  opacity: .3;
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: tzpulse 3s ease-in-out infinite;
+}
+.tz-core { fill: var(--accent-deep); }
+@keyframes tzpulse {
+  0%, 100% { opacity: .12; transform: scale(.8); }
+  50% { opacity: .4; transform: scale(1.15); }
+}
+@media (prefers-reduced-motion: reduce) { .tz-halo { animation: none; } }
+
 /* faq */
 .faq { max-width: 760px; }
 .faq details { border-bottom: 1px solid var(--rule); }

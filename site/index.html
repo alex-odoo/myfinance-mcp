@@ -315,8 +315,14 @@
     <p class="sec-sub">Counts only, never amounts. Your numbers stay yours.</p>
     <div class="stats reveal">
       <div class="stat"><div class="sv num" id="stTx" data-count="0">0</div><div class="sl">transactions logged</div></div>
+      <div class="stat"><div class="sv num" id="stFiles" data-count="0">0</div><div class="sl">statements &amp; receipts processed</div></div>
       <div class="stat"><div class="sv num" id="stCur" data-count="0">0</div><div class="sl">currencies</div></div>
-      <div class="stat"><div class="sv num" id="stCty" data-count="0">0</div><div class="sl">countries</div></div>
+    </div>
+    <div class="map-block reveal">
+      <p class="map-head">Logging from <span class="map-count num" id="mapCount">0</span> timezones worldwide</p>
+      <div class="world-map">
+        <svg id="worldSvg" viewBox="0 0 1000 500" preserveAspectRatio="xMidYMid meet" role="img" aria-label="World map showing timezones where MyFinance MCP is used"></svg>
+      </div>
     </div>
   </div>
 </section>
