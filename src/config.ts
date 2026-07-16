@@ -8,10 +8,10 @@ export const config = {
   // only when both values are set.
   googleClientId: process.env.GOOGLE_CLIENT_ID ?? "",
   googleClientSecret: process.env.GOOGLE_CLIENT_SECRET ?? "",
-  // Signup notifications via Resend (off unless the key is set).
+  // Signup notifications via Resend (off unless key + recipient are set).
   resendApiKey: process.env.RESEND_API_KEY ?? "",
-  notifyEmail: process.env.NOTIFY_EMAIL ?? "alex@rteam.top",
-  fromEmail: process.env.FROM_EMAIL ?? "notifications@rteam.agency",
+  notifyEmail: process.env.NOTIFY_EMAIL ?? "",
+  fromEmail: process.env.FROM_EMAIL ?? "",
 };
 
 export function assertConfig(): void {

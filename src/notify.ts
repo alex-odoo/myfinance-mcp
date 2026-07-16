@@ -7,7 +7,7 @@ import { config } from "./config";
  * notification must never fail a signup.
  */
 export function notifySignup(email: string, method: string): void {
-  if (!config.resendApiKey) return;
+  if (!config.resendApiKey || !config.notifyEmail || !config.fromEmail) return;
   void fetch("https://api.resend.com/emails", {
     method: "POST",
     headers: {
