@@ -118,14 +118,34 @@
       <p class="hero-sub">Connect Claude or ChatGPT, then just say what you spent. Expenses, income, budgets and net worth, logged and computed for you, in any currency.</p>
       <div class="cta-row">
         <a class="btn btn-solid" href="#install">Quick install</a>
-        <a class="btn btn-ghost" href="#examples">See it in action</a>
+        <a class="btn btn-ghost" href="#video">See it in action</a>
       </div>
       <p class="hero-note">No app. No forms. No spreadsheet. Every number computed in SQL.</p>
     </div>
 
-    <div class="video-shell hero-video" aria-label="Product demo video">
-      <video autoplay muted loop playsinline controls preload="metadata"
-             poster="/media/demo-poster.jpg" width="1920" height="1080"
+    <div class="demo" aria-label="Live product demo">
+      <div class="demo-bar">
+        <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+        <span class="demo-title">Claude · MyFinance connected</span>
+        <span class="live"><span class="live-dot"></span>live demo</span>
+      </div>
+      <div class="demo-body" id="demoBody"></div>
+    </div>
+  </div>
+</div>
+
+<main>
+
+<section id="video">
+  <div class="wrap">
+    <span class="eyebrow">Demo</span>
+    <h2>A full session in 55 seconds.</h2>
+    <p class="sec-sub">Demo data, real product: the dashboards in the video are the same ones your AI renders in chat.</p>
+    <div class="video-shell reveal">
+      <button class="vplay" id="vplay" aria-label="Play demo video">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13l11-6.5z"/></svg>
+      </button>
+      <video id="demoVideo" controls playsinline preload="none" poster="/media/demo-poster.jpg" width="1920" height="1080"
              aria-label="MyFinance MCP product demo video">
         <source src="/media/myfinance-mcp-demo.mp4" type="video/mp4">
         <source src="/media/myfinance-mcp-demo.webm" type="video/webm">
@@ -133,9 +153,7 @@
       </video>
     </div>
   </div>
-</div>
-
-<main>
+</section>
 
 <section id="how">
   <span class="swm right" aria-hidden="true">$</span>

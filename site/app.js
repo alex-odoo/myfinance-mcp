@@ -164,6 +164,17 @@
     }, { once: true });
   }
 
+  /* ---------- demo video: poster overlay play ---------- */
+  var vplay = document.getElementById("vplay");
+  var demoVideo = document.getElementById("demoVideo");
+  if (vplay && demoVideo) {
+    vplay.addEventListener("click", function () {
+      vplay.classList.add("off");
+      demoVideo.play();
+    });
+    demoVideo.addEventListener("play", function () { vplay.classList.add("off"); });
+  }
+
   /* ---------- reveal + counters ---------- */
   var io = new IntersectionObserver(function (entries) {
     entries.forEach(function (en) {
