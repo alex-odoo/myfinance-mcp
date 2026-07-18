@@ -107,6 +107,8 @@ async function main(): Promise<void> {
   ok("PKCE S256 advertised", asMeta.code_challenge_methods_supported?.includes("S256"));
   const prm: any = await (await fetch(`${BASE}/.well-known/oauth-protected-resource/mcp`)).json();
   ok("protected resource metadata", prm.resource?.endsWith("/mcp"));
+  const prmRoot: any = await (await fetch(`${BASE}/.well-known/oauth-protected-resource`)).json();
+  ok("protected resource metadata (root variant)", prmRoot.resource?.endsWith("/mcp"));
 
   // 2. Dynamic client registration
   const reg = await fetch(asMeta.registration_endpoint, {

@@ -45,6 +45,19 @@ app.use(
 );
 app.use(provider.loginRouter());
 
+// RFC 9728 root variant. The SDK router mounts protected-resource metadata at
+// /.well-known/oauth-protected-resource/mcp (path-suffixed form); claude.ai
+// also probes the suffix-less root form and treats 404 as "no metadata".
+// Same document on both keeps bare-domain installs discoverable.
+app.get("/.well-known/oauth-protected-resource", (_req, res) => {
+  res.json({
+    resource: `${config.baseUrl}/mcp`,
+    authorization_servers: [config.baseUrl],
+    scopes_supported: ["finance"],
+    resource_name: "MyFinance MCP",
+  });
+});
+
 const bearerAuth = requireBearerAuth({
   verifier: provider,
   resourceMetadataUrl: `${config.baseUrl}/.well-known/oauth-protected-resource/mcp`,
