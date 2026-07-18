@@ -6,7 +6,7 @@ import { EXPENSE_CATEGORIES, INCOME_CATEGORIES } from "./categories";
 import { resolveAccount, computeBalance, ACCOUNT_TYPES } from "./accounts";
 import { SERVER_VERSION } from "./version";
 import { DASHBOARD_TOOL_META } from "./ui";
-import { zenDiff } from "./zenmoney/client";
+import { detectZenHost } from "./zenmoney/client";
 import { encryptToken } from "./zenmoney/crypto";
 import { syncZenMoney } from "./zenmoney/sync";
 import type { TxType } from "./generated/prisma/enums";
@@ -1026,7 +1026,7 @@ export function registerFinanceTools(server: McpServer, userId: string): void {
       title: "Connect ZenMoney",
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
       description:
-        "Link a ZenMoney (zenmoney.app) account for read-only transaction sync. action=paste_token stores the user's personal ZenMoney API token (obtainable free at zerro.app: log in with ZenMoney, copy the token). action=status shows connection health and synced accounts. action=disconnect removes the link and stored token; already-imported transactions stay. After connecting, run sync_zenmoney.",
+        "Link a ZenMoney account (both zenmoney.app international and zenmoney.ru work; the right backend is auto-detected) for read-only transaction sync. action=paste_token stores the user's personal ZenMoney API token: get it free at zerro.app - log in choosing YOUR ZenMoney version on the login screen, then open zerro.app/token and copy it. action=status shows connection health and synced accounts. action=disconnect removes the link and stored token; already-imported transactions stay. After connecting, run sync_zenmoney.",
       inputSchema: {
         action: z.enum(["paste_token", "status", "disconnect"]),
         token: z.string().min(10).optional().describe("ZenMoney API token. Required for action=paste_token."),
@@ -1044,6 +1044,7 @@ export function registerFinanceTools(server: McpServer, userId: string): void {
         return text({
           connected: true,
           status: existing.status,
+          backend: existing.apiBase.replace("https://api.", ""),
           last_sync: existing.lastSyncAt?.toISOString() ?? null,
           last_error: existing.lastError ?? undefined,
           accounts_synced: Object.values(map).filter((m) => m.enabled).length,
@@ -1058,14 +1059,14 @@ export function registerFinanceTools(server: McpServer, userId: string): void {
       }
 
       if (!token) throw new Error("action=paste_token requires the token parameter.");
-      // Validate before storing: a cheap diff from 'now' returns a near-empty
-      // payload on a good token and 401 on a bad one.
-      await zenDiff(token, Math.floor(Date.now() / 1000));
+      // Validate before storing AND detect which ZenMoney backend issued the
+      // token (zenmoney.app international vs zenmoney.ru run separate servers).
+      const apiBase = await detectZenHost(token);
       const tokenEnc = encryptToken(token);
       await db.bankConnection.upsert({
         where: { userId_provider: { userId, provider: "zenmoney" } },
-        update: { tokenEnc, status: "active", lastError: null },
-        create: { userId, provider: "zenmoney", tokenEnc },
+        update: { tokenEnc, apiBase, status: "active", lastError: null },
+        create: { userId, provider: "zenmoney", tokenEnc, apiBase },
       });
       logEvent("bank_connected", userId, { provider: "zenmoney" });
       return text({

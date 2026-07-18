@@ -137,6 +137,9 @@ model BankConnection {
   userId          String    @db.Uuid
   provider        String // zenmoney
   tokenEnc        String // AES-256-GCM: base64(iv).base64(ciphertext).base64(tag)
+  // ZenMoney runs two separate backends (RU and international); a token is only
+  // valid on the one that issued it. Detected at connect time.
+  apiBase         String    @default("https://api.zenmoney.ru")
   serverTimestamp Int       @default(0) // Diff protocol cursor, unix seconds
   status          String    @default("active") // active | error
   lastSyncAt      DateTime?

@@ -69,7 +69,30 @@ export interface ZenDiffResponse {
   deletion?: ZenDeletion[];
 }
 
-export async function zenDiff(token: string, serverTimestamp: number): Promise<ZenDiffResponse> {
+// Two independent ZenMoney backends: zenmoney.app (international) and
+// zenmoney.ru accounts live on different servers; tokens are NOT interchangeable.
+// The env override (e2e stub) collapses the list to one.
+export function zenHosts(): string[] {
+  if (process.env.ZENMONEY_API_BASE) return [config.zenmoneyApiBase];
+  return ["https://api.zenmoney.app", "https://api.zenmoney.ru"];
+}
+
+/** Try the token against each backend; return the one that accepts it. */
+export async function detectZenHost(token: string): Promise<string> {
+  const ts = Math.floor(Date.now() / 1000);
+  let lastError: Error | null = null;
+  for (const host of zenHosts()) {
+    try {
+      await zenDiff(token, ts, host);
+      return host;
+    } catch (e) {
+      lastError = e instanceof Error ? e : new Error(String(e));
+    }
+  }
+  throw lastError ?? new Error("ZenMoney is unreachable.");
+}
+
+export async function zenDiff(token: string, serverTimestamp: number, apiBase?: string): Promise<ZenDiffResponse> {
   const body = JSON.stringify({
     currentClientTimestamp: Math.floor(Date.now() / 1000),
     serverTimestamp,
@@ -81,7 +104,7 @@ export async function zenDiff(token: string, serverTimestamp: number): Promise<Z
   let lastError = "";
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
-      const res = await fetch(`${config.zenmoneyApiBase}/v8/diff/`, {
+      const res = await fetch(`${apiBase ?? config.zenmoneyApiBase}/v8/diff/`, {
         method: "POST",
         headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
         body,

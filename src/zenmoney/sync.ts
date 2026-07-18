@@ -38,7 +38,7 @@ export async function syncZenMoney(userId: string, opts: SyncOptions = {}) {
 
   let diff;
   try {
-    diff = await zenDiff(decryptToken(connection.tokenEnc), connection.serverTimestamp);
+    diff = await zenDiff(decryptToken(connection.tokenEnc), connection.serverTimestamp, connection.apiBase);
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e);
     await db.bankConnection.update({
