@@ -34,9 +34,10 @@ model User {
   timezone     String   @default("UTC")
   createdAt    DateTime @default(now())
 
-  accounts     Account[]
-  transactions Transaction[]
-  budgets      Budget[]
+  accounts        Account[]
+  transactions    Transaction[]
+  budgets         Budget[]
+  bankConnections BankConnection[]
 
   @@map("users")
 }
@@ -127,6 +128,29 @@ model BalanceSnapshot {
 
   @@unique([accountId, asOf])
   @@map("balance_snapshots")
+}
+
+// External aggregator link (ZenMoney first; provider column keeps it generic).
+// Read-only pull: we never push changes back to the provider.
+model BankConnection {
+  id              String    @id @default(uuid()) @db.Uuid
+  userId          String    @db.Uuid
+  provider        String // zenmoney
+  tokenEnc        String // AES-256-GCM: base64(iv).base64(ciphertext).base64(tag)
+  serverTimestamp Int       @default(0) // Diff protocol cursor, unix seconds
+  status          String    @default("active") // active | error
+  lastSyncAt      DateTime?
+  lastError       String?
+  // zenAccountId -> { accountId, enabled } (small, per-user; a table would be
+  // overkill for one connection with a dozen accounts)
+  accountMap      Json      @default("{}")
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, provider])
+  @@map("bank_connections")
 }
 
 model FxRate {

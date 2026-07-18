@@ -53,12 +53,90 @@ async function mcpCall(token: string, body: unknown): Promise<any> {
 
 let serverProc: Subprocess | null = null;
 
+const ZEN_PORT = 8791;
+const ZEN_TOKEN = "zen-e2e-token-0123456789";
+
+/**
+ * ZenMoney Diff API stub. Phases keyed by the cursor the server sends:
+ * 0 -> full fixture; 1000 -> incremental (one changed row + deletions);
+ * anything else (incl. the token-validation call with cursor=now) -> empty diff.
+ */
+function startZenStub() {
+  const instruments = [{ id: 3, shortTitle: "EUR" }];
+  const accounts = [
+    { id: "za-card", title: "Zen Card", type: "ccard", instrument: 3, balance: 900 },
+    { id: "za-cash", title: "Zen Cash", type: "cash", instrument: 3, balance: 100 },
+    { id: "za-loan", title: "Zen Loan", type: "loan", instrument: 3, balance: -5000 },
+    { id: "za-arch", title: "Old Card", type: "ccard", instrument: 3, balance: 0, archive: true },
+  ];
+  const tags = [
+    { id: "zt-food", title: "Продукты" },
+    { id: "zt-garage", title: "Гараж" },
+    { id: "zt-salary", title: "Зарплата" },
+  ];
+  const merchants = [{ id: "zm-lidl", title: "Lidl" }];
+  const tx = (o: Record<string, unknown>) => ({
+    income: 0,
+    outcome: 0,
+    incomeAccount: null,
+    outcomeAccount: null,
+    incomeInstrument: null,
+    outcomeInstrument: null,
+    changed: 900,
+    ...o,
+  });
+  return Bun.serve({
+    port: ZEN_PORT,
+    async fetch(req) {
+      if (new URL(req.url).pathname !== "/v8/diff/") return new Response("not found", { status: 404 });
+      if (req.headers.get("authorization") !== `Bearer ${ZEN_TOKEN}`)
+        return new Response("unauthorized", { status: 401 });
+      const body = (await req.json()) as { serverTimestamp: number };
+      if (body.serverTimestamp === 0) {
+        return Response.json({
+          serverTimestamp: 1000,
+          instrument: instruments,
+          account: accounts,
+          tag: tags,
+          merchant: merchants,
+          transaction: [
+            tx({ id: "zt1", date: "2026-07-10", outcome: 50, outcomeAccount: "za-card", outcomeInstrument: 3, tag: ["zt-food"], merchant: "zm-lidl" }),
+            tx({ id: "zt2", date: "2026-07-10", outcome: 20, outcomeAccount: "za-card", outcomeInstrument: 3, tag: ["zt-garage"] }),
+            tx({ id: "zt3", date: "2026-07-11", income: 1000, incomeAccount: "za-card", incomeInstrument: 3, tag: ["zt-salary"] }),
+            tx({ id: "zt4", date: "2026-07-11", outcome: 100, outcomeAccount: "za-card", outcomeInstrument: 3, income: 100, incomeAccount: "za-cash", incomeInstrument: 3 }),
+            tx({ id: "zt5", date: "2026-07-12", outcome: 30, outcomeAccount: "za-loan", outcomeInstrument: 3 }),
+            tx({ id: "zt6", date: "2026-07-12", outcome: 15, outcomeAccount: "za-card", outcomeInstrument: 3, mcc: 5812, payee: "Trattoria" }),
+          ],
+        });
+      }
+      if (body.serverTimestamp === 1000) {
+        return Response.json({
+          serverTimestamp: 2000,
+          instrument: instruments,
+          account: accounts,
+          tag: tags,
+          merchant: merchants,
+          transaction: [
+            tx({ id: "zt1", date: "2026-07-10", outcome: 55, outcomeAccount: "za-card", outcomeInstrument: 3, tag: ["zt-food"], merchant: "zm-lidl", changed: 1500 }),
+          ],
+          deletion: [
+            { id: "zt2", object: "transaction", stamp: 1500 },
+            { id: "zt3", object: "transaction", stamp: 1500 },
+          ],
+        });
+      }
+      return Response.json({ serverTimestamp: body.serverTimestamp + 1 });
+    },
+  });
+}
+
 async function main(): Promise<void> {
   if (!externalBase) {
     // Idempotency: a previously crashed run may have left the test user behind
     const { db } = await import("../src/db");
     await db.user.deleteMany({ where: { email: EMAIL } });
     const hash = await Bun.password.hash(PASSWORD);
+    startZenStub();
     serverProc = Bun.spawn(["bun", "run", "src/index.ts"], {
       env: {
         ...process.env,
@@ -70,6 +148,8 @@ async function main(): Promise<void> {
         // so the redirect and CSRF-state negative paths are testable offline.
         GOOGLE_CLIENT_ID: "e2e-google-client.apps.googleusercontent.com",
         GOOGLE_CLIENT_SECRET: "e2e-google-secret",
+        ZENMONEY_API_BASE: `http://localhost:${ZEN_PORT}`,
+        TOKEN_ENC_KEY: "ab".repeat(32),
       },
       stdout: "pipe",
       stderr: "pipe",
@@ -706,6 +786,92 @@ async function main(): Promise<void> {
       csvText.split("\n")[0]!.endsWith(",entity") && csvText.includes(",business") && !csvText.includes(",personal"),
       csvText.split("\n")[0]
     );
+
+    // 12k. ZenMoney connector: connect -> full sync -> incremental -> protections
+    const zenBad = await call("connect_zenmoney", { action: "paste_token", token: "wrong-token-000000" });
+    ok("zenmoney rejects bad token", isErr(zenBad), JSON.stringify(zenBad.json));
+
+    const zenConn = payload(await call("connect_zenmoney", { action: "paste_token", token: ZEN_TOKEN }));
+    ok("zenmoney connect", zenConn.connected === true, JSON.stringify(zenConn));
+
+    // Hand-logged twin the sync must merge instead of duplicating (15 EUR = zt6)
+    const twin = payload(await call("log_expense", { amount: 15, currency: "EUR", category: "restaurants", merchant: "Trattoria", date: "2026-07-12" }));
+    ok("zen twin pre-logged", !!twin.id);
+
+    const zs1 = payload(await call("sync_zenmoney", {}));
+    ok(
+      "zen first sync report",
+      zs1.first_sync === true &&
+        zs1.accounts_created === 2 &&
+        zs1.accounts_synced === 2 &&
+        zs1.accounts_skipped?.length === 2 &&
+        zs1.imported === 3 &&
+        zs1.transfers === 1 &&
+        zs1.manual_twins_merged === 1 &&
+        zs1.rows_on_unsynced_accounts === 1 &&
+        zs1.balances_anchored === 2,
+      JSON.stringify(zs1)
+    );
+    ok(
+      "zen unmapped tag surfaced",
+      zs1.unmapped_tags?.length === 1 && zs1.unmapped_tags[0].tag === "Гараж" && zs1.unmapped_tags[0].count === 1,
+      JSON.stringify(zs1.unmapped_tags)
+    );
+
+    const zenAccs = payload(await call("get_accounts", {}));
+    const zenCard = zenAccs.accounts.find((a: any) => a.name === "Zen Card");
+    ok("zen balances anchored", zenCard?.balance === 900 && zenCard?.anchored_at, JSON.stringify(zenCard));
+
+    const zenLidl = payload(await call("get_transactions", { merchant: "Lidl" }));
+    ok(
+      "zen tag dictionary mapped",
+      zenLidl.count === 1 && zenLidl.transactions[0].category === "groceries",
+      JSON.stringify(zenLidl.transactions)
+    );
+    const zenTwin = payload(await call("get_transactions", { merchant: "Trattoria" }));
+    ok(
+      "zen twin merged to synced account, category kept",
+      zenTwin.count === 1 && zenTwin.transactions[0].account === "Zen Card" && zenTwin.transactions[0].category === "restaurants",
+      JSON.stringify(zenTwin.transactions)
+    );
+
+    // User edits the salary row -> incremental sync must NOT delete it
+    const zenSalary = payload(await call("get_transactions", { category: "salary" }));
+    ok("zen salary imported", zenSalary.count === 1, JSON.stringify(zenSalary));
+    await Bun.sleep(2100); // outlive the touch grace window
+    const touchUpd = payload(await call("update_transaction", { id: zenSalary.transactions[0].id, note: "user edit" }));
+    ok("zen salary touched by user", touchUpd.updated === true);
+
+    const zs2 = payload(await call("sync_zenmoney", {}));
+    ok(
+      "zen incremental: update + deletion + user-edit protection",
+      zs2.first_sync === false &&
+        zs2.imported === 0 &&
+        zs2.updated === 1 &&
+        zs2.deleted === 1 &&
+        zs2.kept_user_modified === 1,
+      JSON.stringify(zs2)
+    );
+    const zenLidl2 = payload(await call("get_transactions", { merchant: "Lidl" }));
+    ok("zen changed amount applied", zenLidl2.transactions[0].amount === 55, JSON.stringify(zenLidl2.transactions));
+    const zenSalary2 = payload(await call("get_transactions", { category: "salary" }));
+    ok("zen user-edited row survived deletion", zenSalary2.count === 1);
+
+    const zs3 = payload(await call("sync_zenmoney", {}));
+    ok("zen idempotent re-sync", zs3.imported === 0 && zs3.updated === 0 && zs3.deleted === 0, JSON.stringify(zs3));
+
+    const zenStatus = payload(await call("connect_zenmoney", { action: "status" }));
+    ok(
+      "zen status",
+      zenStatus.connected === true && zenStatus.status === "active" && zenStatus.accounts_synced === 2 && !!zenStatus.last_sync,
+      JSON.stringify(zenStatus)
+    );
+    const zenDisc = payload(await call("connect_zenmoney", { action: "disconnect" }));
+    ok("zen disconnect", zenDisc.disconnected === true);
+    const zenSyncAfter = await call("sync_zenmoney", {});
+    ok("zen sync after disconnect errors", isErr(zenSyncAfter));
+    const zenLidl3 = payload(await call("get_transactions", { merchant: "Lidl" }));
+    ok("zen imported rows kept after disconnect", zenLidl3.count === 1);
 
     // 12f. Bulk delete
     const listForDel = payload(await call("get_transactions", { limit: 3 }));

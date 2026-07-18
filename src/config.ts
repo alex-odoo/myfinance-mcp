@@ -15,6 +15,11 @@ export const config = {
   // Signup notifications via Telegram (off unless token + chat are set).
   telegramBotToken: process.env.TELEGRAM_BOT_TOKEN ?? "",
   telegramChatId: process.env.TELEGRAM_CHAT_ID ?? "",
+  // ZenMoney connector. Base override lets e2e point at a local stub.
+  zenmoneyApiBase: (process.env.ZENMONEY_API_BASE ?? "https://api.zenmoney.ru").replace(/\/$/, ""),
+  // 64 hex chars (32 bytes). Provider tokens are useless in a DB dump without it.
+  // Generate: openssl rand -hex 32. Connector tools refuse to store tokens when unset.
+  tokenEncKey: process.env.TOKEN_ENC_KEY ?? "",
 };
 
 export function assertConfig(): void {

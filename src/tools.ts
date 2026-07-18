@@ -6,6 +6,9 @@ import { EXPENSE_CATEGORIES, INCOME_CATEGORIES } from "./categories";
 import { resolveAccount, computeBalance, ACCOUNT_TYPES } from "./accounts";
 import { SERVER_VERSION } from "./version";
 import { DASHBOARD_TOOL_META } from "./ui";
+import { zenDiff } from "./zenmoney/client";
+import { encryptToken } from "./zenmoney/crypto";
+import { syncZenMoney } from "./zenmoney/sync";
 import type { TxType } from "./generated/prisma/enums";
 
 const ALL_CATEGORIES = new Set<string>([...EXPENSE_CATEGORIES, ...INCOME_CATEGORIES]);
@@ -1014,6 +1017,85 @@ export function registerFinanceTools(server: McpServer, userId: string): void {
         ].join(",")
       );
       return { content: [{ type: "text" as const, text: [header, ...lines].join("\n") }] };
+    }
+  );
+
+  server.registerTool(
+    "connect_zenmoney",
+    {
+      title: "Connect ZenMoney",
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+      description:
+        "Link a ZenMoney (zenmoney.app) account for read-only transaction sync. action=paste_token stores the user's personal ZenMoney API token (obtainable free at zerro.app: log in with ZenMoney, copy the token). action=status shows connection health and synced accounts. action=disconnect removes the link and stored token; already-imported transactions stay. After connecting, run sync_zenmoney.",
+      inputSchema: {
+        action: z.enum(["paste_token", "status", "disconnect"]),
+        token: z.string().min(10).optional().describe("ZenMoney API token. Required for action=paste_token."),
+      },
+    },
+    async ({ action, token }) => {
+      await getUser(userId);
+      const existing = await db.bankConnection.findUnique({
+        where: { userId_provider: { userId, provider: "zenmoney" } },
+      });
+
+      if (action === "status") {
+        if (!existing) return text({ connected: false, hint: "Connect with action=paste_token." });
+        const map = (existing.accountMap ?? {}) as Record<string, { accountId: string; enabled: boolean }>;
+        return text({
+          connected: true,
+          status: existing.status,
+          last_sync: existing.lastSyncAt?.toISOString() ?? null,
+          last_error: existing.lastError ?? undefined,
+          accounts_synced: Object.values(map).filter((m) => m.enabled).length,
+        });
+      }
+
+      if (action === "disconnect") {
+        if (!existing) return text({ connected: false });
+        await db.bankConnection.delete({ where: { id: existing.id } });
+        logEvent("bank_disconnected", userId, { provider: "zenmoney" });
+        return text({ disconnected: true, note: "Token erased. Imported transactions were kept." });
+      }
+
+      if (!token) throw new Error("action=paste_token requires the token parameter.");
+      // Validate before storing: a cheap diff from 'now' returns a near-empty
+      // payload on a good token and 401 on a bad one.
+      await zenDiff(token, Math.floor(Date.now() / 1000));
+      const tokenEnc = encryptToken(token);
+      await db.bankConnection.upsert({
+        where: { userId_provider: { userId, provider: "zenmoney" } },
+        update: { tokenEnc, status: "active", lastError: null },
+        create: { userId, provider: "zenmoney", tokenEnc },
+      });
+      logEvent("bank_connected", userId, { provider: "zenmoney" });
+      return text({
+        connected: true,
+        next: "Run sync_zenmoney to import accounts and transaction history. Use months_back to limit history, or dry_run for a preview.",
+      });
+    }
+  );
+
+  server.registerTool(
+    "sync_zenmoney",
+    {
+      title: "Sync ZenMoney",
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+      description:
+        "Pull transactions, accounts and balances from the linked ZenMoney account (read-only, incremental after the first run, safe to re-run). First sync imports full history unless months_back is set. dry_run previews transaction changes (account mapping is still saved). Report includes unmapped ZenMoney tags: those rows land in category 'other' for the user to review.",
+      inputSchema: {
+        dry_run: z.boolean().optional().describe("Preview transaction changes without writing them."),
+        months_back: z
+          .number()
+          .int()
+          .positive()
+          .max(240)
+          .optional()
+          .describe("First sync only: import history no older than this many months. Default: everything."),
+      },
+    },
+    async ({ dry_run, months_back }) => {
+      const report = await syncZenMoney(userId, { dryRun: dry_run, monthsBack: months_back });
+      return text(report);
     }
   );
 
