@@ -52,6 +52,7 @@ async function mcpCall(token: string, body: unknown): Promise<any> {
 }
 
 let serverProc: Subprocess | null = null;
+let zenStub: { stop: (closeActiveConnections?: boolean) => void } | null = null;
 
 const ZEN_PORT = 8791;
 const ZEN_TOKEN = "zen-e2e-token-0123456789";
@@ -136,7 +137,7 @@ async function main(): Promise<void> {
     const { db } = await import("../src/db");
     await db.user.deleteMany({ where: { email: EMAIL } });
     const hash = await Bun.password.hash(PASSWORD);
-    startZenStub();
+    zenStub = startZenStub();
     serverProc = Bun.spawn(["bun", "run", "src/index.ts"], {
       env: {
         ...process.env,
@@ -941,4 +942,7 @@ try {
   await main();
 } finally {
   (serverProc as Subprocess | null)?.kill();
+  // The Zen stub's listener would otherwise keep the Bun event loop alive
+  // forever after main() returns - the script must exit for CI/deploy gates.
+  (zenStub as { stop: (closeActiveConnections?: boolean) => void } | null)?.stop(true);
 }
