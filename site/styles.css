@@ -462,3 +462,10 @@ footer.site { padding: 36px 0 52px; font-size: 14px; color: var(--muted); border
   .fill { width: var(--tw, 60%) !important; }
   .swm { opacity: 1; }
 }
+
+/* ---------- demo video section ---------- */
+.video-shell {
+  border: 1px solid var(--rule); border-radius: 16px; overflow: hidden;
+  box-shadow: var(--shadow); background: var(--surface); line-height: 0;
+}
+.video-shell video { width: 100%; height: auto; display: block; }

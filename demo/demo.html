@@ -85,6 +85,27 @@
   .card .tag { font-size: 21px; color: var(--muted); font-weight: 450; }
   .card .url { font-family: var(--mono); font-size: 19px; color: var(--accent-deep); background: var(--accent-tint); padding: 8px 20px; border-radius: 10px; }
   .card .foot { font-size: 15px; color: var(--muted); }
+
+  /* ---------- narration captions (burned into the recording) ---------- */
+  .cap {
+    position: absolute; left: 50%; bottom: 26px; transform: translateX(-50%) translateY(6px);
+    z-index: 5; max-width: 760px; text-align: center;
+    background: color-mix(in srgb, var(--ink) 88%, transparent); color: var(--paper);
+    font-size: 16.5px; font-weight: 500; letter-spacing: 0.005em;
+    padding: 9px 20px; border-radius: 999px; box-shadow: var(--shadow);
+    opacity: 0; transition: opacity .4s ease, transform .4s ease; pointer-events: none;
+  }
+  .cap.on { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+  /* ---------- brand mark ---------- */
+  .vmark { fill: var(--accent); display: block; }
+  .card .vmark { width: 76px; height: 76px; margin-bottom: 6px; }
+  .wm {
+    position: absolute; left: 20px; bottom: 22px; z-index: 4;
+    display: flex; align-items: center; gap: 8px; opacity: 0.6;
+  }
+  .wm .vmark { width: 20px; height: 20px; }
+  .wm span { font-family: var(--mono); font-size: 12.5px; color: var(--muted); }
 </style>
 </head>
 <body>
@@ -92,10 +113,14 @@
   <div class="topbar">Claude <span class="conn">&#128268; MyFinance connected</span><span class="demo-tag">demo data</span></div>
   <div class="scroll" id="scroll"><div class="col" id="col"></div></div>
   <div class="card" id="intro">
+    <svg class="vmark" viewBox="0 0 64 64" aria-hidden="true"><polygon points="18,6 52,6 46,14 27,14 27,24 40,24 40,32 18,32"/><polygon points="18,38 27,38 27,53 21,58 18,58 18,49 8,49 8,42 18,42"/></svg>
     <div class="mark">MyFinance <b>MCP</b></div>
     <div class="tag">Personal finance inside your AI chat. No app. No forms. Just talk.</div>
   </div>
+  <div class="wm"><svg class="vmark" viewBox="0 0 64 64" aria-hidden="true"><polygon points="18,6 52,6 46,14 27,14 27,24 40,24 40,32 18,32"/><polygon points="18,38 27,38 27,53 21,58 18,58 18,49 8,49 8,42 18,42"/></svg><span>myfinance-mcp.com</span></div>
+  <div class="cap" id="cap"></div>
   <div class="card hide" id="outro">
+    <svg class="vmark" viewBox="0 0 64 64" aria-hidden="true"><polygon points="18,6 52,6 46,14 27,14 27,24 40,24 40,32 18,32"/><polygon points="18,38 27,38 27,53 21,58 18,58 18,49 8,49 8,42 18,42"/></svg>
     <div class="mark">MyFinance <b>MCP</b></div>
     <div class="url">myfinance-mcp.com</div>
     <div class="foot">Free while in beta &middot; works with Claude, ChatGPT and Cursor</div>
@@ -277,25 +302,49 @@
     '<div class="rl"><span>Plasters aqua</span><span>3.30</span></div>' +
     '<div class="rt"><span>TOTAL EUR</span><span>18.90</span></div></div>';
 
+  // ---------- narration captions (timings exported for the .vtt) ----------
+  var capEl = document.getElementById("cap");
+  var t0 = 0, capOpen = null;
+  window.__CAPTIONS = [];
+  function tNow() { return (performance.now() - t0) / 1000; }
+  async function capOff() {
+    if (!capOpen) return;
+    capEl.classList.remove("on");
+    capOpen.end = tNow();
+    window.__CAPTIONS.push(capOpen);
+    capOpen = null;
+    await sleep(380);
+  }
+  async function caption(text) {
+    await capOff();
+    capEl.textContent = text;
+    void capEl.offsetWidth; capEl.classList.add("on");
+    capOpen = { start: tNow(), text: text };
+  }
+
   // ---------- the script ----------
   async function run() {
+    t0 = performance.now();
     await sleep(2800);
     document.getElementById("intro").classList.add("hide");
     await sleep(700);
 
     // 1. natural-language logging, foreign currency
+    await caption("Log spending in plain language - any currency, the rate is frozen that day");
     await typeUser("spent 120 aed on dinner in Dubai yesterday");
     await chip({ name: "log_expense", args: '{amount: 120, currency: "AED", category: "restaurants"}' });
     await assistant("Logged: 120 AED = 29.90 EUR, restaurants, yesterday. The rate is frozen at that date, so this total never drifts.");
     await sleep(1000);
 
     // 2. receipt photo
+    await caption("Drop a receipt photo - your AI reads it, the server stores clean data");
     await typeUser("log this receipt", receipt);
     await chip({ name: "log_expense", args: '{amount: 18.90, category: "pharmacy", items: [3]}' });
     await assistant("Logged: 18.90 EUR, pharmacy, Farmacia Verde, 3 items straight from the photo.");
     await sleep(1100);
 
     // 3. monthly summary dashboard
+    await caption("Ask for stats - totals are computed server-side, never guessed by the model");
     await typeUser("how much did I spend this month?");
     await chip({ name: "get_summary", args: '{period: "2026-07"}' });
     await assistant("2,940.20 EUR so far. Groceries and housing are almost half of it:");
@@ -303,6 +352,7 @@
     await sleep(1600);
 
     // 4. income breakdown
+    await caption("See exactly where your income comes from");
     await typeUser("and what does my income consist of?");
     await chip({ name: "get_summary", args: '{type: "income"}' });
     await assistant("6,450 EUR in July from three sources - salary is about two thirds:");
@@ -310,6 +360,7 @@
     await sleep(1600);
 
     // 5. category drill-down
+    await caption("Drill into any category, merchant by merchant");
     await typeUser("what are those 300 eur subscriptions?");
     await chip({ name: "get_summary", args: '{category: "subscriptions", group_by: "merchant"}' });
     await assistant("11 services. Anthropic, Adobe and Hetzner alone are two thirds of the bucket:");
@@ -317,6 +368,7 @@
     await sleep(1700);
 
     // 6. budgets
+    await caption("Budgets that flag overspend honestly - and quietly stay silent otherwise");
     await typeUser("set a 400 eur monthly budget for restaurants");
     await chip({ name: "set_budget", args: '{amount: 400, category: "restaurants"}' });
     await assistant("Done - and you are already 12.30 EUR over it this month:");
@@ -324,12 +376,14 @@
     await sleep(1600);
 
     // 7. trends
+    await caption("Trends across months, expense vs income");
     await typeUser("show my last 6 months");
     await chip({ name: "get_trends", args: "{months: 6}" });
     await assistant("Spending is stable around 2.9k while income is trending up:");
     await dashboard(trends);
     await sleep(2000);
 
+    await capOff();
     document.getElementById("outro").classList.remove("hide");
     await sleep(3400);
     window.__DEMO_DONE = true;

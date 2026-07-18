@@ -38,7 +38,20 @@
   "author": { "@type": "Organization", "name": "Rteam", "url": "https://rteam.agency" },
   "sameAs": ["https://github.com/alex-odoo/myfinance-mcp", "https://smithery.ai/servers/alex-k4kb/MyFinance-MCP"],
   "datePublished": "2026-07-13",
-  "dateModified": "2026-07-16"
+  "dateModified": "2026-07-18"
+}
+</script>
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "VideoObject",
+  "name": "MyFinance MCP demo - track money by talking to your AI",
+  "description": "A 55-second session: logging an expense in a foreign currency, a receipt photo, monthly summary, income breakdown, subscription drill-down, budgets and trends - all inside an AI chat.",
+  "thumbnailUrl": "https://myfinance-mcp.com/media/demo-poster.jpg",
+  "contentUrl": "https://myfinance-mcp.com/media/myfinance-mcp-demo.mp4",
+  "uploadDate": "2026-07-18",
+  "duration": "PT55S",
+  "inLanguage": "en"
 }
 </script>
 <script type="application/ld+json">
@@ -110,13 +123,14 @@
       <p class="hero-note">No app. No forms. No spreadsheet. Every number computed in SQL.</p>
     </div>
 
-    <div class="demo" aria-label="Live product demo">
-      <div class="demo-bar">
-        <span class="dot"></span><span class="dot"></span><span class="dot"></span>
-        <span class="demo-title">Claude · MyFinance connected</span>
-        <span class="live"><span class="live-dot"></span>live demo</span>
-      </div>
-      <div class="demo-body" id="demoBody"></div>
+    <div class="video-shell hero-video" aria-label="Product demo video">
+      <video autoplay muted loop playsinline controls preload="metadata"
+             poster="/media/demo-poster.jpg" width="1920" height="1080"
+             aria-label="MyFinance MCP product demo video">
+        <source src="/media/myfinance-mcp-demo.mp4" type="video/mp4">
+        <source src="/media/myfinance-mcp-demo.webm" type="video/webm">
+        <track kind="captions" src="/media/myfinance-mcp-demo.vtt" srclang="en" label="English">
+      </video>
     </div>
   </div>
 </div>

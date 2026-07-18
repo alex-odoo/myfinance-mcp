@@ -57,6 +57,8 @@ await page.evaluate(() => window.__start());
 await page.waitForFunction(() => window.__DEMO_DONE === true, null, { timeout: 180_000 });
 await page.waitForTimeout(400);
 
+const captions = await page.evaluate(() => window.__CAPTIONS);
+
 const video = page.video();
 await context.close();
 const tmpPath = await video.path();
@@ -65,4 +67,18 @@ server.close();
 
 const out = join(OUT_DIR, "myfinance-mcp-demo.webm");
 renameSync(tmpPath, out);
+
+const ts = (s) => {
+  const h = String(Math.floor(s / 3600)).padStart(2, "0");
+  const m = String(Math.floor((s % 3600) / 60)).padStart(2, "0");
+  const sec = (s % 60).toFixed(3).padStart(6, "0");
+  return `${h}:${m}:${sec}`;
+};
+const vtt = "WEBVTT\n\n" + captions
+  .map((c, i) => `${i + 1}\n${ts(c.start)} --> ${ts(c.end)}\n${c.text}\n`)
+  .join("\n");
+const { writeFileSync } = await import("node:fs");
+const vttPath = join(OUT_DIR, "myfinance-mcp-demo.vtt");
+writeFileSync(vttPath, vtt);
 console.log("video:", out);
+console.log("captions:", vttPath, `(${captions.length} cues)`);
