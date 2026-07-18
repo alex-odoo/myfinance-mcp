@@ -308,6 +308,31 @@ async function main(): Promise<void> {
     const upd = payload(await call("update_transaction", { id: e1.id, category: "restaurants" }));
     ok("update_transaction recategorize", upd.updated === true && upd.category === "restaurants");
 
+    const sumInc = payload(await call("get_summary", { type: "income" }));
+    ok(
+      "get_summary income breakdown",
+      sumInc.grouped_type === "income" &&
+        sumInc.groups.length === 1 &&
+        sumInc.groups[0].key === "freelance" &&
+        sumInc.groups[0].share_pct === 100 &&
+        sumInc.groups[0].total === sumInc.total_income,
+      JSON.stringify(sumInc)
+    );
+    const sumDrill = payload(await call("get_summary", { category: "restaurants", group_by: "merchant" }));
+    ok(
+      "get_summary category drill-down by merchant",
+      sumDrill.category === "restaurants" &&
+        sumDrill.groups.length === 2 &&
+        sumDrill.groups.every((g: any) => ["Silpo", "Cafe"].includes(g.key)),
+      JSON.stringify(sumDrill)
+    );
+    const sumExcl = payload(await call("get_summary", { exclude_categories: ["restaurants"] }));
+    ok(
+      "get_summary exclude_categories",
+      sumExcl.total_expense === 0 && sumExcl.total_income > 0 && sumExcl.excluded_categories?.[0] === "restaurants",
+      JSON.stringify(sumExcl)
+    );
+
     const trends = payload(await call("get_trends", { months: 3 }));
     ok("get_trends buckets", trends.months.length === 3 && trends.months[2].expense > 0, JSON.stringify(trends));
 

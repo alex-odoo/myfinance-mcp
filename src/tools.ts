@@ -24,6 +24,8 @@ const dateSchema = z
 
 const entitySchema = z.enum(["personal", "business"]);
 
+const categoryFilterSchema = z.enum([...ALL_CATEGORIES] as [string, ...string[]]);
+
 const itemsSchema = z
   .array(
     z.object({
@@ -580,16 +582,25 @@ export function registerFinanceTools(server: McpServer, userId: string): void {
       title: "Spending summary",
       annotations: { readOnlyHint: true, openWorldHint: false },
       description:
-        "Totals for a period, computed server-side in the user's base currency. Answers 'how much did I spend on X in July'.",
+        "Totals for a period, computed server-side in the user's base currency. Breaks down expenses (default) or income: 'how much did I spend on X in July', 'what does my June income consist of'. Supports category drill-down (category=subscriptions + group_by=merchant) and exclusions (exclude_categories).",
       inputSchema: {
         period: z.string().optional().describe("YYYY-MM or YYYY. Defaults to the current month."),
         from: dateSchema.optional(),
         to: dateSchema.optional(),
+        type: z
+          .enum(["expense", "income"])
+          .optional()
+          .describe("Which side the groups break down. Default: expense. Use income for 'where does my income come from'."),
         group_by: z.enum(["category", "merchant", "month"]).optional().describe("Default: category."),
+        category: categoryFilterSchema.optional().describe("Only this category, e.g. subscriptions with group_by=merchant to see what the subscriptions consist of."),
+        exclude_categories: z
+          .array(categoryFilterSchema)
+          .optional()
+          .describe("Drop these categories from totals and groups, e.g. ['business'] for personal stats without business-categorized records."),
         entity: entitySchema.optional().describe("personal or business only. Omit for everything."),
       },
     },
-    async ({ period, from, to, group_by, entity }) => {
+    async ({ period, from, to, type, group_by, category, exclude_categories, entity }) => {
       const user = await getUser(userId);
       const range = periodRange(period, from, to);
       const rows = await db.transaction.findMany({
@@ -598,6 +609,11 @@ export function registerFinanceTools(server: McpServer, userId: string): void {
           occurredAt: { gte: range.start, lt: range.end },
           type: { not: "transfer" },
           ...(entity ? { entity } : {}),
+          ...(category
+            ? { categoryKey: category }
+            : exclude_categories?.length
+              ? { categoryKey: { notIn: exclude_categories } }
+              : {}),
         },
         select: { type: true, amountBase: true, categoryKey: true, merchant: true, occurredAt: true },
       });
@@ -606,6 +622,9 @@ export function registerFinanceTools(server: McpServer, userId: string): void {
       const totalExpense = round2(expenses.reduce((s, r) => s + Number(r.amountBase), 0));
       const totalIncome = round2(income.reduce((s, r) => s + Number(r.amountBase), 0));
 
+      const groupedType = type ?? "expense";
+      const grouped = groupedType === "income" ? income : expenses;
+      const groupedTotal = groupedType === "income" ? totalIncome : totalExpense;
       const key = (r: (typeof rows)[number]) =>
         group_by === "merchant"
           ? (r.merchant ?? "(no merchant)")
@@ -613,17 +632,22 @@ export function registerFinanceTools(server: McpServer, userId: string): void {
             ? r.occurredAt.toISOString().slice(0, 7)
             : (r.categoryKey ?? "other");
       const groups = new Map<string, number>();
-      for (const r of expenses) groups.set(key(r), (groups.get(key(r)) ?? 0) + Number(r.amountBase));
+      for (const r of grouped) groups.set(key(r), (groups.get(key(r)) ?? 0) + Number(r.amountBase));
 
       logEvent("summary_run", userId, { period: range.label });
       return text({
         period: range.label,
         entity: entity ?? "all",
+        ...(category ? { category } : {}),
+        ...(exclude_categories?.length && !category ? { excluded_categories: exclude_categories } : {}),
         base_currency: user.baseCurrency,
         total_expense: totalExpense,
         total_income: totalIncome,
         net: round2(totalIncome - totalExpense),
         transactions: rows.length,
+        grouped_type: groupedType,
+        grouped_by: group_by ?? "category",
+        // legacy alias kept for older dashboard payload readers
         expense_by: group_by ?? "category",
         groups: [...groups.entries()]
           // months read as a timeline, categories/merchants as a ranking
@@ -631,7 +655,7 @@ export function registerFinanceTools(server: McpServer, userId: string): void {
           .map(([k, v]) => ({
             key: k,
             total: round2(v),
-            share_pct: totalExpense > 0 ? round2((v / totalExpense) * 100) : 0,
+            share_pct: groupedTotal > 0 ? round2((v / groupedTotal) * 100) : 0,
           })),
       });
     }

@@ -1,7 +1,7 @@
 {
   "serverInfo": {
     "name": "myfinancemcp",
-    "version": "0.6.3"
+    "version": "0.7.0"
   },
   "authentication": {
     "required": true,
@@ -472,7 +472,7 @@
     {
       "name": "get_summary",
       "title": "Spending summary",
-      "description": "Totals for a period, computed server-side in the user's base currency. Answers 'how much did I spend on X in July'.",
+      "description": "Totals for a period, computed server-side in the user's base currency. Breaks down expenses (default) or income: 'how much did I spend on X in July', 'what does my June income consist of'. Supports category drill-down (category=subscriptions + group_by=merchant) and exclusions (exclude_categories).",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -489,6 +489,14 @@
             "$ref": "#/properties/from",
             "description": "Date as YYYY-MM-DD. Omit for today."
           },
+          "type": {
+            "type": "string",
+            "enum": [
+              "expense",
+              "income"
+            ],
+            "description": "Which side the groups break down. Default: expense. Use income for 'where does my income come from'."
+          },
           "group_by": {
             "type": "string",
             "enum": [
@@ -497,6 +505,43 @@
               "month"
             ],
             "description": "Default: category."
+          },
+          "category": {
+            "type": "string",
+            "enum": [
+              "groceries",
+              "restaurants",
+              "transport",
+              "fuel",
+              "housing",
+              "utilities",
+              "health",
+              "pharmacy",
+              "clothing",
+              "electronics",
+              "entertainment",
+              "subscriptions",
+              "education",
+              "travel",
+              "gifts",
+              "family",
+              "personal_care",
+              "business",
+              "fees",
+              "other",
+              "salary",
+              "freelance",
+              "investments",
+              "refunds"
+            ],
+            "description": "Only this category, e.g. subscriptions with group_by=merchant to see what the subscriptions consist of."
+          },
+          "exclude_categories": {
+            "type": "array",
+            "items": {
+              "$ref": "#/properties/category"
+            },
+            "description": "Drop these categories from totals and groups, e.g. ['business'] for personal stats without business-categorized records."
           },
           "entity": {
             "type": "string",

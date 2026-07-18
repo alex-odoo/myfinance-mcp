@@ -120,7 +120,10 @@
 
   function renderSummary(p) {
     var cur = p.base_currency;
-    var h = "<h2>Summary</h2><div class='sub'>" + esc(p.period || "") + " &middot; by " + esc(p.expense_by || "category") + "</div>";
+    var scope = (p.grouped_type === "income" ? "income" : "spending") + " by " + esc(p.grouped_by || p.expense_by || "category");
+    if (p.category) scope += " &middot; " + esc(p.category);
+    else if (p.excluded_categories && p.excluded_categories.length) scope += " &middot; excl. " + esc(p.excluded_categories.join(", "));
+    var h = "<h2>Summary</h2><div class='sub'>" + esc(p.period || "") + " &middot; " + scope + "</div>";
     h += '<div class="tiles">' + tile(p.total_expense, "spent", cur) + tile(p.total_income, "income", cur) + tile(p.net, "net", cur, true) + "</div>";
     var groups = p.groups || [], max = 1;
     groups.forEach(function (g) { max = Math.max(max, g.total || 0); });

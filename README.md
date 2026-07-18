@@ -47,7 +47,7 @@ On first connect you sign in with Google or register with an email and password.
 | `import_transactions` | Bulk statement import (up to 500 rows/call): dedup by bank reference or derived key, twin merge, reconciliation check |
 | `create_account`      | Create a bank / card / cash / investment account with currency and personal/business entity        |
 | `get_accounts`        | All accounts with balances and net worth, converted to base currency                               |
-| `get_summary`         | Period totals by category, merchant or month, computed server-side                                 |
+| `get_summary`         | Period totals by category, merchant or month; expense or income breakdown, category drill-down and exclusions |
 | `get_transactions`    | List and filter raw transactions                                                                   |
 | `get_trends`          | Month-over-month spending trends and deltas                                                        |
 | `set_budget`          | Monthly cap per category or overall                                                                |
