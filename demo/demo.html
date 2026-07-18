@@ -1,0 +1,342 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>MyFinance MCP - demo recording stage</title>
+<style>
+  @font-face {
+    font-family: "Switzer";
+    src: url("/site/fonts/Switzer-Variable.woff2") format("woff2");
+    font-weight: 100 900;
+    font-display: block;
+  }
+  :root {
+    --paper: #FAF8F3; --surface: #FFFDF8; --ink: #1C1B16; --muted: #6F6A5C;
+    --rule: #E5E1D4; --rule-soft: #EFECE2; --accent: #0E6B4F; --accent-deep: #0A5940;
+    --accent-tint: #E7F0EC; --warn: #A66A00; --neg: #A63A2E;
+    --shadow: 0 1px 2px rgba(28,27,22,.05), 0 8px 28px rgba(28,27,22,.06);
+    --body: "Switzer", -apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, sans-serif;
+    --mono: "SF Mono", ui-monospace, Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { width: 1280px; height: 720px; overflow: hidden; }
+  body { background: var(--paper); color: var(--ink); font-family: var(--body); font-size: 16px; line-height: 1.55; }
+
+  /* ---------- chat stage ---------- */
+  .stage { width: 1280px; height: 720px; display: flex; flex-direction: column; align-items: center; position: relative; }
+  .topbar {
+    width: 100%; height: 54px; flex: 0 0 54px; display: flex; align-items: center; justify-content: center; gap: 12px;
+    background: color-mix(in srgb, var(--paper) 92%, #fff); border-bottom: 1px solid var(--rule);
+    font-weight: 600; letter-spacing: -0.01em;
+  }
+  .topbar .conn {
+    font-size: 13px; font-weight: 500; color: var(--accent-deep); background: var(--accent-tint);
+    border: 1px solid color-mix(in srgb, var(--accent) 25%, transparent); border-radius: 999px; padding: 3px 12px;
+  }
+  .topbar .demo-tag { position: absolute; right: 18px; font-size: 12px; font-weight: 500; color: var(--muted); }
+  .scroll { width: 100%; flex: 1; overflow: hidden; }
+  .col { width: 780px; margin: 0 auto; padding: 26px 0 90px; display: flex; flex-direction: column; gap: 18px; }
+
+  .msg { opacity: 0; transform: translateY(8px); transition: opacity .35s ease, transform .35s ease; }
+  .msg.on { opacity: 1; transform: none; }
+  .msg.u { align-self: flex-end; max-width: 78%; background: #EFECE2; border-radius: 16px 16px 4px 16px; padding: 11px 16px; }
+  .msg.a { align-self: flex-start; max-width: 92%; padding: 2px 2px; }
+  .caret { display: inline-block; width: 2px; height: 1.05em; background: var(--ink); vertical-align: -0.18em; animation: blink .9s steps(1) infinite; }
+  @keyframes blink { 50% { opacity: 0; } }
+
+  .chip {
+    align-self: flex-start; display: inline-flex; align-items: center; gap: 8px;
+    font-family: var(--mono); font-size: 12.5px; color: var(--muted);
+    background: var(--surface); border: 1px solid var(--rule); border-radius: 10px; padding: 7px 12px;
+    opacity: 0; transform: translateY(6px); transition: opacity .3s ease, transform .3s ease;
+  }
+  .chip.on { opacity: 1; transform: none; }
+  .chip .zap { color: var(--accent); font-size: 13px; }
+  .chip b { color: var(--ink); font-weight: 600; }
+  .chip .ok { color: var(--accent); font-weight: 700; opacity: 0; transition: opacity .25s; }
+  .chip .ok.on { opacity: 1; }
+
+  .frame {
+    align-self: flex-start; width: 620px; background: #fcfcfb; border: 1px solid var(--rule);
+    border-radius: 14px; box-shadow: var(--shadow); overflow: hidden;
+    opacity: 0; transform: translateY(10px); transition: opacity .45s ease, transform .45s ease;
+  }
+  .frame.on { opacity: 1; transform: none; }
+  .frame iframe { display: block; width: 100%; border: 0; height: 220px; transition: height .3s ease; }
+
+  .receipt {
+    width: 250px; background: #fff; border: 1px solid var(--rule); border-radius: 8px;
+    font-family: var(--mono); font-size: 12px; color: #3a3830; padding: 14px 16px; margin: 4px 0 8px;
+    box-shadow: 0 1px 4px rgba(28,27,22,.10);
+  }
+  .receipt .rh { text-align: center; font-weight: 700; letter-spacing: .06em; margin-bottom: 8px; }
+  .receipt .rl { display: flex; justify-content: space-between; padding: 1.5px 0; }
+  .receipt .rt { border-top: 1px dashed #b9b5a6; margin-top: 7px; padding-top: 7px; font-weight: 700; display: flex; justify-content: space-between; }
+
+  /* ---------- intro / outro cards ---------- */
+  .card {
+    position: absolute; inset: 0; z-index: 10; background: var(--paper);
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 18px;
+    opacity: 1; transition: opacity .6s ease;
+  }
+  .card.hide { opacity: 0; pointer-events: none; }
+  .card .mark { font-size: 54px; font-weight: 750; letter-spacing: -0.03em; }
+  .card .mark b { color: var(--accent); font-weight: 750; }
+  .card .tag { font-size: 21px; color: var(--muted); font-weight: 450; }
+  .card .url { font-family: var(--mono); font-size: 19px; color: var(--accent-deep); background: var(--accent-tint); padding: 8px 20px; border-radius: 10px; }
+  .card .foot { font-size: 15px; color: var(--muted); }
+</style>
+</head>
+<body>
+<div class="stage">
+  <div class="topbar">Claude <span class="conn">&#128268; MyFinance connected</span><span class="demo-tag">demo data</span></div>
+  <div class="scroll" id="scroll"><div class="col" id="col"></div></div>
+  <div class="card" id="intro">
+    <div class="mark">MyFinance <b>MCP</b></div>
+    <div class="tag">Personal finance inside your AI chat. No app. No forms. Just talk.</div>
+  </div>
+  <div class="card hide" id="outro">
+    <div class="mark">MyFinance <b>MCP</b></div>
+    <div class="url">myfinance-mcp.com</div>
+    <div class="foot">Free while in beta &middot; works with Claude, ChatGPT and Cursor</div>
+  </div>
+</div>
+
+<script>
+(function () {
+  "use strict";
+  var Z = new URLSearchParams(location.search).get("zoom");
+  if (Z) document.body.style.zoom = Z;
+
+  var col = document.getElementById("col");
+  var scroller = document.getElementById("scroll");
+  var SPEED = Number(new URLSearchParams(location.search).get("speed") || 1);
+
+  function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms / SPEED); }); }
+  function el(tag, cls, html) {
+    var e = document.createElement(tag);
+    if (cls) e.className = cls;
+    if (html !== undefined) e.innerHTML = html;
+    return e;
+  }
+  function down() { scroller.scrollTo({ top: scroller.scrollHeight, behavior: "smooth" }); }
+
+  async function typeUser(text, extraHtml) {
+    var m = el("div", "msg u");
+    col.appendChild(m); void m.offsetWidth; m.classList.add("on");
+    var span = el("span"), caret = el("span", "caret");
+    m.appendChild(span); m.appendChild(caret);
+    down();
+    for (var i = 0; i < text.length; i++) {
+      span.textContent += text[i];
+      await sleep(24 + Math.random() * 26);
+    }
+    if (extraHtml) { m.insertBefore(el("div", "", extraHtml), caret); down(); await sleep(500); }
+    await sleep(320);
+    caret.remove();
+  }
+
+  async function chip(call) {
+    var c = el("div", "chip", '<span class="zap">&#9889;</span><span><b>' + call.name + "</b>" +
+      (call.args ? " " + call.args : "") + '</span><span class="ok">&#10003;</span>');
+    col.appendChild(c); void c.offsetWidth; c.classList.add("on");
+    down();
+    await sleep(750);
+    c.querySelector(".ok").classList.add("on");
+    await sleep(280);
+  }
+
+  async function assistant(html) {
+    var m = el("div", "msg a");
+    col.appendChild(m); void m.offsetWidth; m.classList.add("on");
+    // type plain text fast; if html contains tags, reveal in one go after a beat
+    if (/[<>]/.test(html)) { m.innerHTML = html; down(); await sleep(600); return; }
+    var caret = el("span", "caret"), span = el("span");
+    m.appendChild(span); m.appendChild(caret);
+    down();
+    for (var i = 0; i < html.length; i++) {
+      span.textContent += html[i];
+      if (i % 2 === 0) await sleep(11);
+    }
+    caret.remove();
+    await sleep(200);
+  }
+
+  // ---------- real dashboard.html embeds ----------
+  var frames = new Map(); // iframe -> { ready }
+  function frameFor(source) {
+    var found = null;
+    frames.forEach(function (state, iframe) {
+      if (iframe.contentWindow === source) found = { iframe: iframe, state: state };
+    });
+    return found;
+  }
+  window.addEventListener("message", function (ev) {
+    var m = ev.data, f = frameFor(ev.source);
+    if (!m || m.jsonrpc !== "2.0" || !f) return;
+    if (m.method === "ui/initialize" && m.id != null) {
+      ev.source.postMessage({ jsonrpc: "2.0", id: m.id, result: { hostContext: { theme: "light" } } }, "*");
+    } else if (m.method === "ui/notifications/initialized") {
+      f.state.ready();
+    } else if (m.method === "ui/notifications/size-changed" && m.params) {
+      f.iframe.style.height = Math.min(560, m.params.height || 220) + "px";
+      down();
+    }
+  });
+
+  async function dashboard(payload) {
+    var wrap = el("div", "frame");
+    var iframe = document.createElement("iframe");
+    wrap.appendChild(iframe);
+    col.appendChild(wrap);
+    var readyP = new Promise(function (resolve) {
+      frames.set(iframe, { ready: resolve });
+    });
+    iframe.src = "/src/ui/dashboard.html";
+    await readyP;
+    iframe.contentWindow.postMessage({
+      jsonrpc: "2.0", method: "ui/notifications/tool-result",
+      params: { result: { content: [{ type: "text", text: JSON.stringify(payload) }] } }
+    }, "*");
+    await sleep(150);
+    void wrap.offsetWidth; wrap.classList.add("on");
+    down();
+    await sleep(900);
+    down();
+  }
+
+  // ---------- demo data (July 2026, EUR base) ----------
+  var CUR = "EUR";
+  var sumCats = {
+    period: "2026-07", entity: "all", base_currency: CUR,
+    total_expense: 2940.20, total_income: 6450, net: 3509.80, transactions: 214,
+    grouped_type: "expense", grouped_by: "category", expense_by: "category",
+    groups: [
+      { key: "groceries", total: 706.40, share_pct: 24.0 },
+      { key: "housing", total: 647.00, share_pct: 22.0 },
+      { key: "restaurants", total: 412.30, share_pct: 14.0 },
+      { key: "travel", total: 388.00, share_pct: 13.2 },
+      { key: "subscriptions", total: 303.50, share_pct: 10.3 },
+      { key: "transport", total: 212.90, share_pct: 7.2 },
+      { key: "clothing", total: 151.00, share_pct: 5.1 },
+      { key: "other", total: 119.10, share_pct: 4.1 }
+    ]
+  };
+  var sumIncome = {
+    period: "2026-07", entity: "all", base_currency: CUR,
+    total_expense: 2940.20, total_income: 6450, net: 3509.80, transactions: 214,
+    grouped_type: "income", grouped_by: "category", expense_by: "category",
+    groups: [
+      { key: "salary", total: 4200, share_pct: 65.1 },
+      { key: "freelance", total: 1750, share_pct: 27.1 },
+      { key: "investments", total: 500, share_pct: 7.8 }
+    ]
+  };
+  var sumSubs = {
+    period: "2026-07", entity: "all", category: "subscriptions", base_currency: CUR,
+    total_expense: 303.50, total_income: 0, net: -303.50, transactions: 11,
+    grouped_type: "expense", grouped_by: "merchant", expense_by: "merchant",
+    groups: [
+      { key: "Anthropic", total: 90.00, share_pct: 29.7 },
+      { key: "Adobe CC", total: 65.99, share_pct: 21.7 },
+      { key: "Hetzner", total: 48.60, share_pct: 16.0 },
+      { key: "Midjourney", total: 25.97, share_pct: 8.6 },
+      { key: "Netflix", total: 17.99, share_pct: 5.9 },
+      { key: "YouTube Premium", total: 13.99, share_pct: 4.6 },
+      { key: "Notion", total: 12.00, share_pct: 4.0 },
+      { key: "Spotify", total: 10.99, share_pct: 3.6 },
+      { key: "Setapp", total: 9.99, share_pct: 3.3 },
+      { key: "1Password", total: 4.99, share_pct: 1.6 },
+      { key: "iCloud", total: 2.99, share_pct: 1.0 }
+    ]
+  };
+  var budgets = {
+    month: "2026-07", base_currency: CUR,
+    budgets: [
+      { budget: "overall", spent: 2940.20, cap: 3500, left: 559.80, used_pct: 84, over: false },
+      { budget: "groceries", spent: 706.40, cap: 800, left: 93.60, used_pct: 88, over: false },
+      { budget: "restaurants", spent: 412.30, cap: 400, left: -12.30, used_pct: 103, over: true },
+      { budget: "travel", spent: 388.00, cap: 500, left: 112.00, used_pct: 78, over: false }
+    ]
+  };
+  var trends = {
+    base_currency: CUR, category: "all", entity: "all",
+    months: [
+      { month: "2026-02", expense: 2610, income: 5200, expense_change_pct: null },
+      { month: "2026-03", expense: 2895, income: 5200, expense_change_pct: 10.9 },
+      { month: "2026-04", expense: 3320, income: 6900, expense_change_pct: 14.7 },
+      { month: "2026-05", expense: 2740, income: 5200, expense_change_pct: -17.5 },
+      { month: "2026-06", expense: 3050, income: 5450, expense_change_pct: 11.3 },
+      { month: "2026-07", expense: 2940, income: 6450, expense_change_pct: -3.6 }
+    ]
+  };
+  var receipt =
+    '<div class="receipt"><div class="rh">FARMACIA VERDE</div>' +
+    '<div class="rl"><span>Ibuprofen 400mg</span><span>6.20</span></div>' +
+    '<div class="rl"><span>Vitamin D3 2000</span><span>9.40</span></div>' +
+    '<div class="rl"><span>Plasters aqua</span><span>3.30</span></div>' +
+    '<div class="rt"><span>TOTAL EUR</span><span>18.90</span></div></div>';
+
+  // ---------- the script ----------
+  async function run() {
+    await sleep(2800);
+    document.getElementById("intro").classList.add("hide");
+    await sleep(700);
+
+    // 1. natural-language logging, foreign currency
+    await typeUser("spent 120 aed on dinner in Dubai yesterday");
+    await chip({ name: "log_expense", args: '{amount: 120, currency: "AED", category: "restaurants"}' });
+    await assistant("Logged: 120 AED = 29.90 EUR, restaurants, yesterday. The rate is frozen at that date, so this total never drifts.");
+    await sleep(1000);
+
+    // 2. receipt photo
+    await typeUser("log this receipt", receipt);
+    await chip({ name: "log_expense", args: '{amount: 18.90, category: "pharmacy", items: [3]}' });
+    await assistant("Logged: 18.90 EUR, pharmacy, Farmacia Verde, 3 items straight from the photo.");
+    await sleep(1100);
+
+    // 3. monthly summary dashboard
+    await typeUser("how much did I spend this month?");
+    await chip({ name: "get_summary", args: '{period: "2026-07"}' });
+    await assistant("2,940.20 EUR so far. Groceries and housing are almost half of it:");
+    await dashboard(sumCats);
+    await sleep(1600);
+
+    // 4. income breakdown
+    await typeUser("and what does my income consist of?");
+    await chip({ name: "get_summary", args: '{type: "income"}' });
+    await assistant("6,450 EUR in July from three sources - salary is about two thirds:");
+    await dashboard(sumIncome);
+    await sleep(1600);
+
+    // 5. category drill-down
+    await typeUser("what are those 300 eur subscriptions?");
+    await chip({ name: "get_summary", args: '{category: "subscriptions", group_by: "merchant"}' });
+    await assistant("11 services. Anthropic, Adobe and Hetzner alone are two thirds of the bucket:");
+    await dashboard(sumSubs);
+    await sleep(1700);
+
+    // 6. budgets
+    await typeUser("set a 400 eur monthly budget for restaurants");
+    await chip({ name: "set_budget", args: '{amount: 400, category: "restaurants"}' });
+    await assistant("Done - and you are already 12.30 EUR over it this month:");
+    await dashboard(budgets);
+    await sleep(1600);
+
+    // 7. trends
+    await typeUser("show my last 6 months");
+    await chip({ name: "get_trends", args: "{months: 6}" });
+    await assistant("Spending is stable around 2.9k while income is trending up:");
+    await dashboard(trends);
+    await sleep(2000);
+
+    document.getElementById("outro").classList.remove("hide");
+    await sleep(3400);
+    window.__DEMO_DONE = true;
+  }
+
+  window.__start = function () { run(); };
+})();
+</script>
+</body>
+</html>
