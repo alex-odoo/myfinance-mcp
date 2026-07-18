@@ -142,7 +142,8 @@
     <h2>A full session in 55 seconds.</h2>
     <p class="sec-sub">Demo data, real product: the dashboards in the video are the same ones your AI renders in chat.</p>
     <div class="video-shell reveal">
-      <button class="vplay" id="vplay" aria-label="Play demo video">
+      <button class="vplay" id="vplay" aria-label="Play demo video"
+              onclick="this.classList.add('off');document.getElementById('demoVideo').play();">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13l11-6.5z"/></svg>
       </button>
       <video id="demoVideo" controls playsinline preload="none" poster="/media/demo-poster.jpg" width="1920" height="1080"
