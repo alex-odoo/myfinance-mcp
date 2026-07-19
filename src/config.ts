@@ -26,6 +26,9 @@ export const config = {
   ebAppId: process.env.EB_APP_ID ?? "",
   ebPrivateKeyB64: process.env.EB_PRIVATE_KEY_B64 ?? "",
   ebApiOrigin: (process.env.EB_API_ORIGIN ?? "https://api.enablebanking.com").replace(/\/$/, ""),
+  // Bank connections are auto-synced roughly daily; each tick syncs whatever
+  // is >20h stale. 0 disables the scheduler (manual sync_bank still works).
+  autoSyncIntervalMs: Number(process.env.AUTO_SYNC_INTERVAL_MS ?? 60 * 60 * 1000),
 };
 
 export function assertConfig(): void {

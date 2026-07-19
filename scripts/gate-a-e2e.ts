@@ -210,16 +210,24 @@ function startEbStub() {
 
 async function main(): Promise<void> {
   if (!externalBase) {
+    const { generateKeyPairSync } = await import("node:crypto");
+    const ebKey = generateKeyPairSync("rsa", { modulusLength: 2048 })
+      .privateKey.export({ type: "pkcs8", format: "pem" })
+      .toString();
+    // The e2e process itself imports src modules (db, autosync); they must see
+    // the same stub-pointing env as the spawned server BEFORE the first import,
+    // because config.ts snapshots process.env at module load.
+    process.env.TOKEN_ENC_KEY = "ab".repeat(32);
+    process.env.EB_APP_ID = "e2e-eb-app";
+    process.env.EB_PRIVATE_KEY_B64 = Buffer.from(ebKey).toString("base64");
+    process.env.EB_API_ORIGIN = `http://localhost:${EB_PORT}`;
+    process.env.ZENMONEY_API_BASE = `http://localhost:${ZEN_PORT}`;
     // Idempotency: a previously crashed run may have left the test user behind
     const { db } = await import("../src/db");
     await db.user.deleteMany({ where: { email: EMAIL } });
     const hash = await Bun.password.hash(PASSWORD);
     zenStub = startZenStub();
     ebStub = startEbStub();
-    const { generateKeyPairSync } = await import("node:crypto");
-    const ebKey = generateKeyPairSync("rsa", { modulusLength: 2048 })
-      .privateKey.export({ type: "pkcs8", format: "pem" })
-      .toString();
     serverProc = Bun.spawn(["bun", "run", "src/index.ts"], {
       env: {
         ...process.env,
@@ -990,6 +998,47 @@ async function main(): Promise<void> {
 
     const ebs2 = payload(await call("sync_bank", {}));
     ok("eb idempotent re-sync (transfer credit side included)", ebs2.imported === 0 && ebs2.transfers === 0 && ebs2.updated === 0 && ebs2.manual_twins_merged === 0, JSON.stringify(ebs2));
+
+    // 12eb2. Type conversion (0.10.0): cash-withdrawal-style fix into a transfer
+    await call("create_account", { name: "Cash Stash", type: "cash", currency: "EUR" });
+    const lidlId = ebLidl.transactions[0].id;
+    const noCounter = await call("update_transaction", { id: lidlId, type: "transfer" });
+    ok("convert to transfer requires counter_account", isErr(noCounter));
+    const conv = payload(await call("update_transaction", { id: lidlId, type: "transfer", counter_account: "Cash Stash" }));
+    ok("expense converted to transfer", conv.type === "transfer" && conv.category === null && conv.transfer === true, JSON.stringify(conv));
+    const ebs3 = payload(await call("sync_bank", {}));
+    ok("converted transfer survives re-sync untouched", ebs3.imported === 0 && ebs3.transfers === 0 && ebs3.updated === 0, JSON.stringify(ebs3));
+    const convBack = payload(await call("update_transaction", { id: lidlId, type: "expense", category: "groceries" }));
+    ok("transfer converted back to expense", convBack.type === "expense" && convBack.category === "groceries", JSON.stringify(convBack));
+
+    // 12eb3. Merchant category memory: one manual fix sticks on future imports
+    const cafe = payload(await call("get_transactions", { merchant: "Cafe X" }));
+    await call("update_transaction", { id: cafe.transactions[0].id, category: "entertainment" });
+    await call("delete_transaction", { id: cafe.transactions[0].id });
+    const ebs4 = payload(await call("sync_bank", {}));
+    ok("deleted bank row re-imports on sync", ebs4.imported === 1, JSON.stringify(ebs4));
+    const cafe2 = payload(await call("get_transactions", { merchant: "Cafe X" }));
+    ok(
+      "merchant memory categorizes re-import",
+      cafe2.count === 1 && cafe2.transactions[0].category === "entertainment",
+      JSON.stringify(cafe2)
+    );
+
+    // 12eb4. Daily auto-sync: the server-side scheduler syncs stale connections
+    const { db: adb } = await import("../src/db");
+    await adb.bankConnection.updateMany({
+      where: { provider: "enablebanking" },
+      data: { lastSyncAt: new Date(Date.now() - 30 * 3600 * 1000) },
+    });
+    const { runAutoSync } = await import("../src/autosync");
+    const auto = await runAutoSync();
+    ok("auto-sync syncs the stale connection", auto.due >= 1 && auto.synced >= 1 && auto.failed === 0, JSON.stringify(auto));
+    const ebStatusAuto = payload(await call("connect_bank", { action: "status" }));
+    ok(
+      "auto-sync refreshed last_sync",
+      !!ebStatusAuto.last_sync && Date.now() - new Date(ebStatusAuto.last_sync).getTime() < 60_000,
+      JSON.stringify({ last_sync: ebStatusAuto.last_sync })
+    );
 
     const ebStatus = payload(await call("connect_bank", { action: "status" }));
     ok("eb status", ebStatus.connected === true && ebStatus.bank === "Mock Bank" && ebStatus.accounts_synced === 2 && !!ebStatus.consent_valid_until, JSON.stringify(ebStatus));

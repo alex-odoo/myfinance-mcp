@@ -52,14 +52,14 @@ On first connect you sign in with Google or register with an email and password.
 | `get_trends`          | Month-over-month spending trends and deltas                                                        |
 | `set_budget`          | Monthly cap per category or overall                                                                |
 | `get_budget_progress` | Live budget progress with days left; renders as a dashboard                                        |
-| `update_transaction`  | Fix any field of an existing transaction                                                           |
+| `update_transaction`  | Fix any field of an existing transaction, including its type (e.g. turn a cash withdrawal into a transfer); category fixes are remembered per merchant for future syncs |
 | `delete_transaction`  | Delete one transaction by id                                                                       |
 | `delete_transactions` | Bulk delete by ids                                                                                 |
 | `get_settings`        | Base currency and timezone                                                                         |
 | `update_settings`     | Change base currency or timezone                                                                   |
 | `export_transactions` | Full CSV export (includes the entity column for accountant handoff)                                |
 | `connect_bank`        | Link a real bank via open banking (Enable Banking, EU/UK): list banks, start consent, status, disconnect |
-| `sync_bank`           | Pull booked transactions and balances from the connected bank; incremental, transfer pairing, dedup-safe |
+| `sync_bank`           | Pull booked transactions and balances from the connected bank; incremental, transfer pairing, dedup-safe. Healthy connections also auto-sync server-side roughly daily |
 | `connect_zenmoney`    | Link a ZenMoney account (international and .ru backends auto-detected) for read-only sync          |
 | `sync_zenmoney`       | Pull ZenMoney accounts and transactions; incremental, dedup-safe, keeps your manual edits          |
 | `delete_account`      | Permanently delete the user account and ALL data (GDPR erasure)                                    |
@@ -78,7 +78,7 @@ Four tools return an interactive dashboard (`ui://myfinancemcp/dashboard`) rende
 - Bank access is strictly read-only: open banking consent via Enable Banking (the bank authenticates the user; we never see credentials), ZenMoney via the user's own API token. Session ids and tokens are stored AES-256-GCM encrypted.
 - CSV export and instant full deletion are tools, not support tickets.
 - Hosted instance: EU data residency, row-level security keyed to your account.
-- 108 automated end-to-end checks (full OAuth flow, every tool, import dedup semantics, GDPR deletion) run in CI and as a hard deploy gate.
+- 130 automated end-to-end checks (full OAuth flow, every tool, import dedup semantics, GDPR deletion) run in CI and as a hard deploy gate.
 
 See [SECURITY.md](SECURITY.md) for the disclosure policy.
 
@@ -111,6 +111,7 @@ bunx prisma db push
 | `RESEND_API_KEY`              | _(optional)_ Resend key for new-signup email notifications         |
 | `NOTIFY_EMAIL`                | _(optional)_ Where signup notifications go                         |
 | `FROM_EMAIL`                  | _(optional)_ Verified sender for notifications                     |
+| `AUTO_SYNC_INTERVAL_MS`       | _(optional)_ Bank auto-sync tick, default hourly (syncs connections >20h stale); `0` disables |
 
 Generate the password hash:
 
@@ -136,7 +137,7 @@ bun run e2e            # self-contained end-to-end suite (spawns its own server)
 bun run lint
 ```
 
-The e2e suite (108 checks) covers the full OAuth flow (discovery, dynamic registration, PKCE, refresh rotation), every tool, statement-import dedup semantics, ZenMoney sync against a stubbed Diff API, and GDPR deletion.
+The e2e suite (130 checks) covers the full OAuth flow (discovery, dynamic registration, PKCE, refresh rotation), every tool, statement-import dedup semantics, ZenMoney sync against a stubbed Diff API, and GDPR deletion.
 
 ## API Endpoints
 

@@ -1,6 +1,7 @@
 import { db, logEvent } from "../db";
 import { convert, round2 } from "../fx";
-import { INCOME_CATEGORIES } from "../categories";
+import { EXPENSE_CATEGORIES, INCOME_CATEGORIES } from "../categories";
+import { merchantCategoryMap, normMerchant } from "../merchantMemory";
 import { decryptToken } from "./crypto";
 import { zenDiff, ZenAuthError } from "./client";
 import type { ZenAccount, ZenTag } from "./client";
@@ -119,6 +120,13 @@ export async function syncZenMoney(userId: string, opts: SyncOptions = {}) {
   let skippedRows = 0;
   const unmappedTags = new Map<string, number>();
 
+  // User's remembered per-merchant categories fill the gaps tags don't cover
+  // (ZenMoney tags are the user's own labels, so they keep priority).
+  const memory = await merchantCategoryMap(
+    userId,
+    rows.map((t) => (t.merchant ? merchantById.get(t.merchant) : undefined) ?? t.payee ?? undefined)
+  );
+
   for (const t of rows) {
     const isTransfer = t.income > 0 && t.outcome > 0 && !!t.incomeAccount && !!t.outcomeAccount;
     const outAccId = ourAccountId(t.outcomeAccount);
@@ -136,17 +144,22 @@ export async function syncZenMoney(userId: string, opts: SyncOptions = {}) {
 
     const tags = (t.tag ?? []).map((id) => tagById.get(id)).filter((x): x is ZenTag => !!x);
     const type = isTransfer ? ("transfer" as const) : t.outcome > 0 ? ("expense" as const) : ("income" as const);
+    const merchant = (t.merchant ? merchantById.get(t.merchant) : undefined) ?? t.payee ?? undefined;
     let category: string | null = null;
     if (!isTransfer) {
       const mapped = mapCategory(tags, tagById, t.mcc);
       category = mapped.category;
       if (mapped.unmappedTag) unmappedTags.set(mapped.unmappedTag, (unmappedTags.get(mapped.unmappedTag) ?? 0) + 1);
       if (type === "income" && !(INCOME_CATEGORIES as readonly string[]).includes(category)) category = "other";
+      if (!category || category === "other") {
+        const remembered = merchant ? memory.get(normMerchant(merchant)) : undefined;
+        const valid = type === "expense" ? EXPENSE_CATEGORIES : INCOME_CATEGORIES;
+        if (remembered && (valid as readonly string[]).includes(remembered)) category = remembered;
+      }
     }
     const amount = round2(t.outcome > 0 ? t.outcome : t.income);
     const currency =
       (t.outcome > 0 ? currencyOf(t.outcomeInstrument) : currencyOf(t.incomeInstrument)) ?? user.baseCurrency;
-    const merchant = (t.merchant ? merchantById.get(t.merchant) : undefined) ?? t.payee ?? undefined;
     const occurredAt = new Date(`${t.date}T00:00:00.000Z`);
     // op* = operation currency differs from account currency; keep the
     // account-currency amount canonical and preserve the charged amount in the note.

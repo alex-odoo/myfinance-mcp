@@ -1,7 +1,7 @@
 {
   "serverInfo": {
     "name": "myfinancemcp",
-    "version": "0.9.0"
+    "version": "0.10.0"
   },
   "authentication": {
     "required": true,
@@ -613,7 +613,7 @@
     {
       "name": "update_transaction",
       "title": "Update transaction",
-      "description": "Fix a logged record: wrong category, amount, merchant, date, or personal/business scope.",
+      "description": "Fix a logged record: wrong category, amount, merchant, date, personal/business scope, or type. type=transfer + counter_account converts a mislogged row into a transfer between own accounts (e.g. a cash withdrawal into a transfer to Cash). Category fixes on rows with a merchant are remembered: future bank syncs of that merchant reuse your category.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -679,6 +679,19 @@
               "personal",
               "business"
             ]
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "expense",
+              "income",
+              "transfer"
+            ],
+            "description": "Convert the record's type. transfer additionally needs counter_account."
+          },
+          "counter_account": {
+            "type": "string",
+            "description": "type=transfer only: the OTHER own account of the transfer (for an expense row: where the money went, e.g. Cash)."
           }
         },
         "required": [
@@ -1052,7 +1065,7 @@
     {
       "name": "sync_bank",
       "title": "Sync bank",
-      "description": "Pull booked transactions and balances from the connected bank (via connect_bank; read-only, incremental, safe to re-run). First sync imports months_back of history (default 3; banks may return less). Equal-amount same-day debit/credit pairs across the user's own synced accounts are merged into transfers. Rows without a recognizable MCC land in category 'other'.",
+      "description": "Pull booked transactions and balances from the connected bank (via connect_bank; read-only, incremental, safe to re-run). First sync imports months_back of history (default 3; banks may return less). Equal-amount same-day debit/credit pairs across the user's own synced accounts are merged into transfers. Categories come from the user's remembered per-merchant fixes first, then MCC; the rest land in 'other'. The server also auto-syncs healthy connections roughly daily; run this only for immediate freshness or right after connecting.",
       "inputSchema": {
         "type": "object",
         "properties": {

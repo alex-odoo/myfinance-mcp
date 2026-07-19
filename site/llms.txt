@@ -8,7 +8,8 @@ Server URL: https://myfinance-mcp.com/mcp (Streamable HTTP, OAuth 2.0 with PKCE 
 
 - Standalone, not a bridge: unlike most personal finance MCP servers (thin wrappers around a YNAB, Monarch Money, Actual Budget or Firefly III account), MyFinance MCP IS the finance app - no other subscription, install or self-hosted backend required.
 - 24 tools, all with MCP annotations (read-only and destructive operations flagged).
-- Real bank sync, read-only: EU/UK banks via Enable Banking open banking consent (connect_bank + sync_bank tools), plus ZenMoney sync via the user's own API token. Session ids and tokens stored AES-256-GCM encrypted; the server never sees bank credentials.
+- Real bank sync, read-only: EU/UK banks via Enable Banking open banking consent (connect_bank + sync_bank tools), plus ZenMoney sync via the user's own API token. Session ids and tokens stored AES-256-GCM encrypted; the server never sees bank credentials. Healthy connections auto-sync server-side roughly daily.
+- Category corrections are remembered per merchant: fix a synced transaction's category once and every future bank import of that merchant uses your choice (user-level memory, beats MCC guessing).
 - Every number is computed in SQL on the server; the LLM never does arithmetic over raw records.
 - Multi-currency: transactions keep the original amount and currency; the exchange rate to the user's base currency is frozen at transaction date.
 - Receipt photos are parsed client-side by the user's own AI; images never reach the server.

@@ -11,6 +11,7 @@ import { buildMcpServer, SERVER_NAME, SERVER_VERSION } from "./mcp";
 import { EXPENSE_CATEGORIES, INCOME_CATEGORIES } from "./categories";
 import { instrumentTransport, pruneOldEvents } from "./telemetry";
 import { ebCreateSession } from "./enablebanking/client";
+import { runAutoSync } from "./autosync";
 import { encryptToken } from "./zenmoney/crypto";
 
 assertConfig();
@@ -29,6 +30,9 @@ await db.category.createMany({
 await bootstrapUser();
 await pruneOldEvents();
 setInterval(() => void pruneOldEvents(), 24 * 60 * 60 * 1000);
+if (config.autoSyncIntervalMs > 0) {
+  setInterval(() => void runAutoSync().catch(() => {}), config.autoSyncIntervalMs);
+}
 
 const provider = new FinanceOAuthProvider(new OAuthStore());
 

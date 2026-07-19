@@ -1,5 +1,7 @@
 import { db, logEvent } from "../db";
 import { convert, round2 } from "../fx";
+import { EXPENSE_CATEGORIES, INCOME_CATEGORIES } from "../categories";
+import { merchantCategoryMap, normMerchant } from "../merchantMemory";
 import { mccCategory } from "../zenmoney/mapping";
 import { ebTransactions, ebBalances, ebDerivedId, EbAuthError } from "./client";
 import type { EbTransaction, EbAccount } from "./client";
@@ -201,6 +203,12 @@ export async function syncEnableBanking(userId: string, opts: SyncOptions = {}) 
   let transfers = 0;
   let merged = 0;
 
+  // User's remembered per-merchant categories beat MCC guessing.
+  const memory = await merchantCategoryMap(
+    userId,
+    fresh.map((r) => (r.isDebit ? r.t.creditor?.name : r.t.debtor?.name) ?? undefined)
+  );
+
   for (const row of fresh) {
     if (takenCredits.has(row)) continue; // consumed as the credit side of a transfer
     const occurredAt = new Date(`${row.date}T00:00:00.000Z`);
@@ -239,7 +247,11 @@ export async function syncEnableBanking(userId: string, opts: SyncOptions = {}) 
     const type = row.isDebit ? ("expense" as const) : ("income" as const);
     const merchant = (row.isDebit ? row.t.creditor?.name : row.t.debtor?.name) ?? undefined;
     const mcc = row.t.merchant_category_code ? Number(row.t.merchant_category_code) : undefined;
-    const category = row.isDebit && mcc ? (mccCategory(mcc) ?? "other") : "other";
+    const validForType = row.isDebit ? EXPENSE_CATEGORIES : INCOME_CATEGORIES;
+    const rememberedRaw = merchant ? memory.get(normMerchant(merchant)) : undefined;
+    const remembered =
+      rememberedRaw && (validForType as readonly string[]).includes(rememberedRaw) ? rememberedRaw : undefined;
+    const category = remembered ?? (row.isDebit && mcc ? (mccCategory(mcc) ?? "other") : "other");
 
     // Manual/receipt twin the user hand-logged before the bank confirmed it.
     const windowStart = new Date(occurredAt.getTime() - 2 * 86_400_000);
@@ -347,7 +359,7 @@ export async function syncEnableBanking(userId: string, opts: SyncOptions = {}) 
     consent_valid_until: meta.validUntil,
     ...(imported > 0
       ? {
-          hint: "Bank rows without a recognizable MCC land in category 'other'. Review with get_transactions (category=other) and fix via update_transaction.",
+          hint: "Bank rows without a recognizable MCC or remembered merchant land in category 'other'. Review with get_transactions (category=other) and fix via update_transaction - fixes are remembered per merchant for future syncs.",
         }
       : {}),
   };

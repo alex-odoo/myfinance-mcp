@@ -11,6 +11,7 @@ import { encryptToken, decryptToken } from "./zenmoney/crypto";
 import { syncZenMoney } from "./zenmoney/sync";
 import { ebConfigured, ebAspsps, ebStartAuth, ebDeleteSession } from "./enablebanking/client";
 import { syncEnableBanking } from "./enablebanking/sync";
+import { rememberMerchantCategory } from "./merchantMemory";
 import type { EbConnectionMeta } from "./enablebanking/sync";
 import type { TxType } from "./generated/prisma/enums";
 
@@ -733,7 +734,8 @@ export function registerFinanceTools(server: McpServer, userId: string): void {
     {
       title: "Update transaction",
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
-      description: "Fix a logged record: wrong category, amount, merchant, date, or personal/business scope.",
+      description:
+        "Fix a logged record: wrong category, amount, merchant, date, personal/business scope, or type. type=transfer + counter_account converts a mislogged row into a transfer between own accounts (e.g. a cash withdrawal into a transfer to Cash). Category fixes on rows with a merchant are remembered: future bank syncs of that merchant reuse your category.",
       inputSchema: {
         id: z.string().uuid(),
         amount: z.number().optional(),
@@ -743,12 +745,66 @@ export function registerFinanceTools(server: McpServer, userId: string): void {
         note: z.string().optional(),
         date: dateSchema.optional(),
         entity: entitySchema.optional(),
+        type: z
+          .enum(["expense", "income", "transfer"])
+          .optional()
+          .describe("Convert the record's type. transfer additionally needs counter_account."),
+        counter_account: z
+          .string()
+          .optional()
+          .describe("type=transfer only: the OTHER own account of the transfer (for an expense row: where the money went, e.g. Cash)."),
       },
     },
-    async ({ id, amount, currency, category, merchant, note, date, entity }) => {
+    async ({ id, amount, currency, category, merchant, note, date, entity, type, counter_account }) => {
       const user = await getUser(userId);
       const existing = await db.transaction.findFirst({ where: { id, userId } });
       if (!existing) throw new Error("Transaction not found.");
+
+      const newType = type ?? existing.type;
+      if (category && newType !== "transfer") {
+        const valid = newType === "expense" ? EXPENSE_CATEGORIES : INCOME_CATEGORIES;
+        if (!(valid as readonly string[]).includes(category)) {
+          throw new Error(`Category "${category}" is not a valid ${newType} category. Valid: ${valid.join(", ")}.`);
+        }
+      }
+
+      // Type conversion. Transfers live on the SOURCE account with a counter
+      // leg; an income row flips (money arrived here, so this account becomes
+      // the counter side). Bank external ids stay put - the edited row counts
+      // as user-touched, so re-syncs leave it alone.
+      let accountId = existing.accountId;
+      let typeData: Record<string, unknown> = {};
+      if (type && type !== existing.type) {
+        if (type === "transfer") {
+          if (!counter_account) {
+            throw new Error("Converting to a transfer needs counter_account (the other own account, e.g. Cash).");
+          }
+          const counter = await resolveAccount(userId, counter_account);
+          if (counter.id === existing.accountId) {
+            throw new Error("counter_account must be a different account than the transaction's own.");
+          }
+          if (existing.type === "income") {
+            accountId = counter.id;
+            typeData = { type, categoryKey: null, counterAccountId: existing.accountId };
+          } else {
+            typeData = { type, categoryKey: null, counterAccountId: counter.id };
+          }
+        } else {
+          // transfer -> expense/income (or expense <-> income): drop the counter leg
+          const fallback = type === "expense" ? EXPENSE_CATEGORIES : INCOME_CATEGORIES;
+          const keep =
+            existing.categoryKey && (fallback as readonly string[]).includes(existing.categoryKey)
+              ? existing.categoryKey
+              : "other";
+          typeData = {
+            type,
+            categoryKey: category ?? keep,
+            counterAccountId: null,
+            counterAmount: null,
+            counterCurrency: null,
+          };
+        }
+      }
 
       const newAmount = amount ?? Number(existing.amount);
       const newCurrency = (currency ?? existing.currency).toUpperCase();
@@ -767,13 +823,26 @@ export function registerFinanceTools(server: McpServer, userId: string): void {
           occurredAt: newDate,
           amountBase: fx.converted,
           fxRate: fx.rate,
-          ...(category ? { categoryKey: category } : {}),
+          accountId,
+          ...(category && newType !== "transfer" ? { categoryKey: category } : {}),
           ...(merchant !== undefined ? { merchant } : {}),
           ...(note !== undefined ? { note } : {}),
           ...(entity ? { entity } : {}),
+          ...typeData,
         },
       });
-      return text({ updated: true, id: tx.id, amount_base: Number(tx.amountBase), category: tx.categoryKey, entity: tx.entity });
+      if (category && tx.merchant && tx.type !== "transfer") {
+        await rememberMerchantCategory(userId, tx.merchant, category);
+      }
+      return text({
+        updated: true,
+        id: tx.id,
+        type: tx.type,
+        amount_base: Number(tx.amountBase),
+        category: tx.categoryKey,
+        entity: tx.entity,
+        ...(tx.type === "transfer" && tx.counterAccountId ? { transfer: true } : {}),
+      });
     }
   );
 
@@ -1051,6 +1120,7 @@ export function registerFinanceTools(server: McpServer, userId: string): void {
           last_sync: existing.lastSyncAt?.toISOString() ?? null,
           last_error: existing.lastError ?? undefined,
           accounts_synced: Object.values(map).filter((m) => m.enabled).length,
+          auto_sync: "Healthy connections are synced server-side roughly daily.",
         });
       }
 
@@ -1160,6 +1230,7 @@ export function registerFinanceTools(server: McpServer, userId: string): void {
           last_sync: existing.lastSyncAt?.toISOString() ?? null,
           last_error: existing.lastError ?? undefined,
           accounts_synced: Object.values(map).filter((m) => m.enabled).length,
+          auto_sync: "Healthy connections are synced server-side roughly daily.",
         });
       }
 
@@ -1218,7 +1289,7 @@ export function registerFinanceTools(server: McpServer, userId: string): void {
       title: "Sync bank",
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
       description:
-        "Pull booked transactions and balances from the connected bank (via connect_bank; read-only, incremental, safe to re-run). First sync imports months_back of history (default 3; banks may return less). Equal-amount same-day debit/credit pairs across the user's own synced accounts are merged into transfers. Rows without a recognizable MCC land in category 'other'.",
+        "Pull booked transactions and balances from the connected bank (via connect_bank; read-only, incremental, safe to re-run). First sync imports months_back of history (default 3; banks may return less). Equal-amount same-day debit/credit pairs across the user's own synced accounts are merged into transfers. Categories come from the user's remembered per-merchant fixes first, then MCC; the rest land in 'other'. The server also auto-syncs healthy connections roughly daily; run this only for immediate freshness or right after connecting.",
       inputSchema: {
         dry_run: z.boolean().optional().describe("Preview changes without writing them."),
         months_back: z
