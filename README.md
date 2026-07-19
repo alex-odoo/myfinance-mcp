@@ -58,6 +58,8 @@ On first connect you sign in with Google or register with an email and password.
 | `get_settings`        | Base currency and timezone                                                                         |
 | `update_settings`     | Change base currency or timezone                                                                   |
 | `export_transactions` | Full CSV export (includes the entity column for accountant handoff)                                |
+| `connect_zenmoney`    | Link a ZenMoney account (international and .ru backends auto-detected) for read-only sync          |
+| `sync_zenmoney`       | Pull ZenMoney accounts and transactions; incremental, dedup-safe, keeps your manual edits          |
 | `delete_account`      | Permanently delete the user account and ALL data (GDPR erasure)                                    |
 | `ping`                | Health and auth check                                                                              |
 
@@ -70,8 +72,11 @@ Four tools return an interactive dashboard (`ui://myfinancemcp/dashboard`) rende
 - Receipt photos are parsed by YOUR AI client; images never reach this server.
 - Amounts, merchants and notes are never written to server logs (blind logs); telemetry stores event types and ids only.
 - OAuth 2.1 with PKCE, encrypted tokens, rate-limited sign-in.
+- All 22 tools carry MCP annotations (8 read-only, destructive ops flagged, `openWorldHint: false`), so clients can gate confirmations correctly.
+- Bank-sync tokens (ZenMoney) are stored AES-256-GCM encrypted; sync is strictly read-only, no bank credentials ever touch the server.
 - CSV export and instant full deletion are tools, not support tickets.
 - Hosted instance: EU data residency, row-level security keyed to your account.
+- 108 automated end-to-end checks (full OAuth flow, every tool, import dedup semantics, GDPR deletion) run in CI and as a hard deploy gate.
 
 See [SECURITY.md](SECURITY.md) for the disclosure policy.
 
@@ -129,7 +134,7 @@ bun run e2e            # self-contained end-to-end suite (spawns its own server)
 bun run lint
 ```
 
-The e2e suite covers the full OAuth flow (discovery, dynamic registration, PKCE, refresh rotation), every tool, statement-import dedup semantics and GDPR deletion.
+The e2e suite (108 checks) covers the full OAuth flow (discovery, dynamic registration, PKCE, refresh rotation), every tool, statement-import dedup semantics, ZenMoney sync against a stubbed Diff API, and GDPR deletion.
 
 ## API Endpoints
 

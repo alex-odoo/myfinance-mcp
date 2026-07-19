@@ -21,7 +21,7 @@
 <meta name="twitter:card" content="summary_large_image">
 <script type="application/ld+json">{"@context": "https://schema.org", "@type": "ItemList", "itemListElement": [{"@type": "ListItem", "position": 1, "name": "Mint", "url": "https://myfinance-mcp.com/mint-mcp"}, {"@type": "ListItem", "position": 2, "name": "YNAB", "url": "https://myfinance-mcp.com/ynab-mcp"}, {"@type": "ListItem", "position": 3, "name": "Monarch Money", "url": "https://myfinance-mcp.com/monarch-money-mcp"}, {"@type": "ListItem", "position": 4, "name": "Lunch Money", "url": "https://myfinance-mcp.com/lunch-money-mcp"}, {"@type": "ListItem", "position": 5, "name": "Copilot Money", "url": "https://myfinance-mcp.com/copilot-money-mcp"}, {"@type": "ListItem", "position": 6, "name": "Actual Budget", "url": "https://myfinance-mcp.com/actual-budget-mcp"}, {"@type": "ListItem", "position": 7, "name": "Firefly III", "url": "https://myfinance-mcp.com/firefly-iii-mcp"}, {"@type": "ListItem", "position": 8, "name": "PocketGuard", "url": "https://myfinance-mcp.com/pocketguard-mcp"}]}</script>
 <script type="application/ld+json">{"@context": "https://schema.org", "@type": "BreadcrumbList", "itemListElement": [{"@type": "ListItem", "position": 1, "name": "Home", "item": "https://myfinance-mcp.com/"}, {"@type": "ListItem", "position": 2, "name": "Alternatives", "item": "https://myfinance-mcp.com/alternatives"}]}</script>
-<script type="application/ld+json">{"@context": "https://schema.org", "@type": "WebPage", "url": "https://myfinance-mcp.com/alternatives", "datePublished": "2026-07-16", "dateModified": "2026-07-16", "publisher": {"@type": "Organization", "name": "Rteam", "url": "https://rteam.agency"}}</script>
+<script type="application/ld+json">{"@context": "https://schema.org", "@type": "WebPage", "url": "https://myfinance-mcp.com/alternatives", "datePublished": "2026-07-16", "dateModified": "2026-07-19", "publisher": {"@type": "Organization", "name": "Rteam", "url": "https://rteam.agency"}}</script>
 </head>
 <body>
 <header class="site">
@@ -82,8 +82,37 @@
       <a class="feat alt-card" href="/pocketguard-mcp"><span class="fi num">switching from</span><h3>PocketGuard <span class="arr">&rarr;</span></h3><p>Freemium walls, no MCP. Everything here is free.</p></a>
     </div>
     <p class="soften">Don't see your app? It almost certainly has no MCP server either; MyFinance MCP works the same way regardless of what you are switching from. <a href="/#contact">Request a comparison</a>.</p>
-    <p class="fineprint">Last updated: July 16, 2026.</p>
+    <p class="fineprint">Last updated: July 19, 2026.</p>
 <p class="fineprint">Mint, YNAB, Monarch Money, Lunch Money, Copilot Money, Actual Budget, Firefly III, PocketGuard and other product names are trademarks of their respective owners. MyFinance MCP is an independent, open-source project and is not affiliated with or endorsed by them. Comparisons reflect publicly available information at the time of writing and may change.</p>
+  </div>
+</section>
+
+<section id="bridges">
+  <div class="wrap">
+    <span class="eyebrow">Standalone vs bridges</span>
+    <h2>Not a bridge to another app. The app itself.</h2>
+    <p class="sec-sub">Most personal finance MCP servers on GitHub are bridges: thin wrappers that connect your AI to an account you already pay for in YNAB, Monarch Money, Actual Budget or Firefly III. A bridge inherits the app behind it - the subscription, the onboarding, the hosting - and adds an API token to manage. MyFinance MCP is standalone: the server is the finance app.</p>
+    <div class="cmp reveal in">
+      <div class="cmp-col old">
+        <h3>MCP bridge to a finance app</h3>
+        <ul>
+          <li>Needs the underlying app: a paid subscription (YNAB, Monarch, Lunch Money) or a server you self-host (Actual, Firefly III)</li>
+          <li>Usually runs locally with your API token; you install, update and secure it yourself</li>
+          <li>Tracking still happens in the app; the AI is a remote control</li>
+          <li>Two accounts, two logins, two places where your data lives</li>
+        </ul>
+      </div>
+      <div class="cmp-col ours">
+        <h3>MyFinance MCP, standalone</h3>
+        <ul>
+          <li>No other app required: expenses, budgets, trends and net worth live here</li>
+          <li>Hosted remote server with OAuth 2.1: paste the URL, sign in, done</li>
+          <li>The chat is the interface; dashboards render right in the conversation</li>
+          <li>One account, exportable to CSV any time, deletable with one tool call</li>
+        </ul>
+      </div>
+    </div>
+    <p class="soften">Already happy with your finance app? Keep it - a bridge is the right tool for that. MyFinance MCP is for people who want the AI chat to be the whole finance stack.</p>
   </div>
 </section>
 
