@@ -690,6 +690,17 @@ export function registerFinanceTools(server: McpServer, userId: string): void {
           });
           continue;
         }
+        // This row may live on as the absorbed leg of a merged transfer
+        // (update_transaction counter_transaction_id): its external id moved to
+        // counterExternalId and its account to counterAccountId.
+        const asLeg = await db.transaction.findFirst({
+          where: { userId, counterAccountId: acc.id, counterExternalId: externalId },
+        });
+        if (asLeg) {
+          if (!row.external_id) noIdSkips++;
+          skipped.push({ row: idx + 1, reason: "merged_transfer_leg", existing_id: asLeg.id });
+          continue;
+        }
 
         const windowStart = new Date(occurredAt.getTime() - 2 * 86_400_000);
         const windowEnd = new Date(occurredAt.getTime() + 2 * 86_400_000);
@@ -975,7 +986,7 @@ export function registerFinanceTools(server: McpServer, userId: string): void {
       title: "Update transaction",
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
       description:
-        "Fix a logged record: wrong category, amount, merchant, date, personal/business scope, or type. type=transfer + counter_account converts a mislogged row into a transfer between own accounts (e.g. a cash withdrawal into a transfer to Cash). Category fixes on rows with a merchant are remembered: future bank syncs of that merchant reuse your category.",
+        "Fix a logged record: wrong category, amount, merchant, date, personal/business scope, or type. type=transfer + counter_account converts a mislogged row into a transfer between own accounts (e.g. a cash withdrawal into a transfer to Cash). counter_transaction_id instead GLUES TWO EXISTING rows (one expense + one income on different own accounts) into ONE transfer - use it when a currency exchange, own-account top-up, or cash withdrawal produced two separate rows. Category fixes on rows with a merchant are remembered: future bank syncs of that merchant reuse your category.",
       inputSchema: {
         id: z.string().uuid(),
         amount: z.number().optional(),
@@ -993,12 +1004,92 @@ export function registerFinanceTools(server: McpServer, userId: string): void {
           .string()
           .optional()
           .describe("type=transfer only: the OTHER own account of the transfer (for an expense row: where the money went, e.g. Cash)."),
+        counter_transaction_id: z
+          .string()
+          .uuid()
+          .optional()
+          .describe(
+            "Merge ANOTHER existing row into this one as the second leg of a transfer between own accounts. One row must be an expense, the other an income, on different accounts (any currencies). The other row is absorbed: its account/amount/currency become the counter leg and its bank reference is preserved, so re-syncs and re-imports do not duplicate it."
+          ),
       },
     },
-    async ({ id, amount, currency, category, merchant, note, date, entity, type, counter_account }) => {
+    async ({ id, amount, currency, category, merchant, note, date, entity, type, counter_account, counter_transaction_id }) => {
       const user = await getUser(userId);
       const existing = await db.transaction.findFirst({ where: { id, userId } });
       if (!existing) throw new Error("Transaction not found.");
+
+      // Glue two existing rows into one transfer. The expense row is the money
+      // leaving; the income row is absorbed as the counter leg. Both bank
+      // references survive on the merged row (externalId + counterExternalId),
+      // so bank re-syncs and statement re-imports skip both legs.
+      if (counter_transaction_id) {
+        if (counter_account) {
+          throw new Error(
+            "Use either counter_account (attach a NEW leg) or counter_transaction_id (merge an EXISTING row), not both."
+          );
+        }
+        if (type && type !== "transfer") {
+          throw new Error("counter_transaction_id merges two rows into a transfer; omit type or pass type=transfer.");
+        }
+        if (amount !== undefined || currency !== undefined || category !== undefined || merchant !== undefined) {
+          throw new Error(
+            "amount/currency/category/merchant do not apply when merging two rows into a transfer: both legs keep their booked amounts."
+          );
+        }
+        if (counter_transaction_id === id) throw new Error("counter_transaction_id must be a different transaction.");
+        const other = await db.transaction.findFirst({ where: { id: counter_transaction_id, userId } });
+        if (!other) throw new Error("Counter transaction not found.");
+        if (existing.type === "transfer" || other.type === "transfer") {
+          throw new Error("Both rows must be plain expense/income rows; one of them is already a transfer.");
+        }
+        const out = existing.type === "expense" ? existing : other.type === "expense" ? other : null;
+        const inn = existing.type === "income" ? existing : other.type === "income" ? other : null;
+        if (!out || !inn) {
+          throw new Error(
+            `Cannot merge two ${existing.type} rows: a transfer needs one outgoing (expense) and one incoming (income) row.`
+          );
+        }
+        if (out.accountId === inn.accountId) {
+          throw new Error("Both rows are on the same account; a transfer needs two different own accounts.");
+        }
+        const merged = await db.$transaction(async (px) => {
+          // Delete the absorbed row first: the survivor may inherit its
+          // (accountId, externalId) pair, which is unique.
+          await px.transaction.delete({ where: { id: other.id } });
+          return px.transaction.update({
+            where: { id: existing.id },
+            data: {
+              type: "transfer",
+              accountId: out.accountId,
+              amount: out.amount,
+              currency: out.currency,
+              amountBase: out.amountBase,
+              fxRate: out.fxRate,
+              occurredAt: date ? parseDate(date) : out.occurredAt,
+              categoryKey: null,
+              merchant: null,
+              note: note ?? out.note ?? inn.note,
+              entity: entity ?? out.entity,
+              externalId: out.externalId,
+              counterAccountId: inn.accountId,
+              counterAmount: inn.amount,
+              counterCurrency: inn.currency,
+              counterExternalId: inn.externalId,
+            },
+          });
+        });
+        const accs = await db.account.findMany({ where: { id: { in: [out.accountId, inn.accountId] } } });
+        const name = (accId: string) => accs.find((a) => a.id === accId)?.name ?? "?";
+        return text({
+          updated: true,
+          merged_transfer: true,
+          id: merged.id,
+          transfer: `${name(out.accountId)} -> ${name(inn.accountId)}`,
+          amount: Number(merged.amount),
+          currency: merged.currency,
+          received: { amount: Number(merged.counterAmount), currency: merged.counterCurrency },
+        });
+      }
 
       const newType = type ?? existing.type;
       if (category && newType !== "transfer") {

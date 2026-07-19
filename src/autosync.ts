@@ -9,9 +9,12 @@ import { syncZenMoney } from "./zenmoney/sync";
 // until the user reconnects).
 const STALE_MS = 20 * 60 * 60 * 1000; // ~daily with an hourly tick, tolerant of drift
 
-export async function runAutoSync(): Promise<{ due: number; synced: number; failed: number }> {
+export async function runAutoSync(onlyUserId?: string): Promise<{ due: number; synced: number; failed: number }> {
+  // onlyUserId scopes the run to one user (e2e: the suite shares a database
+  // with real users and must never poke their live bank connections).
   const due = await db.bankConnection.findMany({
     where: {
+      ...(onlyUserId ? { userId: onlyUserId } : {}),
       status: "active",
       tokenEnc: { not: "" },
       OR: [{ lastSyncAt: null }, { lastSyncAt: { lt: new Date(Date.now() - STALE_MS) } }],

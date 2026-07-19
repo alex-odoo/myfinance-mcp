@@ -136,7 +136,8 @@ function startZenStub() {
 /**
  * Enable Banking API stub. /auth returns a "bank consent" URL that points
  * straight at the server's callback (instant approval); two accounts, paged
- * transactions, one cross-account transfer pair, one pending row.
+ * transactions, one cross-account transfer pair, one cross-CURRENCY pair
+ * (EUR debit + USD credit, FX-tolerance matched), one pending row.
  */
 function startEbStub() {
   const eur = (amount: string) => ({ currency: "EUR", amount });
@@ -186,6 +187,7 @@ function startEbStub() {
           transactions: [
             { entry_reference: "ref-1", transaction_amount: eur("12.50"), credit_debit_indicator: "DBIT", status: "BOOK", booking_date: "2026-07-15", creditor: { name: "Lidl Helsinki" }, merchant_category_code: "5411" },
             { entry_reference: "ref-2", transaction_amount: eur("2500.00"), credit_debit_indicator: "CRDT", status: "BOOK", booking_date: "2026-07-14", debtor: { name: "ACME Oy" }, remittance_information: ["Salary July"] },
+            { entry_reference: "ref-fx-1", transaction_amount: eur("100.00"), credit_debit_indicator: "DBIT", status: "BOOK", booking_date: "2026-07-14", remittance_information: ["Exchanged to USD"] },
           ],
           continuation_key: "p2",
         });
@@ -198,7 +200,13 @@ function startEbStub() {
         });
       }
       if (url.pathname === "/accounts/eb-acc-3/transactions") {
-        return Response.json({ transactions: [] });
+        return Response.json({
+          transactions: [
+            // 100 EUR * 1.105 (seeded rate) = 110.50; 111.99 is within the 2%
+            // pairing tolerance (banks apply their own FX spread).
+            { entry_reference: "ref-fx-2", transaction_amount: { currency: "USD", amount: "111.99" }, credit_debit_indicator: "CRDT", status: "BOOK", booking_date: "2026-07-14", remittance_information: ["Exchanged from EUR"] },
+          ],
+        });
       }
       if (url.pathname === "/accounts/eb-acc-3/balances") {
         return Response.json({ balances: [{ balance_type: "CLBD", balance_amount: { currency: "RON", amount: "0.00" } }] });
@@ -1020,12 +1028,32 @@ async function main(): Promise<void> {
     await odb.account.create({
       data: { userId: testUser.id, name: "Orphan Savings", type: "bank", provider: "enablebanking", externalId: "eb-acc-2", currency: "EUR" },
     });
+    // Deterministic FX for the cross-currency pairing + merge fixtures: a rate
+    // already cached for the date short-circuits the live fetch in ensureRates.
+    await odb.fxRate.createMany({
+      data: [
+        { date: new Date("2026-07-14T00:00:00.000Z"), quote: "USD", rate: 1.105 },
+        { date: new Date("2026-07-10T00:00:00.000Z"), quote: "USD", rate: 1.105 },
+      ],
+      skipDuplicates: true,
+    });
 
     const consent = await fetch(ebStart.authorize_url);
     ok("eb consent callback succeeds", consent.status === 200 && (await consent.text()).includes("Bank connected"));
 
     const ebs1 = payload(await call("sync_bank", {}));
-    ok("eb first sync counts", ebs1.accounts_created === 2 && ebs1.imported === 2 && ebs1.transfers === 1 && ebs1.manual_twins_merged === 1, JSON.stringify(ebs1));
+    ok("eb first sync counts", ebs1.accounts_created === 2 && ebs1.imported === 2 && ebs1.transfers === 2 && ebs1.manual_twins_merged === 1, JSON.stringify(ebs1));
+    const fxTr = await odb.transaction.findFirst({ where: { userId: testUser.id, externalId: { endsWith: "ref-fx-1" } } });
+    ok(
+      "cross-currency pair -> one transfer",
+      fxTr?.type === "transfer" &&
+        Number(fxTr.amount) === 100 &&
+        fxTr.currency === "EUR" &&
+        Number(fxTr.counterAmount) === 111.99 &&
+        fxTr.counterCurrency === "USD" &&
+        !!fxTr.counterExternalId?.endsWith("ref-fx-2"),
+      JSON.stringify(fxTr)
+    );
     ok("eb pending skipped + balances anchored", ebs1.pending_rows_skipped === 1 && ebs1.balances_anchored === 3, JSON.stringify(ebs1));
 
     const ebAccs = payload(await call("get_accounts", {}));
@@ -1057,6 +1085,55 @@ async function main(): Promise<void> {
     const convBack = payload(await call("update_transaction", { id: lidlId, type: "expense", category: "groceries" }));
     ok("transfer converted back to expense", convBack.type === "expense" && convBack.category === "groceries", JSON.stringify(convBack));
 
+    // 12eb2b. counter_transaction_id (0.13.0): glue two EXISTING rows into one
+    // transfer (currency exchange booked as expense + income on two accounts).
+    await call("create_account", { name: "USD Wallet", type: "bank", currency: "USD" });
+    const impOut = payload(await call("import_transactions", {
+      account: "Cash Stash",
+      transactions: [{ date: "2026-07-10", amount: -500, currency: "EUR", merchant: "Exchange Kantor", external_id: "mrg-out-1" }],
+    }));
+    const impIn = payload(await call("import_transactions", {
+      account: "USD Wallet",
+      transactions: [{ date: "2026-07-10", amount: 552.5, currency: "USD", merchant: "Exchange Kantor", external_id: "mrg-in-1" }],
+    }));
+    ok("merge fixture imported", impOut.imported === 1 && impIn.imported === 1, JSON.stringify({ impOut, impIn }));
+    const legs = payload(await call("get_transactions", { merchant: "Exchange Kantor" }));
+    const outLeg = legs.transactions.find((t: any) => t.type === "expense");
+    const inLeg = legs.transactions.find((t: any) => t.type === "income");
+    const mrgBoth = await call("update_transaction", { id: outLeg.id, counter_transaction_id: inLeg.id, counter_account: "Cash Stash" });
+    ok("merge rejects counter_account combo", isErr(mrgBoth));
+    const mrgSelf = await call("update_transaction", { id: outLeg.id, counter_transaction_id: outLeg.id });
+    ok("merge rejects self-merge", isErr(mrgSelf));
+    // Survivor deliberately = the INCOME leg: exercises the flip to the source
+    // account and the (accountId, externalId) unique-constraint ordering.
+    const mrg = payload(await call("update_transaction", { id: inLeg.id, counter_transaction_id: outLeg.id }));
+    ok(
+      "merge glues expense+income into transfer",
+      mrg.merged_transfer === true &&
+        mrg.transfer === "Cash Stash -> USD Wallet" &&
+        mrg.amount === 500 &&
+        mrg.currency === "EUR" &&
+        mrg.received.amount === 552.5 &&
+        mrg.received.currency === "USD",
+      JSON.stringify(mrg)
+    );
+    const legsAfter = payload(await call("get_transactions", { merchant: "Exchange Kantor" }));
+    ok("absorbed leg gone, merchant cleared", legsAfter.count === 0, JSON.stringify(legsAfter));
+    const reOut = payload(await call("import_transactions", {
+      account: "Cash Stash",
+      transactions: [{ date: "2026-07-10", amount: -500, currency: "EUR", merchant: "Exchange Kantor", external_id: "mrg-out-1" }],
+    }));
+    const reIn = payload(await call("import_transactions", {
+      account: "USD Wallet",
+      transactions: [{ date: "2026-07-10", amount: 552.5, currency: "USD", merchant: "Exchange Kantor", external_id: "mrg-in-1" }],
+    }));
+    ok(
+      "merged legs survive re-import",
+      reOut.imported === 0 && reOut.skipped?.[0]?.reason === "external_id_exists" &&
+        reIn.imported === 0 && reIn.skipped?.[0]?.reason === "merged_transfer_leg",
+      JSON.stringify({ reOut, reIn })
+    );
+
     // 12eb3. Merchant category memory: one manual fix sticks on future imports
     const cafe = payload(await call("get_transactions", { merchant: "Cafe X" }));
     await call("update_transaction", { id: cafe.transactions[0].id, category: "entertainment" });
@@ -1077,8 +1154,8 @@ async function main(): Promise<void> {
       data: { lastSyncAt: new Date(Date.now() - 30 * 3600 * 1000) },
     });
     const { runAutoSync } = await import("../src/autosync");
-    const auto = await runAutoSync();
-    ok("auto-sync syncs the stale connection", auto.due >= 1 && auto.synced >= 1 && auto.failed === 0, JSON.stringify(auto));
+    const auto = await runAutoSync(testUser.id);
+    ok("auto-sync syncs the stale connection", auto.due === 1 && auto.synced === 1 && auto.failed === 0, JSON.stringify(auto));
     const ebStatusAuto = payload(await call("connect_bank", { action: "status" }));
     ok(
       "auto-sync refreshed last_sync",

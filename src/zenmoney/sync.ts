@@ -170,7 +170,12 @@ export async function syncZenMoney(userId: string, opts: SyncOptions = {}) {
       continue; // both sides live on unmapped/disabled accounts
     }
 
-    const existing = await db.transaction.findFirst({ where: { userId, externalId } });
+    const existing = await db.transaction.findFirst({
+      where: { userId, OR: [{ externalId }, { counterExternalId: externalId }] },
+    });
+    // Absorbed leg of a transfer merged via update_transaction: already
+    // represented by the surviving row, never re-create it.
+    if (existing && existing.externalId !== externalId) continue;
 
     const tags = (t.tag ?? []).map((id) => tagById.get(id)).filter((x): x is ZenTag => !!x);
     const type = isTransfer ? ("transfer" as const) : t.outcome > 0 ? ("expense" as const) : ("income" as const);

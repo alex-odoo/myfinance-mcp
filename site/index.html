@@ -38,7 +38,7 @@
   "author": { "@type": "Organization", "name": "Rteam", "url": "https://rteam.agency" },
   "sameAs": ["https://github.com/alex-odoo/myfinance-mcp", "https://smithery.ai/servers/alex-k4kb/MyFinance-MCP"],
   "datePublished": "2026-07-13",
-  "dateModified": "2026-07-18"
+  "dateModified": "2026-07-19"
 }
 </script>
 <script type="application/ld+json">
@@ -65,7 +65,7 @@
     { "@type": "Question", "name": "Which clients are supported?", "acceptedAnswer": { "@type": "Answer", "text": "Any MCP client with OAuth 2.0 + PKCE: Claude.ai, Claude desktop and mobile, Claude Code, Cursor, Windsurf, VS Code." } },
     { "@type": "Question", "name": "Is it free?", "acceptedAnswer": { "@type": "Answer", "text": "Yes, free while in beta. No ads, no card." } },
     { "@type": "Question", "name": "Is my data private?", "acceptedAnswer": { "@type": "Answer", "text": "Your data is linked to your account and only you can access it. EU hosting, no third-party sharing, no amounts in logs, and you can export or delete everything at any time." } },
-    { "@type": "Question", "name": "Can it read my bank account?", "acceptedAnswer": { "@type": "Answer", "text": "Not directly, by design. You log by voice, text, receipt photos or statement exports; nothing connects to your bank credentials. Direct bank sync via licensed providers is on the roadmap." } },
+    { "@type": "Question", "name": "Can it read my bank account?", "acceptedAnswer": { "@type": "Answer", "text": "Yes, optionally and read-only. In the EU and UK you can connect your bank through licensed open banking (PSD2): you approve access on your bank's own page and new transactions sync in daily. Your bank credentials never touch our server, and you can revoke access at any time. Bank connections are in beta and enabled gradually; voice, receipts and statement import work without any bank link." } },
     { "@type": "Question", "name": "What about duplicates when I import a statement?", "acceptedAnswer": { "@type": "Answer", "text": "The importer detects rows you already logged by hand and merges them instead of duplicating, and re-importing the same statement is safe: already-imported rows are skipped and reported." } },
     { "@type": "Question", "name": "Can I split personal and business?", "acceptedAnswer": { "@type": "Answer", "text": "Yes. Accounts and individual transactions carry a personal/business tag; every report can be filtered by it, and the CSV export includes it for your accountant." } },
     { "@type": "Question", "name": "Can I self-host it?", "acceptedAnswer": { "@type": "Answer", "text": "Yes. MIT-licensed, runs from a Dockerfile with your own Postgres (Supabase works). The GitHub repository includes a self-hosting guide." } }
@@ -94,6 +94,7 @@
       MyFinance&nbsp;<b>MCP</b></a>
     <nav class="main" aria-label="Main">
       <a href="#how">How it works</a>
+      <a href="#bank">Bank sync</a>
       <a href="#install">Install</a>
       <a href="#examples">Examples</a>
       <a href="/alternatives">Alternatives</a>
@@ -113,9 +114,10 @@
         <span class="chip acc">Free</span>
         <span class="chip acc">Open source · MIT</span>
         <span class="chip">OAuth 2.0</span>
+        <span class="chip acc">New · Live bank sync</span>
       </div>
       <h1>Track your money by <span class="talk">talking</span> to your AI.</h1>
-      <p class="hero-sub">Connect Claude or ChatGPT, then just say what you spent. Expenses, income, budgets and net worth, logged and computed for you, in any currency.</p>
+      <p class="hero-sub">Connect Claude or ChatGPT, then just say what you spent. Expenses, income, budgets and net worth, logged and computed for you, in any currency. Or <a href="#bank">connect your bank</a> and skip even the typing.</p>
       <div class="cta-row">
         <a class="btn btn-solid" href="#install">Quick install</a>
         <a class="btn btn-ghost" href="#video">See it in action</a>
@@ -182,8 +184,23 @@
   </div>
 </section>
 
+<section id="bank">
+  <span class="swm left" aria-hidden="true">₴</span>
+  <div class="wrap">
+    <span class="eyebrow">Bank sync · beta</span>
+    <h2>Connect your bank. Skip even the typing.</h2>
+    <p class="sec-sub">Say "connect my bank" in the chat, approve read-only access on your bank's own page, and new transactions arrive daily on their own. No CSV, no retyping, no separate app.</p>
+    <div class="feat-grid cols3 reveal">
+      <div class="feat"><span class="fi num">eu &amp; uk</span><h3>2,700+ banks, including Revolut</h3><p>Open banking coverage across 30 European countries through a licensed provider (Enable Banking). ZenMoney sync covers more; statement import works everywhere.</p></div>
+      <div class="feat"><span class="fi num">read-only</span><h3>Your credentials never touch us</h3><p>You sign in on the bank's own page and grant read-only consent under PSD2. We store no bank passwords, and you can revoke access at any time, at the bank or in chat.</p></div>
+      <div class="feat"><span class="fi num">clean data</span><h3>Arrives already tidy</h3><p>Duplicates skipped, hand-logged rows merged instead of doubled, currency exchanges recognized as transfers between your own accounts, balances anchored to what your bank reports.</p></div>
+    </div>
+    <p class="soften">Bank connections are in beta and enabled gradually. Statement import and ZenMoney sync are open to everyone today.</p>
+  </div>
+</section>
+
 <section id="examples">
-  <span class="swm left" aria-hidden="true">£</span>
+  <span class="swm right" aria-hidden="true">£</span>
   <div class="wrap">
     <span class="eyebrow">Examples</span>
     <h2>Try saying</h2>
@@ -229,7 +246,7 @@
 </section>
 
 <section id="install">
-  <span class="swm right" aria-hidden="true">¥</span>
+  <span class="swm left" aria-hidden="true">¥</span>
   <div class="wrap">
     <span class="eyebrow">Quick install</span>
     <h2>Connect in under a minute</h2>
@@ -280,7 +297,7 @@
 </section>
 
 <section id="features">
-  <span class="swm left" aria-hidden="true">د.إ</span>
+  <span class="swm right" aria-hidden="true">د.إ</span>
   <div class="wrap">
     <span class="eyebrow">Features</span>
     <h2>Everything, just by chatting</h2>
@@ -299,7 +316,7 @@
 </section>
 
 <section id="why">
-  <span class="swm right" aria-hidden="true">元</span>
+  <span class="swm left" aria-hidden="true">元</span>
   <div class="wrap">
     <span class="eyebrow">Why MyFinance MCP</span>
     <h2>Talking beats spreadsheets.</h2>
@@ -329,7 +346,7 @@
 </section>
 
 <section id="security">
-  <span class="swm left" aria-hidden="true">₣</span>
+  <span class="swm right" aria-hidden="true">₣</span>
   <div class="wrap">
     <span class="eyebrow">Security</span>
     <h2>Built like your money depends on it</h2>
@@ -397,7 +414,7 @@
       </details>
       <details>
         <summary>Can it read my bank account?</summary>
-        <p class="fa">Not directly, by design. You log by voice, text, receipt photos or statement exports; nothing connects to your bank credentials. Direct bank sync via licensed providers is on the roadmap.</p>
+        <p class="fa">Yes, optionally and read-only. In the EU and UK you can connect your bank through licensed open banking (PSD2): you approve access on your bank's own page and new transactions sync in daily. Your bank credentials never touch our server, and you can revoke access at any time. Bank connections are in beta and enabled gradually; voice, receipts and statement import work without any bank link.</p>
       </details>
       <details>
         <summary>What about duplicates when I import a statement?</summary>

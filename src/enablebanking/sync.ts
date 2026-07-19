@@ -11,6 +11,7 @@ import type { EbTransaction, EbAccount } from "./client";
 const EXT_PREFIX = "eb:";
 const MAX_PAGES_PER_ACCOUNT = 30;
 const CURSOR_OVERLAP_DAYS = 5; // re-fetch a few days back; dedup absorbs the overlap
+const FX_PAIR_TOLERANCE = 0.02; // cross-currency transfer pairing: FX spread allowance
 
 // Same rule as ZenMoney sync: a row edited after import belongs to the user.
 const TOUCH_GRACE_MS = 2_000;
@@ -195,6 +196,7 @@ export async function syncEnableBanking(userId: string, opts: SyncOptions = {}) 
       continue;
     }
     if (existing.counterExternalId === row.externalId) continue; // credit side of a merged transfer
+    if (existing.type === "transfer") continue; // merged/paired transfer row: legs carry no merchant to refresh
     if (userTouched(existing)) continue;
     const merchant = (row.isDebit ? row.t.creditor?.name : row.t.debtor?.name) ?? undefined;
     const note = (row.t.remittance_information ?? []).join(" ").trim() || undefined;
@@ -224,6 +226,37 @@ export async function syncEnableBanking(userId: string, opts: SyncOptions = {}) 
       pairedCredit.set(d, matches[0]!);
       takenCredits.add(matches[0]!);
     }
+  }
+
+  // --- Cross-currency pass: an FX exchange between own accounts books a debit
+  // in one currency and a credit in another. Amounts must agree through that
+  // day's FX rate within FX_PAIR_TOLERANCE (banks apply their own spread), and
+  // the pair must be unique in BOTH directions - anything ambiguous stays two
+  // plain rows the user can still glue with update_transaction.
+  const fxDebits = fresh.filter((d) => d.isDebit && !pairedCredit.has(d));
+  const fxCredits = fresh.filter((c) => !c.isDebit && !takenCredits.has(c));
+  const fxCandidates = new Map<NewRow, NewRow[]>(); // debit -> matching credits
+  const creditHits = new Map<NewRow, number>(); // credit -> matching debit count
+  for (const d of fxDebits) {
+    for (const c of fxCredits) {
+      if (c.accountUid === d.accountUid || c.currency === d.currency || c.date !== d.date) continue;
+      let expected: number;
+      try {
+        expected = (await convert(d.amount, d.currency, c.currency, new Date(`${d.date}T00:00:00.000Z`))).converted;
+      } catch {
+        continue; // unknown currency or FX sources down: no pairing, plain rows
+      }
+      if (Math.abs(expected - c.amount) > expected * FX_PAIR_TOLERANCE) continue;
+      fxCandidates.set(d, [...(fxCandidates.get(d) ?? []), c]);
+      creditHits.set(c, (creditHits.get(c) ?? 0) + 1);
+    }
+  }
+  for (const [d, cands] of fxCandidates) {
+    if (cands.length !== 1) continue;
+    const c = cands[0]!;
+    if (creditHits.get(c) !== 1 || takenCredits.has(c)) continue;
+    pairedCredit.set(d, c);
+    takenCredits.add(c);
   }
 
   // --- Import ---

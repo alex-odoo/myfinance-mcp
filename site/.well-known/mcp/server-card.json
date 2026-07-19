@@ -1,7 +1,7 @@
 {
   "serverInfo": {
     "name": "myfinancemcp",
-    "version": "0.12.0"
+    "version": "0.13.0"
   },
   "authentication": {
     "required": true,
@@ -739,7 +739,7 @@
     {
       "name": "update_transaction",
       "title": "Update transaction",
-      "description": "Fix a logged record: wrong category, amount, merchant, date, personal/business scope, or type. type=transfer + counter_account converts a mislogged row into a transfer between own accounts (e.g. a cash withdrawal into a transfer to Cash). Category fixes on rows with a merchant are remembered: future bank syncs of that merchant reuse your category.",
+      "description": "Fix a logged record: wrong category, amount, merchant, date, personal/business scope, or type. type=transfer + counter_account converts a mislogged row into a transfer between own accounts (e.g. a cash withdrawal into a transfer to Cash). counter_transaction_id instead GLUES TWO EXISTING rows (one expense + one income on different own accounts) into ONE transfer - use it when a currency exchange, own-account top-up, or cash withdrawal produced two separate rows. Category fixes on rows with a merchant are remembered: future bank syncs of that merchant reuse your category.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -818,6 +818,11 @@
           "counter_account": {
             "type": "string",
             "description": "type=transfer only: the OTHER own account of the transfer (for an expense row: where the money went, e.g. Cash)."
+          },
+          "counter_transaction_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Merge ANOTHER existing row into this one as the second leg of a transfer between own accounts. One row must be an expense, the other an income, on different accounts (any currencies). The other row is absorbed: its account/amount/currency become the counter leg and its bank reference is preserved, so re-syncs and re-imports do not duplicate it."
           }
         },
         "required": [
