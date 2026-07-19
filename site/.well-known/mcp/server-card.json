@@ -1,7 +1,7 @@
 {
   "serverInfo": {
     "name": "myfinancemcp",
-    "version": "0.11.0"
+    "version": "0.12.0"
   },
   "authentication": {
     "required": true,
@@ -324,6 +324,48 @@
         },
         "required": [
           "account"
+        ],
+        "additionalProperties": false,
+        "$schema": "http://json-schema.org/draft-07/schema#"
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": false
+      }
+    },
+    {
+      "name": "merge_accounts",
+      "title": "Merge accounts",
+      "description": "Merge one account into another: moves all transactions to the target, de-duplicates rows present on both sides (same type, currency, amount and date within dedup_window_days; the row with a bank reference wins and absorbs the other's category), rewrites transfer references, then deletes the source account. Typical use: a hand-made statement-import account and a live bank sync account tracking the same real bank. Run with dry_run=true first and show the counts to the user.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "source": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Account to merge FROM (deleted afterwards)."
+          },
+          "target": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Account to merge INTO (kept)."
+          },
+          "dry_run": {
+            "type": "boolean",
+            "description": "Preview counts without changing anything."
+          },
+          "dedup_window_days": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 14,
+            "description": "Fuzzy duplicate match window, default 3. 0 = drop only exact bank-reference duplicates."
+          }
+        },
+        "required": [
+          "source",
+          "target"
         ],
         "additionalProperties": false,
         "$schema": "http://json-schema.org/draft-07/schema#"
@@ -1043,7 +1085,7 @@
     {
       "name": "connect_zenmoney",
       "title": "Connect ZenMoney",
-      "description": "Link a ZenMoney account (both zenmoney.app international and zenmoney.ru work; the right backend is auto-detected) for read-only transaction sync. action=paste_token stores the user's personal ZenMoney API token: get it free at zerro.app - log in choosing YOUR ZenMoney version on the login screen, then open zerro.app/token and copy it. action=status shows connection health and synced accounts. action=disconnect removes the link and stored token; already-imported transactions stay. After connecting, run sync_zenmoney.",
+      "description": "Link a ZenMoney account (both zenmoney.app international and zenmoney.ru work; the right backend is auto-detected) for read-only transaction sync. action=paste_token stores the user's personal ZenMoney API token: get it free at zerro.app - log in choosing YOUR ZenMoney version on the login screen, then open zerro.app/token and copy it. action=status shows connection health and the synced accounts list. action=set_account_sync with account + enabled turns syncing of ONE account on or off, for example when the same bank is also connected via connect_bank. action=disconnect removes the link and stored token; already-imported transactions stay. After connecting, run sync_zenmoney.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -1052,13 +1094,22 @@
             "enum": [
               "paste_token",
               "status",
-              "disconnect"
+              "disconnect",
+              "set_account_sync"
             ]
           },
           "token": {
             "type": "string",
             "minLength": 10,
             "description": "ZenMoney API token. Required for action=paste_token."
+          },
+          "account": {
+            "type": "string",
+            "description": "set_account_sync: account name or id (see action=status)."
+          },
+          "enabled": {
+            "type": "boolean",
+            "description": "set_account_sync: true = resume syncing this account, false = stop."
           }
         },
         "required": [
@@ -1077,7 +1128,7 @@
     {
       "name": "sync_zenmoney",
       "title": "Sync ZenMoney",
-      "description": "Pull transactions, accounts and balances from the linked ZenMoney account (read-only, incremental after the first run, safe to re-run). First sync imports full history unless months_back is set. dry_run previews transaction changes (account mapping is still saved). Report includes unmapped ZenMoney tags: those rows land in category 'other' for the user to review.",
+      "description": "Pull transactions, accounts and balances from the linked ZenMoney account (read-only, incremental after the first run, safe to re-run). First sync imports full history unless months_back is set. dry_run previews transaction changes (account mapping is still saved). Report includes unmapped ZenMoney tags: those rows land in category 'other' for the user to review. If the same real bank account is also connected via connect_bank its transactions WILL duplicate: relay any overlap_warnings from the response to the user and offer to disable one side (action=set_account_sync).",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -1105,7 +1156,7 @@
     {
       "name": "connect_bank",
       "title": "Connect a bank",
-      "description": "Link a real bank account via open banking (Enable Banking, EU/UK/EEA coverage) for read-only transaction sync. Flow: action=list_banks with the user's country (and optional search) to find the exact bank name -> action=start with bank_name + country -> give the user the returned authorize_url to open and approve at their bank -> after they confirm they are done, run sync_bank. action=status shows connection health and consent expiry. action=disconnect revokes the session and removes the link; imported transactions stay. Only one bank connection at a time for now; connecting a different bank replaces the previous one after disconnect.",
+      "description": "Link a real bank account via open banking (Enable Banking, EU/UK/EEA coverage) for read-only transaction sync. Flow: action=list_banks with the user's country (and optional search) to find the exact bank name -> action=start with bank_name + country -> give the user the returned authorize_url to open and approve at their bank -> after they confirm they are done, run sync_bank. action=status shows connection health, consent expiry and the synced accounts list. action=set_account_sync with account + enabled turns syncing of ONE account on or off, for example when the same bank is also connected via another source. action=disconnect revokes the session and removes the link; imported transactions stay. Only one bank connection at a time for now; connecting a different bank replaces the previous one after disconnect.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -1115,7 +1166,8 @@
               "list_banks",
               "start",
               "status",
-              "disconnect"
+              "disconnect",
+              "set_account_sync"
             ]
           },
           "country": {
@@ -1131,6 +1183,14 @@
           "bank_name": {
             "type": "string",
             "description": "start: exact bank name as returned by list_banks. Required for action=start."
+          },
+          "account": {
+            "type": "string",
+            "description": "set_account_sync: account name or id (see action=status)."
+          },
+          "enabled": {
+            "type": "boolean",
+            "description": "set_account_sync: true = resume syncing this account, false = stop."
           }
         },
         "required": [
@@ -1149,7 +1209,7 @@
     {
       "name": "sync_bank",
       "title": "Sync bank",
-      "description": "Pull booked transactions and balances from the connected bank (via connect_bank; read-only, incremental, safe to re-run). First sync imports months_back of history (default 3; banks may return less). Equal-amount same-day debit/credit pairs across the user's own synced accounts are merged into transfers. Categories come from the user's remembered per-merchant fixes first, then MCC; the rest land in 'other'. The server also auto-syncs healthy connections roughly daily; run this only for immediate freshness or right after connecting.",
+      "description": "Pull booked transactions and balances from the connected bank (via connect_bank; read-only, incremental, safe to re-run). First sync imports months_back of history (default 3; banks may return less). Equal-amount same-day debit/credit pairs across the user's own synced accounts are merged into transfers. Categories come from the user's remembered per-merchant fixes first, then MCC; the rest land in 'other'. The server also auto-syncs healthy connections roughly daily; run this only for immediate freshness or right after connecting. If the same real bank account is also connected via ZenMoney its transactions WILL duplicate: relay any overlap_warnings from the response to the user and offer to disable one side (action=set_account_sync).",
       "inputSchema": {
         "type": "object",
         "properties": {

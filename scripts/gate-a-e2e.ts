@@ -901,6 +901,14 @@ async function main(): Promise<void> {
     const twin = payload(await call("log_expense", { amount: 15, currency: "EUR", category: "restaurants", merchant: "Trattoria", date: "2026-07-12" }));
     ok("zen twin pre-logged", !!twin.id);
 
+    // P1/P2: same-name account owned by ANOTHER provider - zen must NOT adopt
+    // it (create with suffix instead) and must warn about the overlap.
+    const { db: pdb } = await import("../src/db");
+    const zenUser = await pdb.user.findFirstOrThrow({ where: { email: EMAIL } });
+    await pdb.account.create({
+      data: { userId: zenUser.id, name: "Zen Cash", type: "cash", provider: "enablebanking", externalId: "eb-foreign", currency: "EUR" },
+    });
+
     const zs1 = payload(await call("sync_zenmoney", {}));
     ok(
       "zen first sync report",
@@ -919,6 +927,14 @@ async function main(): Promise<void> {
       "zen unmapped tag surfaced",
       zs1.unmapped_tags?.length === 1 && zs1.unmapped_tags[0].tag === "Гараж" && zs1.unmapped_tags[0].count === 1,
       JSON.stringify(zs1.unmapped_tags)
+    );
+    ok(
+      "zen skips cross-provider adopt + overlap warning",
+      zs1.overlap_warnings?.length === 1 &&
+        zs1.overlap_warnings[0].created_account === "Zen Cash (EUR)" &&
+        zs1.overlap_warnings[0].existing_account === "Zen Cash" &&
+        zs1.overlap_warnings[0].existing_provider === "enablebanking",
+      JSON.stringify(zs1.overlap_warnings)
     );
 
     const zenAccs = payload(await call("get_accounts", {}));
@@ -962,6 +978,7 @@ async function main(): Promise<void> {
 
     const zs3 = payload(await call("sync_zenmoney", {}));
     ok("zen idempotent re-sync", zs3.imported === 0 && zs3.updated === 0 && zs3.deleted === 0, JSON.stringify(zs3));
+    ok("zen overlap warning fires only on creation", zs3.overlap_warnings === undefined, JSON.stringify(zs3));
 
     const zenStatus = payload(await call("connect_zenmoney", { action: "status" }));
     ok(
@@ -1071,6 +1088,31 @@ async function main(): Promise<void> {
 
     const ebStatus = payload(await call("connect_bank", { action: "status" }));
     ok("eb status", ebStatus.connected === true && ebStatus.bank === "Mock Bank" && ebStatus.accounts_synced === 3 && !!ebStatus.consent_valid_until, JSON.stringify(ebStatus));
+    ok(
+      "eb status lists synced accounts",
+      Array.isArray(ebStatus.accounts) && ebStatus.accounts.length === 3 && ebStatus.accounts.every((a: any) => a.enabled === true && a.id && a.name),
+      JSON.stringify(ebStatus.accounts)
+    );
+
+    // 12eb5. set_account_sync: per-account toggle
+    const togBad = await call("connect_bank", { action: "set_account_sync", account: "No Such Acc", enabled: false });
+    ok("set_account_sync unknown account errors", isErr(togBad));
+    const togOff = payload(await call("connect_bank", { action: "set_account_sync", account: "Main Account (EUR)", enabled: false }));
+    ok("set_account_sync disables", togOff.enabled === false && togOff.account === "Main Account (EUR)", JSON.stringify(togOff));
+    const stTog = payload(await call("connect_bank", { action: "status" }));
+    ok(
+      "status reflects disabled account",
+      stTog.accounts_synced === 2 && stTog.accounts.find((a: any) => a.name === "Main Account (EUR)")?.enabled === false,
+      JSON.stringify(stTog.accounts)
+    );
+    const cafeTog = payload(await call("get_transactions", { merchant: "Cafe X" }));
+    await call("delete_transaction", { id: cafeTog.transactions[0].id });
+    const ebs5 = payload(await call("sync_bank", {}));
+    ok("disabled account not pulled", ebs5.imported === 0 && ebs5.accounts_synced === 2, JSON.stringify(ebs5));
+    const togOn = payload(await call("connect_bank", { action: "set_account_sync", account: "Main Account (EUR)", enabled: true }));
+    ok("set_account_sync re-enables", togOn.enabled === true, JSON.stringify(togOn));
+    const ebs6 = payload(await call("sync_bank", {}));
+    ok("re-enabled account pulls again", ebs6.imported === 1, JSON.stringify(ebs6));
 
     const ebDisc = payload(await call("connect_bank", { action: "disconnect" }));
     ok("eb disconnect", ebDisc.disconnected === true);
@@ -1105,6 +1147,34 @@ async function main(): Promise<void> {
     ok("delete_account cascades transactions", delAcc.deleted === "Temp Renamed" && delAcc.transactions_deleted === 1, JSON.stringify(delAcc));
     const accsAfterDel = payload(await call("get_accounts", {}));
     ok("deleted account gone", !accsAfterDel.accounts.some((a: any) => a.name === "Temp Renamed"), JSON.stringify(accsAfterDel.accounts.map((a: any) => a.name)));
+
+    // 12h. merge_accounts: CSV-style account folded into another with dedup
+    await call("create_account", { name: "Merge Src", type: "bank", currency: "EUR" });
+    await call("create_account", { name: "Merge Dst", type: "bank", currency: "EUR" });
+    await call("log_expense", { amount: 20, currency: "EUR", category: "other", merchant: "DupShop", date: "2026-07-10", account: "Merge Dst" });
+    await call("log_expense", { amount: 20, currency: "EUR", category: "groceries", merchant: "DupShop CSV", date: "2026-07-11", account: "Merge Src" });
+    await call("log_income", { amount: 77, currency: "EUR", category: "other", merchant: "UniqPay", date: "2026-07-01", account: "Merge Src" });
+    await call("log_transfer", { amount: 5, from_account: "Merge Src", to_account: "Merge Dst", date: "2026-07-12" });
+    await call("log_transfer", { amount: 7, from_account: "Cash Stash", to_account: "Merge Src", date: "2026-07-12" });
+
+    const mSame = await call("merge_accounts", { source: "Merge Src", target: "Merge Src" });
+    ok("merge rejects same account", isErr(mSame));
+    const mDry = payload(await call("merge_accounts", { source: "Merge Src", target: "Merge Dst", dry_run: true }));
+    ok(
+      "merge dry_run counts",
+      mDry.dry_run === true && mDry.moved === 1 && mDry.merged_duplicates === 1 && mDry.internal_transfers_removed === 1 && mDry.transfer_refs_rewritten === 1,
+      JSON.stringify(mDry)
+    );
+    const mReal = payload(await call("merge_accounts", { source: "Merge Src", target: "Merge Dst" }));
+    ok("merge executes", mReal.moved === 1 && mReal.merged_duplicates === 1 && mReal.source_deleted === true, JSON.stringify(mReal));
+    const mAccs = payload(await call("get_accounts", {}));
+    ok("merge source gone", !mAccs.accounts.some((a: any) => a.name === "Merge Src"), JSON.stringify(mAccs.accounts.map((a: any) => a.name)));
+    const mDup = payload(await call("get_transactions", { merchant: "DupShop" }));
+    ok("merge winner absorbed category", mDup.count === 1 && mDup.transactions[0].category === "groceries", JSON.stringify(mDup.transactions));
+    const mUniq = payload(await call("get_transactions", { merchant: "UniqPay" }));
+    ok("merge moved unique row", mUniq.count === 1 && mUniq.transactions[0].account === "Merge Dst", JSON.stringify(mUniq.transactions));
+    const mDst = mAccs.accounts.find((a: any) => a.name === "Merge Dst");
+    ok("merge counter rewrite + balance", mDst?.balance === 64, JSON.stringify(mDst));
     void handLogged;
   } else {
     const settings = await mcpCall(tokens.access_token, {

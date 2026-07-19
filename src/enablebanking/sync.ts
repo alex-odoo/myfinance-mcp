@@ -1,5 +1,6 @@
 import { db, logEvent } from "../db";
-import { pickFreeName } from "../accounts";
+import { pickFreeName, crossProviderOverlaps, OVERLAP_HINT } from "../accounts";
+import type { OverlapWarning } from "../accounts";
 import { convert, round2 } from "../fx";
 import { EXPENSE_CATEGORIES, INCOME_CATEGORIES } from "../categories";
 import { merchantCategoryMap, normMerchant } from "../merchantMemory";
@@ -73,6 +74,7 @@ export async function syncEnableBanking(userId: string, opts: SyncOptions = {}) 
   const namesTaken = new Set(ourAccounts.map((a) => a.name.toLowerCase()));
 
   let mapDirty = false;
+  const overlapWarnings: OverlapWarning[] = [];
   for (const acc of accountsInfo) {
     if (accountMap[acc.uid]) continue;
     // Re-attach orphans from an interrupted sync (account created, map never saved).
@@ -98,6 +100,14 @@ export async function syncEnableBanking(userId: string, opts: SyncOptions = {}) 
         `Cannot create account "${name}" for bank sub-account ${iban ?? acc.uid}: the name is already taken. ` +
           `Rename or delete the clashing account (update_account / delete_account), then sync again.`
       );
+    }
+    for (const o of crossProviderOverlaps(created, ourAccounts)) {
+      overlapWarnings.push({
+        created_account: name,
+        existing_account: o.name,
+        existing_provider: o.provider,
+        hint: OVERLAP_HINT,
+      });
     }
     namesTaken.add(name.toLowerCase());
     ourAccounts.push(created);
@@ -367,6 +377,7 @@ export async function syncEnableBanking(userId: string, opts: SyncOptions = {}) 
     first_sync: firstSync,
     ...(firstSync ? { history_from: historyFrom } : {}),
     accounts_created: accountsCreated,
+    ...(overlapWarnings.length ? { overlap_warnings: overlapWarnings } : {}),
     accounts_synced: Object.values(accountMap).filter((m) => m.enabled).length,
     imported,
     transfers,

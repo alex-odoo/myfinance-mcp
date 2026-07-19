@@ -1,6 +1,7 @@
 import { db, logEvent } from "../db";
 import { convert, round2 } from "../fx";
-import { pickFreeName } from "../accounts";
+import { pickFreeName, crossProviderOverlaps, OVERLAP_HINT } from "../accounts";
+import type { OverlapWarning } from "../accounts";
 import { EXPENSE_CATEGORIES, INCOME_CATEGORIES } from "../categories";
 import { merchantCategoryMap, normMerchant } from "../merchantMemory";
 import { decryptToken } from "./crypto";
@@ -60,6 +61,7 @@ export async function syncZenMoney(userId: string, opts: SyncOptions = {}) {
   // --- Accounts: map every syncable ZenMoney account to one of ours ---
   const accountMap = { ...((connection.accountMap ?? {}) as unknown as Record<string, AccountMapEntry>) };
   const skippedAccounts: Array<{ title: string; reason: string }> = [];
+  const overlapWarnings: OverlapWarning[] = [];
   let accountsCreated = 0;
   const ourAccounts = await db.account.findMany({ where: { userId } });
   const namesTaken = new Set(ourAccounts.map((a) => a.name.toLowerCase()));
@@ -78,9 +80,14 @@ export async function syncZenMoney(userId: string, opts: SyncOptions = {}) {
     }
     const currency = currencyOf(zen.instrument);
     // Adopt an existing same-name account (user pre-created it by hand) unless
-    // it is already claimed by another ZenMoney account.
+    // it is already claimed by another ZenMoney account. A sync NEVER adopts
+    // an account owned by a different bank provider: two live feeds on one
+    // account row is the worst duplication mode.
     const existing = ourAccounts.find(
-      (a) => a.name.toLowerCase() === zen.title.toLowerCase() && !mappedOurIds.has(a.id)
+      (a) =>
+        a.name.toLowerCase() === zen.title.toLowerCase() &&
+        !mappedOurIds.has(a.id) &&
+        (!a.provider || a.provider === "zenmoney")
     );
     if (existing) {
       accountMap[zen.id] = { accountId: existing.id, enabled: true };
@@ -98,6 +105,14 @@ export async function syncZenMoney(userId: string, opts: SyncOptions = {}) {
         `Cannot create account "${name}" for ZenMoney account "${zen.title}": the name is already taken. ` +
           `Rename or delete the clashing account (update_account / delete_account), then sync again.`
       );
+    }
+    for (const o of crossProviderOverlaps(created, ourAccounts)) {
+      overlapWarnings.push({
+        created_account: name,
+        existing_account: o.name,
+        existing_provider: o.provider,
+        hint: OVERLAP_HINT,
+      });
     }
     namesTaken.add(name.toLowerCase());
     ourAccounts.push(created);
@@ -348,6 +363,7 @@ export async function syncZenMoney(userId: string, opts: SyncOptions = {}) {
     accounts_created: accountsCreated,
     accounts_synced: Object.values(accountMap).filter((m) => m.enabled).length,
     ...(skippedAccounts.length ? { accounts_skipped: skippedAccounts } : {}),
+    ...(overlapWarnings.length ? { overlap_warnings: overlapWarnings } : {}),
     imported,
     transfers,
     updated,

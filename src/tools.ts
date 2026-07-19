@@ -3,7 +3,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { db, logEvent } from "./db";
 import { convert, round2 } from "./fx";
 import { EXPENSE_CATEGORIES, INCOME_CATEGORIES } from "./categories";
-import { resolveAccount, computeBalance, ACCOUNT_TYPES } from "./accounts";
+import { resolveAccount, computeBalance, connectionAccounts, setAccountSync, ACCOUNT_TYPES } from "./accounts";
 import { SERVER_VERSION } from "./version";
 import { DASHBOARD_TOOL_META } from "./ui";
 import { detectZenHost } from "./zenmoney/client";
@@ -309,6 +309,155 @@ export function registerFinanceTools(server: McpServer, userId: string): void {
         ...(counterLegs > 0
           ? { note: `${counterLegs} transfer(s) on other accounts pointed to this one; they remain as outgoing transfers.` }
           : {}),
+      });
+    }
+  );
+
+  server.registerTool(
+    "merge_accounts",
+    {
+      title: "Merge accounts",
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
+      description:
+        "Merge one account into another: moves all transactions to the target, de-duplicates rows present on both sides (same type, currency, amount and date within dedup_window_days; the row with a bank reference wins and absorbs the other's category), rewrites transfer references, then deletes the source account. Typical use: a hand-made statement-import account and a live bank sync account tracking the same real bank. Run with dry_run=true first and show the counts to the user.",
+      inputSchema: {
+        source: z.string().min(1).describe("Account to merge FROM (deleted afterwards)."),
+        target: z.string().min(1).describe("Account to merge INTO (kept)."),
+        dry_run: z.boolean().optional().describe("Preview counts without changing anything."),
+        dedup_window_days: z
+          .number()
+          .int()
+          .min(0)
+          .max(14)
+          .optional()
+          .describe("Fuzzy duplicate match window, default 3. 0 = drop only exact bank-reference duplicates."),
+      },
+    },
+    async ({ source, target, dry_run, dedup_window_days }) => {
+      const src = await resolveAccount(userId, source);
+      const dst = await resolveAccount(userId, target);
+      if (src.id === dst.id) throw new Error("source and target are the same account.");
+      if (src.provider && dst.provider) {
+        throw new Error(
+          "Both accounts are live-linked to a bank source; merging two live feeds is not allowed. Disable one side instead (connect_* action=set_account_sync)."
+        );
+      }
+      const dryRun = dry_run === true;
+      const windowMs = (dedup_window_days ?? 3) * 86_400_000;
+
+      const srcRows = await db.transaction.findMany({ where: { accountId: src.id }, orderBy: { occurredAt: "asc" } });
+      const dstRows = await db.transaction.findMany({ where: { accountId: dst.id } });
+      const dstExt = new Set(dstRows.filter((r) => r.externalId).map((r) => r.externalId as string));
+
+      const consumed = new Set<string>();
+      const toDelete: string[] = [];
+      const toMove: string[] = [];
+      const absorb: Array<{ id: string; categoryKey: string }> = [];
+      let merged = 0;
+      let droppedExact = 0;
+      let internalTransfersRemoved = 0;
+
+      for (const row of srcRows) {
+        // A transfer between source and target becomes a self-transfer after the
+        // merge - meaningless, drop it.
+        if (row.type === "transfer" && row.counterAccountId === dst.id) {
+          toDelete.push(row.id);
+          internalTransfersRemoved++;
+          continue;
+        }
+        if (row.externalId && dstExt.has(row.externalId)) {
+          toDelete.push(row.id);
+          droppedExact++;
+          continue;
+        }
+        const match =
+          windowMs > 0
+            ? dstRows.find(
+                (d) =>
+                  !consumed.has(d.id) &&
+                  d.type === row.type &&
+                  d.currency === row.currency &&
+                  Math.abs(Number(d.amount) - Number(row.amount)) <= 0.011 &&
+                  Math.abs(d.occurredAt.getTime() - row.occurredAt.getTime()) <= windowMs
+              )
+            : undefined;
+        if (match) {
+          consumed.add(match.id);
+          merged++;
+          const targetWins = !!match.externalId || !row.externalId;
+          const winner = targetWins ? match : row;
+          const loser = targetWins ? row : match;
+          toDelete.push(loser.id);
+          if (!targetWins) toMove.push(row.id);
+          if ((winner.categoryKey === null || winner.categoryKey === "other") && loser.categoryKey && loser.categoryKey !== "other") {
+            absorb.push({ id: winner.id, categoryKey: loser.categoryKey });
+          }
+          continue;
+        }
+        toMove.push(row.id);
+      }
+      for (const d of dstRows) {
+        if (d.type === "transfer" && d.counterAccountId === src.id) {
+          toDelete.push(d.id);
+          internalTransfersRemoved++;
+        }
+      }
+
+      const deleteSet = new Set(toDelete);
+      const counterRefs = await db.transaction.count({
+        where: { userId, counterAccountId: src.id, id: { notIn: toDelete } },
+      });
+      const snapshotsDropped = await db.balanceSnapshot.count({ where: { accountId: src.id } });
+
+      if (!dryRun) {
+        await db.transaction.deleteMany({ where: { id: { in: toDelete } } });
+        await db.transaction.updateMany({
+          where: { id: { in: toMove.filter((id) => !deleteSet.has(id)) } },
+          data: { accountId: dst.id },
+        });
+        for (const a of absorb) {
+          await db.transaction.update({ where: { id: a.id }, data: { categoryKey: a.categoryKey } });
+        }
+        await db.transaction.updateMany({
+          where: { userId, counterAccountId: src.id },
+          data: { counterAccountId: dst.id },
+        });
+        // If the source carried the live bank link, the target inherits it so
+        // the feed keeps flowing into the merged account.
+        if (src.provider) {
+          await db.account.update({
+            where: { id: dst.id },
+            data: { provider: src.provider, externalId: src.externalId, currency: dst.currency ?? src.currency },
+          });
+          const connections = await db.bankConnection.findMany({ where: { userId } });
+          for (const c of connections) {
+            const map = { ...((c.accountMap ?? {}) as Record<string, { accountId: string; enabled: boolean }>) };
+            let touched = false;
+            for (const entry of Object.values(map)) {
+              if (entry && entry.accountId === src.id) {
+                entry.accountId = dst.id;
+                touched = true;
+              }
+            }
+            if (touched) await db.bankConnection.update({ where: { id: c.id }, data: { accountMap: map as object } });
+          }
+        }
+        await db.account.delete({ where: { id: src.id } }); // cascades remaining snapshots
+        logEvent("accounts_merged", userId, { moved: toMove.length, merged, dropped: droppedExact });
+      }
+
+      return text({
+        ...(dryRun ? { dry_run: true } : {}),
+        source: src.name,
+        target: dst.name,
+        moved: toMove.length,
+        merged_duplicates: merged,
+        dropped_exact_duplicates: droppedExact,
+        internal_transfers_removed: internalTransfersRemoved,
+        ...(counterRefs ? { transfer_refs_rewritten: counterRefs } : {}),
+        ...(snapshotsDropped ? { snapshots_dropped: snapshotsDropped } : {}),
+        ...(dryRun ? {} : { source_deleted: true }),
+        note: "Target keeps its own balance snapshots; source snapshots are dropped (two accounts' absolute balances cannot be merged). Anchor with log_balance if the balance looks off.",
       });
     }
   );
@@ -1189,13 +1338,15 @@ export function registerFinanceTools(server: McpServer, userId: string): void {
       title: "Connect ZenMoney",
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
       description:
-        "Link a ZenMoney account (both zenmoney.app international and zenmoney.ru work; the right backend is auto-detected) for read-only transaction sync. action=paste_token stores the user's personal ZenMoney API token: get it free at zerro.app - log in choosing YOUR ZenMoney version on the login screen, then open zerro.app/token and copy it. action=status shows connection health and synced accounts. action=disconnect removes the link and stored token; already-imported transactions stay. After connecting, run sync_zenmoney.",
+        "Link a ZenMoney account (both zenmoney.app international and zenmoney.ru work; the right backend is auto-detected) for read-only transaction sync. action=paste_token stores the user's personal ZenMoney API token: get it free at zerro.app - log in choosing YOUR ZenMoney version on the login screen, then open zerro.app/token and copy it. action=status shows connection health and the synced accounts list. action=set_account_sync with account + enabled turns syncing of ONE account on or off, for example when the same bank is also connected via connect_bank. action=disconnect removes the link and stored token; already-imported transactions stay. After connecting, run sync_zenmoney.",
       inputSchema: {
-        action: z.enum(["paste_token", "status", "disconnect"]),
+        action: z.enum(["paste_token", "status", "disconnect", "set_account_sync"]),
         token: z.string().min(10).optional().describe("ZenMoney API token. Required for action=paste_token."),
+        account: z.string().optional().describe("set_account_sync: account name or id (see action=status)."),
+        enabled: z.boolean().optional().describe("set_account_sync: true = resume syncing this account, false = stop."),
       },
     },
-    async ({ action, token }) => {
+    async ({ action, token, account, enabled }) => {
       await getUser(userId);
       const existing = await db.bankConnection.findUnique({
         where: { userId_provider: { userId, provider: "zenmoney" } },
@@ -1211,7 +1362,22 @@ export function registerFinanceTools(server: McpServer, userId: string): void {
           last_sync: existing.lastSyncAt?.toISOString() ?? null,
           last_error: existing.lastError ?? undefined,
           accounts_synced: Object.values(map).filter((m) => m.enabled).length,
+          accounts: await connectionAccounts(existing),
           auto_sync: "Healthy connections are synced server-side roughly daily.",
+        });
+      }
+
+      if (action === "set_account_sync") {
+        if (!existing) throw new Error("No ZenMoney connection. Connect with action=paste_token first.");
+        if (!account || enabled === undefined) throw new Error("set_account_sync requires account and enabled.");
+        const name = await setAccountSync(existing, account, enabled);
+        return text({
+          account: name,
+          provider: "zenmoney",
+          enabled,
+          note: enabled
+            ? "Sync resumed. ZenMoney diffs are incremental; a long-disabled account may have a history gap."
+            : "This account is no longer pulled from ZenMoney. Already-imported transactions were kept; remove them with get_transactions + delete_transactions if they duplicate another source.",
         });
       }
 
@@ -1246,7 +1412,7 @@ export function registerFinanceTools(server: McpServer, userId: string): void {
       title: "Sync ZenMoney",
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
       description:
-        "Pull transactions, accounts and balances from the linked ZenMoney account (read-only, incremental after the first run, safe to re-run). First sync imports full history unless months_back is set. dry_run previews transaction changes (account mapping is still saved). Report includes unmapped ZenMoney tags: those rows land in category 'other' for the user to review.",
+        "Pull transactions, accounts and balances from the linked ZenMoney account (read-only, incremental after the first run, safe to re-run). First sync imports full history unless months_back is set. dry_run previews transaction changes (account mapping is still saved). Report includes unmapped ZenMoney tags: those rows land in category 'other' for the user to review. If the same real bank account is also connected via connect_bank its transactions WILL duplicate: relay any overlap_warnings from the response to the user and offer to disable one side (action=set_account_sync).",
       inputSchema: {
         dry_run: z.boolean().optional().describe("Preview transaction changes without writing them."),
         months_back: z
@@ -1270,9 +1436,9 @@ export function registerFinanceTools(server: McpServer, userId: string): void {
       title: "Connect a bank",
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
       description:
-        "Link a real bank account via open banking (Enable Banking, EU/UK/EEA coverage) for read-only transaction sync. Flow: action=list_banks with the user's country (and optional search) to find the exact bank name -> action=start with bank_name + country -> give the user the returned authorize_url to open and approve at their bank -> after they confirm they are done, run sync_bank. action=status shows connection health and consent expiry. action=disconnect revokes the session and removes the link; imported transactions stay. Only one bank connection at a time for now; connecting a different bank replaces the previous one after disconnect.",
+        "Link a real bank account via open banking (Enable Banking, EU/UK/EEA coverage) for read-only transaction sync. Flow: action=list_banks with the user's country (and optional search) to find the exact bank name -> action=start with bank_name + country -> give the user the returned authorize_url to open and approve at their bank -> after they confirm they are done, run sync_bank. action=status shows connection health, consent expiry and the synced accounts list. action=set_account_sync with account + enabled turns syncing of ONE account on or off, for example when the same bank is also connected via another source. action=disconnect revokes the session and removes the link; imported transactions stay. Only one bank connection at a time for now; connecting a different bank replaces the previous one after disconnect.",
       inputSchema: {
-        action: z.enum(["list_banks", "start", "status", "disconnect"]),
+        action: z.enum(["list_banks", "start", "status", "disconnect", "set_account_sync"]),
         country: z
           .string()
           .length(2)
@@ -1283,9 +1449,11 @@ export function registerFinanceTools(server: McpServer, userId: string): void {
           .string()
           .optional()
           .describe("start: exact bank name as returned by list_banks. Required for action=start."),
+        account: z.string().optional().describe("set_account_sync: account name or id (see action=status)."),
+        enabled: z.boolean().optional().describe("set_account_sync: true = resume syncing this account, false = stop."),
       },
     },
-    async ({ action, country, search, bank_name }) => {
+    async ({ action, country, search, bank_name, account, enabled }) => {
       await getUser(userId);
       if (!ebConfigured()) {
         throw new Error("Bank connections are not enabled on this server yet. Use import_transactions with a statement export instead.");
@@ -1321,7 +1489,22 @@ export function registerFinanceTools(server: McpServer, userId: string): void {
           last_sync: existing.lastSyncAt?.toISOString() ?? null,
           last_error: existing.lastError ?? undefined,
           accounts_synced: Object.values(map).filter((m) => m.enabled).length,
+          accounts: await connectionAccounts(existing),
           auto_sync: "Healthy connections are synced server-side roughly daily.",
+        });
+      }
+
+      if (action === "set_account_sync") {
+        if (!existing) throw new Error("No bank connection. Connect with action=start first.");
+        if (!account || enabled === undefined) throw new Error("set_account_sync requires account and enabled.");
+        const name = await setAccountSync(existing, account, enabled);
+        return text({
+          account: name,
+          provider: "enablebanking",
+          enabled,
+          note: enabled
+            ? "Sync resumed. A long-disabled account may have a history gap: the bank re-fetches only a few days behind the cursor; re-sync with months_back after reconnecting if needed."
+            : "This account is no longer pulled from the bank. Already-imported transactions were kept; remove them with get_transactions + delete_transactions if they duplicate another source.",
         });
       }
 
@@ -1380,7 +1563,7 @@ export function registerFinanceTools(server: McpServer, userId: string): void {
       title: "Sync bank",
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
       description:
-        "Pull booked transactions and balances from the connected bank (via connect_bank; read-only, incremental, safe to re-run). First sync imports months_back of history (default 3; banks may return less). Equal-amount same-day debit/credit pairs across the user's own synced accounts are merged into transfers. Categories come from the user's remembered per-merchant fixes first, then MCC; the rest land in 'other'. The server also auto-syncs healthy connections roughly daily; run this only for immediate freshness or right after connecting.",
+        "Pull booked transactions and balances from the connected bank (via connect_bank; read-only, incremental, safe to re-run). First sync imports months_back of history (default 3; banks may return less). Equal-amount same-day debit/credit pairs across the user's own synced accounts are merged into transfers. Categories come from the user's remembered per-merchant fixes first, then MCC; the rest land in 'other'. The server also auto-syncs healthy connections roughly daily; run this only for immediate freshness or right after connecting. If the same real bank account is also connected via ZenMoney its transactions WILL duplicate: relay any overlap_warnings from the response to the user and offer to disable one side (action=set_account_sync).",
       inputSchema: {
         dry_run: z.boolean().optional().describe("Preview changes without writing them."),
         months_back: z
