@@ -10,6 +10,8 @@ import { bootstrapUser } from "./users";
 import { buildMcpServer, SERVER_NAME, SERVER_VERSION } from "./mcp";
 import { EXPENSE_CATEGORIES, INCOME_CATEGORIES } from "./categories";
 import { instrumentTransport, pruneOldEvents } from "./telemetry";
+import { ebCreateSession } from "./enablebanking/client";
+import { encryptToken } from "./zenmoney/crypto";
 
 assertConfig();
 
@@ -141,6 +143,69 @@ app.get("/api/stats", async (_req, res) => {
     res.set("Cache-Control", "public, max-age=300").json(statsCache.body);
   } catch {
     res.status(500).json({ error: "stats_unavailable" });
+  }
+});
+
+// Bank consent return leg (Enable Banking). The bank redirects the user here
+// after they approve or decline access; ?state ties the visit back to the
+// pending connection created by connect_bank action=start.
+const callbackPage = (title: string, body: string, ok: boolean) =>
+  `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex"><title>${title}</title><style>body{font-family:-apple-system,system-ui,sans-serif;display:flex;min-height:100vh;align-items:center;justify-content:center;background:#fafaf7;color:#1c1c1a;margin:0}main{max-width:420px;padding:40px;text-align:center}h1{font-size:22px;margin:0 0 12px}p{line-height:1.5;color:#555}.mark{font-size:40px;margin-bottom:16px}</style></head><body><main><div class="mark">${ok ? "&#10003;" : "&#10007;"}</div><h1>${title}</h1><p>${body}</p></main></body></html>`;
+
+app.get("/connect/enablebanking/callback", async (req, res) => {
+  const { code, state, error, error_description: errorDescription } = req.query as Record<string, string | undefined>;
+  const fail = (status: number, title: string, body: string) =>
+    res.status(status).type("html").send(callbackPage(title, body, false));
+  if (!state) return fail(400, "Missing state", "This link is incomplete. Restart the connection from your AI chat.");
+  const pending = (await db.bankConnection.findMany({ where: { provider: "enablebanking" } })).find(
+    (c) => ((c.meta ?? {}) as { state?: string }).state === state
+  );
+  if (!pending) {
+    return fail(400, "Unknown or expired link", "Restart the connection from your AI chat with connect_bank.");
+  }
+  const meta = (pending.meta ?? {}) as Record<string, unknown>;
+  if (error) {
+    const message = `Bank authorization failed: ${errorDescription || error}`;
+    await db.bankConnection.update({
+      where: { id: pending.id },
+      data: { status: "error", lastError: message.slice(0, 500) },
+    });
+    return fail(400, "Authorization declined", "No access was granted. You can retry from your AI chat at any time.");
+  }
+  if (!code) return fail(400, "Missing code", "The bank did not return an authorization code. Please retry.");
+  try {
+    const session = await ebCreateSession(code);
+    await db.bankConnection.update({
+      where: { id: pending.id },
+      data: {
+        tokenEnc: encryptToken(session.session_id),
+        status: "active",
+        lastError: null,
+        meta: JSON.parse(
+          JSON.stringify({
+            aspsp: session.aspsp ?? meta.aspsp,
+            validUntil: session.access?.valid_until,
+            accountsInfo: session.accounts,
+          })
+        ),
+      },
+    });
+    return res
+      .type("html")
+      .send(
+        callbackPage(
+          "Bank connected",
+          `${session.accounts?.length ?? 0} account(s) authorized. Go back to your AI chat and run sync_bank to import transactions.`,
+          true
+        )
+      );
+  } catch (e) {
+    const message = e instanceof Error ? e.message : String(e);
+    await db.bankConnection.update({
+      where: { id: pending.id },
+      data: { status: "error", lastError: message.slice(0, 500) },
+    });
+    return fail(502, "Connection failed", "Could not finish the bank connection. Retry from your AI chat.");
   }
 });
 

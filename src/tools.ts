@@ -7,8 +7,11 @@ import { resolveAccount, computeBalance, ACCOUNT_TYPES } from "./accounts";
 import { SERVER_VERSION } from "./version";
 import { DASHBOARD_TOOL_META } from "./ui";
 import { detectZenHost } from "./zenmoney/client";
-import { encryptToken } from "./zenmoney/crypto";
+import { encryptToken, decryptToken } from "./zenmoney/crypto";
 import { syncZenMoney } from "./zenmoney/sync";
+import { ebConfigured, ebAspsps, ebStartAuth, ebDeleteSession } from "./enablebanking/client";
+import { syncEnableBanking } from "./enablebanking/sync";
+import type { EbConnectionMeta } from "./enablebanking/sync";
 import type { TxType } from "./generated/prisma/enums";
 
 const ALL_CATEGORIES = new Set<string>([...EXPENSE_CATEGORIES, ...INCOME_CATEGORIES]);
@@ -1096,6 +1099,140 @@ export function registerFinanceTools(server: McpServer, userId: string): void {
     },
     async ({ dry_run, months_back }) => {
       const report = await syncZenMoney(userId, { dryRun: dry_run, monthsBack: months_back });
+      return text(report);
+    }
+  );
+
+  server.registerTool(
+    "connect_bank",
+    {
+      title: "Connect a bank",
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+      description:
+        "Link a real bank account via open banking (Enable Banking, EU/UK/EEA coverage) for read-only transaction sync. Flow: action=list_banks with the user's country (and optional search) to find the exact bank name -> action=start with bank_name + country -> give the user the returned authorize_url to open and approve at their bank -> after they confirm they are done, run sync_bank. action=status shows connection health and consent expiry. action=disconnect revokes the session and removes the link; imported transactions stay. Only one bank connection at a time for now; connecting a different bank replaces the previous one after disconnect.",
+      inputSchema: {
+        action: z.enum(["list_banks", "start", "status", "disconnect"]),
+        country: z
+          .string()
+          .length(2)
+          .optional()
+          .describe("2-letter country code (FI, DE, FR, ...). Required for list_banks and start."),
+        search: z.string().optional().describe("list_banks: case-insensitive substring filter on bank names."),
+        bank_name: z
+          .string()
+          .optional()
+          .describe("start: exact bank name as returned by list_banks. Required for action=start."),
+      },
+    },
+    async ({ action, country, search, bank_name }) => {
+      await getUser(userId);
+      if (!ebConfigured()) {
+        throw new Error("Bank connections are not enabled on this server yet. Use import_transactions with a statement export instead.");
+      }
+      const existing = await db.bankConnection.findUnique({
+        where: { userId_provider: { userId, provider: "enablebanking" } },
+      });
+
+      if (action === "list_banks") {
+        if (!country) throw new Error("list_banks requires the country parameter (2-letter code).");
+        const all = await ebAspsps(country);
+        const q = search?.toLowerCase();
+        const matches = q ? all.filter((a) => a.name.toLowerCase().includes(q)) : all;
+        return text({
+          country: country.toUpperCase(),
+          total: matches.length,
+          banks: matches.slice(0, 30).map((a) => a.name),
+          ...(matches.length > 30 ? { hint: "More than 30 matches; narrow with the search parameter." } : {}),
+          next: "Call connect_bank action=start with the exact bank_name and country.",
+        });
+      }
+
+      if (action === "status") {
+        if (!existing) return text({ connected: false, hint: "Connect with action=start." });
+        const meta = (existing.meta ?? {}) as EbConnectionMeta;
+        const map = (existing.accountMap ?? {}) as Record<string, { enabled: boolean }>;
+        return text({
+          connected: existing.status === "active",
+          status: existing.status,
+          bank: meta.aspsp?.name,
+          country: meta.aspsp?.country,
+          consent_valid_until: meta.validUntil,
+          last_sync: existing.lastSyncAt?.toISOString() ?? null,
+          last_error: existing.lastError ?? undefined,
+          accounts_synced: Object.values(map).filter((m) => m.enabled).length,
+        });
+      }
+
+      if (action === "disconnect") {
+        if (!existing) return text({ connected: false });
+        if (existing.tokenEnc) await ebDeleteSession(decryptToken(existing.tokenEnc));
+        await db.bankConnection.delete({ where: { id: existing.id } });
+        logEvent("bank_disconnected", userId, { provider: "enablebanking" });
+        return text({ disconnected: true, note: "Bank access revoked. Imported transactions were kept." });
+      }
+
+      // action=start
+      if (!country || !bank_name) throw new Error("action=start requires bank_name and country.");
+      if (existing && existing.status === "active") {
+        throw new Error("A bank is already connected. Run connect_bank action=disconnect first to replace it.");
+      }
+      const banks = await ebAspsps(country);
+      const bank = banks.find((b) => b.name.toLowerCase() === bank_name.toLowerCase());
+      if (!bank) {
+        throw new Error(`Bank "${bank_name}" not found in ${country.toUpperCase()}. Use action=list_banks to get exact names.`);
+      }
+      const state = crypto.randomUUID();
+      // Consent window: 90 days or whatever shorter maximum the bank enforces.
+      const maxSeconds = Math.min(bank.maximum_consent_validity ?? 90 * 86_400, 90 * 86_400);
+      const validUntil = new Date(Date.now() + maxSeconds * 1000).toISOString();
+      const { url } = await ebStartAuth({ aspspName: bank.name, country, state, validUntil });
+      await db.bankConnection.upsert({
+        where: { userId_provider: { userId, provider: "enablebanking" } },
+        update: {
+          tokenEnc: "",
+          status: "pending",
+          lastError: null,
+          accountMap: {},
+          meta: { state, aspsp: { name: bank.name, country: country.toUpperCase() } },
+        },
+        create: {
+          userId,
+          provider: "enablebanking",
+          status: "pending",
+          meta: { state, aspsp: { name: bank.name, country: country.toUpperCase() } },
+        },
+      });
+      logEvent("bank_connected", userId, { provider: "enablebanking" });
+      return text({
+        authorize_url: url,
+        bank: bank.name,
+        instructions:
+          "Show authorize_url to the user as a clickable link. They open it, sign in at their bank and approve read-only access, then land on a confirmation page. When they say they are done, run sync_bank.",
+      });
+    }
+  );
+
+  server.registerTool(
+    "sync_bank",
+    {
+      title: "Sync bank",
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+      description:
+        "Pull booked transactions and balances from the connected bank (via connect_bank; read-only, incremental, safe to re-run). First sync imports months_back of history (default 3; banks may return less). Equal-amount same-day debit/credit pairs across the user's own synced accounts are merged into transfers. Rows without a recognizable MCC land in category 'other'.",
+      inputSchema: {
+        dry_run: z.boolean().optional().describe("Preview changes without writing them."),
+        months_back: z
+          .number()
+          .int()
+          .positive()
+          .max(24)
+          .optional()
+          .describe("First sync only: how many months of history to request. Default 3."),
+      },
+    },
+    async ({ dry_run, months_back }) => {
+      await getUser(userId);
+      const report = await syncEnableBanking(userId, { dryRun: dry_run, monthsBack: months_back });
       return text(report);
     }
   );

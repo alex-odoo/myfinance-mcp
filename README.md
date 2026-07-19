@@ -58,6 +58,8 @@ On first connect you sign in with Google or register with an email and password.
 | `get_settings`        | Base currency and timezone                                                                         |
 | `update_settings`     | Change base currency or timezone                                                                   |
 | `export_transactions` | Full CSV export (includes the entity column for accountant handoff)                                |
+| `connect_bank`        | Link a real bank via open banking (Enable Banking, EU/UK): list banks, start consent, status, disconnect |
+| `sync_bank`           | Pull booked transactions and balances from the connected bank; incremental, transfer pairing, dedup-safe |
 | `connect_zenmoney`    | Link a ZenMoney account (international and .ru backends auto-detected) for read-only sync          |
 | `sync_zenmoney`       | Pull ZenMoney accounts and transactions; incremental, dedup-safe, keeps your manual edits          |
 | `delete_account`      | Permanently delete the user account and ALL data (GDPR erasure)                                    |
@@ -72,8 +74,8 @@ Four tools return an interactive dashboard (`ui://myfinancemcp/dashboard`) rende
 - Receipt photos are parsed by YOUR AI client; images never reach this server.
 - Amounts, merchants and notes are never written to server logs (blind logs); telemetry stores event types and ids only.
 - OAuth 2.1 with PKCE, encrypted tokens, rate-limited sign-in.
-- All 22 tools carry MCP annotations (8 read-only, destructive ops flagged, `openWorldHint: false`), so clients can gate confirmations correctly.
-- Bank-sync tokens (ZenMoney) are stored AES-256-GCM encrypted; sync is strictly read-only, no bank credentials ever touch the server.
+- All 24 tools carry MCP annotations (read-only and destructive ops flagged, connector tools marked open-world), so clients can gate confirmations correctly.
+- Bank access is strictly read-only: open banking consent via Enable Banking (the bank authenticates the user; we never see credentials), ZenMoney via the user's own API token. Session ids and tokens are stored AES-256-GCM encrypted.
 - CSV export and instant full deletion are tools, not support tickets.
 - Hosted instance: EU data residency, row-level security keyed to your account.
 - 108 automated end-to-end checks (full OAuth flow, every tool, import dedup semantics, GDPR deletion) run in CI and as a hard deploy gate.

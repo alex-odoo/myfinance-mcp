@@ -89,6 +89,9 @@ model Transaction {
   counterAccountId String? @db.Uuid // transfer destination (own account)
   counterAmount   Decimal? @db.Decimal(14, 2) // received amount for cross-currency transfers
   counterCurrency String?  @db.Char(3)
+  // When two bank rows (debit + credit) were merged into one transfer, the
+  // credit side's external id lands here so re-syncs skip it as already imported.
+  counterExternalId String?
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
@@ -136,7 +139,9 @@ model BankConnection {
   id              String    @id @default(uuid()) @db.Uuid
   userId          String    @db.Uuid
   provider        String // zenmoney
-  tokenEnc        String // AES-256-GCM: base64(iv).base64(ciphertext).base64(tag)
+  // AES-256-GCM: base64(iv).base64(ciphertext).base64(tag). ZenMoney: user's API
+  // token. Enable Banking: session id after consent callback; "" while pending.
+  tokenEnc        String    @default("")
   // ZenMoney runs two separate backends (RU and international); a token is only
   // valid on the one that issued it. Detected at connect time.
   apiBase         String    @default("https://api.zenmoney.ru")
@@ -147,6 +152,9 @@ model BankConnection {
   // zenAccountId -> { accountId, enabled } (small, per-user; a table would be
   // overkill for one connection with a dozen accounts)
   accountMap      Json      @default("{}")
+  // Provider-specific state: Enable Banking keeps {state, aspsp, validUntil,
+  // accountsInfo} here (pending auth nonce, consent expiry, session accounts).
+  meta            Json      @default("{}")
   createdAt       DateTime  @default(now())
   updatedAt       DateTime  @updatedAt
 

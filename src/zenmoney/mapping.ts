@@ -90,6 +90,12 @@ const MCC_MAP: Array<[test: (mcc: number) => boolean, category: string]> = [
 
 const normalize = (s: string) => s.toLowerCase().replace(/[^\p{L}\p{N}]/gu, "");
 
+/** MCC -> category lookup, shared by all bank connectors. */
+export function mccCategory(mcc: number): string | undefined {
+  for (const [test, category] of MCC_MAP) if (test(mcc)) return category;
+  return undefined;
+}
+
 export interface CategoryResult {
   category: string;
   unmappedTag?: string; // set when the dictionary missed; feeds the sync report
@@ -106,7 +112,8 @@ export function mapCategory(tags: ZenTag[], tagById: Map<string, ZenTag>, mcc?: 
     }
   }
   if (mcc) {
-    for (const [test, category] of MCC_MAP) if (test(mcc)) return { category };
+    const viaMcc = mccCategory(mcc);
+    if (viaMcc) return { category: viaMcc };
   }
   return { category: "other", unmappedTag: tags[0]?.title };
 }

@@ -20,6 +20,12 @@ export const config = {
   // 64 hex chars (32 bytes). Provider tokens are useless in a DB dump without it.
   // Generate: openssl rand -hex 32. Connector tools refuse to store tokens when unset.
   tokenEncKey: process.env.TOKEN_ENC_KEY ?? "",
+  // Enable Banking (EU/UK open banking). App id = JWT kid; private key is the
+  // base64 of the PEM (single line survives docker env-file parsing). Bank
+  // connection tools stay disabled until both are set.
+  ebAppId: process.env.EB_APP_ID ?? "",
+  ebPrivateKeyB64: process.env.EB_PRIVATE_KEY_B64 ?? "",
+  ebApiOrigin: (process.env.EB_API_ORIGIN ?? "https://api.enablebanking.com").replace(/\/$/, ""),
 };
 
 export function assertConfig(): void {

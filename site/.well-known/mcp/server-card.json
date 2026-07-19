@@ -1,7 +1,7 @@
 {
   "serverInfo": {
     "name": "myfinancemcp",
-    "version": "0.8.0"
+    "version": "0.9.0"
   },
   "authentication": {
     "required": true,
@@ -946,7 +946,7 @@
     {
       "name": "connect_zenmoney",
       "title": "Connect ZenMoney",
-      "description": "Link a ZenMoney (zenmoney.app) account for read-only transaction sync. action=paste_token stores the user's personal ZenMoney API token (obtainable free at zerro.app: log in with ZenMoney, copy the token). action=status shows connection health and synced accounts. action=disconnect removes the link and stored token; already-imported transactions stay. After connecting, run sync_zenmoney.",
+      "description": "Link a ZenMoney account (both zenmoney.app international and zenmoney.ru work; the right backend is auto-detected) for read-only transaction sync. action=paste_token stores the user's personal ZenMoney API token: get it free at zerro.app - log in choosing YOUR ZenMoney version on the login screen, then open zerro.app/token and copy it. action=status shows connection health and synced accounts. action=disconnect removes the link and stored token; already-imported transactions stay. After connecting, run sync_zenmoney.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -993,6 +993,78 @@
             "exclusiveMinimum": 0,
             "maximum": 240,
             "description": "First sync only: import history no older than this many months. Default: everything."
+          }
+        },
+        "additionalProperties": false,
+        "$schema": "http://json-schema.org/draft-07/schema#"
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true
+      }
+    },
+    {
+      "name": "connect_bank",
+      "title": "Connect a bank",
+      "description": "Link a real bank account via open banking (Enable Banking, EU/UK/EEA coverage) for read-only transaction sync. Flow: action=list_banks with the user's country (and optional search) to find the exact bank name -> action=start with bank_name + country -> give the user the returned authorize_url to open and approve at their bank -> after they confirm they are done, run sync_bank. action=status shows connection health and consent expiry. action=disconnect revokes the session and removes the link; imported transactions stay. Only one bank connection at a time for now; connecting a different bank replaces the previous one after disconnect.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "list_banks",
+              "start",
+              "status",
+              "disconnect"
+            ]
+          },
+          "country": {
+            "type": "string",
+            "minLength": 2,
+            "maxLength": 2,
+            "description": "2-letter country code (FI, DE, FR, ...). Required for list_banks and start."
+          },
+          "search": {
+            "type": "string",
+            "description": "list_banks: case-insensitive substring filter on bank names."
+          },
+          "bank_name": {
+            "type": "string",
+            "description": "start: exact bank name as returned by list_banks. Required for action=start."
+          }
+        },
+        "required": [
+          "action"
+        ],
+        "additionalProperties": false,
+        "$schema": "http://json-schema.org/draft-07/schema#"
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true
+      }
+    },
+    {
+      "name": "sync_bank",
+      "title": "Sync bank",
+      "description": "Pull booked transactions and balances from the connected bank (via connect_bank; read-only, incremental, safe to re-run). First sync imports months_back of history (default 3; banks may return less). Equal-amount same-day debit/credit pairs across the user's own synced accounts are merged into transfers. Rows without a recognizable MCC land in category 'other'.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "dry_run": {
+            "type": "boolean",
+            "description": "Preview changes without writing them."
+          },
+          "months_back": {
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "maximum": 24,
+            "description": "First sync only: how many months of history to request. Default 3."
           }
         },
         "additionalProperties": false,

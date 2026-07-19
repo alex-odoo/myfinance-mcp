@@ -53,9 +53,11 @@ async function mcpCall(token: string, body: unknown): Promise<any> {
 
 let serverProc: Subprocess | null = null;
 let zenStub: { stop: (closeActiveConnections?: boolean) => void } | null = null;
+let ebStub: { stop: (closeActiveConnections?: boolean) => void } | null = null;
 
 const ZEN_PORT = 8791;
 const ZEN_TOKEN = "zen-e2e-token-0123456789";
+const EB_PORT = 8792;
 
 /**
  * ZenMoney Diff API stub. Phases keyed by the cursor the server sends:
@@ -131,6 +133,81 @@ function startZenStub() {
   });
 }
 
+/**
+ * Enable Banking API stub. /auth returns a "bank consent" URL that points
+ * straight at the server's callback (instant approval); two accounts, paged
+ * transactions, one cross-account transfer pair, one pending row.
+ */
+function startEbStub() {
+  const eur = (amount: string) => ({ currency: "EUR", amount });
+  return Bun.serve({
+    port: EB_PORT,
+    async fetch(req) {
+      const url = new URL(req.url);
+      if (!req.headers.get("authorization")?.startsWith("Bearer ")) {
+        return new Response("unauthorized", { status: 401 });
+      }
+      if (url.pathname === "/aspsps") {
+        return Response.json({
+          aspsps: [{ name: "Mock Bank", country: url.searchParams.get("country") ?? "FI", maximum_consent_validity: 7_776_000 }],
+        });
+      }
+      if (url.pathname === "/auth" && req.method === "POST") {
+        const body = (await req.json()) as { state: string; redirect_url: string };
+        return Response.json({ url: `${body.redirect_url}?code=e2e-eb-code&state=${body.state}` });
+      }
+      if (url.pathname === "/sessions" && req.method === "POST") {
+        const body = (await req.json()) as { code: string };
+        if (body.code !== "e2e-eb-code") return new Response("bad code", { status: 400 });
+        return Response.json({
+          session_id: "e2e-eb-session",
+          aspsp: { name: "Mock Bank", country: "FI" },
+          access: { valid_until: new Date(Date.now() + 90 * 86_400_000).toISOString() },
+          accounts: [
+            { uid: "eb-acc-1", name: "Main Account", currency: "EUR", account_id: { iban: "FI2112345600000785" } },
+            { uid: "eb-acc-2", name: "Savings", currency: "EUR", account_id: { iban: "FI2112345600000786" } },
+          ],
+        });
+      }
+      if (url.pathname === "/accounts/eb-acc-1/transactions") {
+        if (url.searchParams.get("continuation_key") === "p2") {
+          return Response.json({
+            transactions: [
+              { entry_reference: "ref-3", transaction_amount: eur("200.00"), credit_debit_indicator: "DBIT", status: "BOOK", booking_date: "2026-07-16", remittance_information: ["Own transfer"] },
+              { entry_reference: "ref-4", transaction_amount: eur("15.30"), credit_debit_indicator: "DBIT", status: "BOOK", booking_date: "2026-07-16", creditor: { name: "Cafe X" } },
+              { entry_reference: "ref-5", transaction_amount: eur("9.99"), credit_debit_indicator: "DBIT", status: "PDNG", booking_date: "2026-07-17", creditor: { name: "Pending Shop" } },
+            ],
+          });
+        }
+        return Response.json({
+          transactions: [
+            { entry_reference: "ref-1", transaction_amount: eur("12.50"), credit_debit_indicator: "DBIT", status: "BOOK", booking_date: "2026-07-15", creditor: { name: "Lidl Helsinki" }, merchant_category_code: "5411" },
+            { entry_reference: "ref-2", transaction_amount: eur("2500.00"), credit_debit_indicator: "CRDT", status: "BOOK", booking_date: "2026-07-14", debtor: { name: "ACME Oy" }, remittance_information: ["Salary July"] },
+          ],
+          continuation_key: "p2",
+        });
+      }
+      if (url.pathname === "/accounts/eb-acc-2/transactions") {
+        return Response.json({
+          transactions: [
+            { entry_reference: "ref-6", transaction_amount: eur("200.00"), credit_debit_indicator: "CRDT", status: "BOOK", booking_date: "2026-07-16", remittance_information: ["Own transfer"] },
+          ],
+        });
+      }
+      if (url.pathname === "/accounts/eb-acc-1/balances") {
+        return Response.json({ balances: [{ balance_type: "CLBD", balance_amount: eur("3000.55") }] });
+      }
+      if (url.pathname === "/accounts/eb-acc-2/balances") {
+        return Response.json({ balances: [{ balance_type: "CLBD", balance_amount: eur("1200.00") }] });
+      }
+      if (url.pathname.startsWith("/sessions/") && req.method === "DELETE") {
+        return Response.json({ deleted: true });
+      }
+      return new Response("not found", { status: 404 });
+    },
+  });
+}
+
 async function main(): Promise<void> {
   if (!externalBase) {
     // Idempotency: a previously crashed run may have left the test user behind
@@ -138,6 +215,11 @@ async function main(): Promise<void> {
     await db.user.deleteMany({ where: { email: EMAIL } });
     const hash = await Bun.password.hash(PASSWORD);
     zenStub = startZenStub();
+    ebStub = startEbStub();
+    const { generateKeyPairSync } = await import("node:crypto");
+    const ebKey = generateKeyPairSync("rsa", { modulusLength: 2048 })
+      .privateKey.export({ type: "pkcs8", format: "pem" })
+      .toString();
     serverProc = Bun.spawn(["bun", "run", "src/index.ts"], {
       env: {
         ...process.env,
@@ -151,6 +233,9 @@ async function main(): Promise<void> {
         GOOGLE_CLIENT_SECRET: "e2e-google-secret",
         ZENMONEY_API_BASE: `http://localhost:${ZEN_PORT}`,
         TOKEN_ENC_KEY: "ab".repeat(32),
+        EB_APP_ID: "e2e-eb-app",
+        EB_PRIVATE_KEY_B64: Buffer.from(ebKey).toString("base64"),
+        EB_API_ORIGIN: `http://localhost:${EB_PORT}`,
       },
       stdout: "pipe",
       stderr: "pipe",
@@ -874,6 +959,48 @@ async function main(): Promise<void> {
     const zenLidl3 = payload(await call("get_transactions", { merchant: "Lidl" }));
     ok("zen imported rows kept after disconnect", zenLidl3.count === 1);
 
+    // 12eb. Enable Banking connector: consent flow + sync semantics
+    const ebList = payload(await call("connect_bank", { action: "list_banks", country: "FI" }));
+    ok("eb list_banks", ebList.banks?.includes("Mock Bank"), JSON.stringify(ebList));
+
+    const ebBadBank = await call("connect_bank", { action: "start", country: "FI", bank_name: "No Such Bank" });
+    ok("eb start rejects unknown bank", isErr(ebBadBank));
+
+    const ebStart = payload(await call("connect_bank", { action: "start", country: "FI", bank_name: "Mock Bank" }));
+    ok("eb start returns authorize_url", typeof ebStart.authorize_url === "string" && ebStart.authorize_url.includes("/connect/enablebanking/callback"), JSON.stringify(ebStart));
+
+    const ebSyncEarly = await call("sync_bank", {});
+    ok("eb sync before consent errors", isErr(ebSyncEarly));
+
+    const badState = await fetch(`${BASE}/connect/enablebanking/callback?code=x&state=wrong-state`);
+    ok("eb callback rejects unknown state", badState.status === 400);
+
+    // Twin: hand-logged before the bank confirms the same 15.30 EUR spend
+    await call("log_expense", { amount: 15.3, currency: "EUR", category: "restaurants", merchant: "Cafe X", date: "2026-07-16" });
+
+    const consent = await fetch(ebStart.authorize_url);
+    ok("eb consent callback succeeds", consent.status === 200 && (await consent.text()).includes("Bank connected"));
+
+    const ebs1 = payload(await call("sync_bank", {}));
+    ok("eb first sync counts", ebs1.accounts_created === 2 && ebs1.imported === 2 && ebs1.transfers === 1 && ebs1.manual_twins_merged === 1, JSON.stringify(ebs1));
+    ok("eb pending skipped + balances anchored", ebs1.pending_rows_skipped === 1 && ebs1.balances_anchored === 2, JSON.stringify(ebs1));
+
+    const ebLidl = payload(await call("get_transactions", { merchant: "Lidl Helsinki" }));
+    ok("eb mcc category mapping", ebLidl.count === 1 && ebLidl.transactions[0].category === "groceries", JSON.stringify(ebLidl));
+
+    const ebs2 = payload(await call("sync_bank", {}));
+    ok("eb idempotent re-sync (transfer credit side included)", ebs2.imported === 0 && ebs2.transfers === 0 && ebs2.updated === 0 && ebs2.manual_twins_merged === 0, JSON.stringify(ebs2));
+
+    const ebStatus = payload(await call("connect_bank", { action: "status" }));
+    ok("eb status", ebStatus.connected === true && ebStatus.bank === "Mock Bank" && ebStatus.accounts_synced === 2 && !!ebStatus.consent_valid_until, JSON.stringify(ebStatus));
+
+    const ebDisc = payload(await call("connect_bank", { action: "disconnect" }));
+    ok("eb disconnect", ebDisc.disconnected === true);
+    const ebSyncAfter = await call("sync_bank", {});
+    ok("eb sync after disconnect errors", isErr(ebSyncAfter));
+    const ebLidl2 = payload(await call("get_transactions", { merchant: "Lidl Helsinki" }));
+    ok("eb imported rows kept after disconnect", ebLidl2.count === 1);
+
     // 12f. Bulk delete
     const listForDel = payload(await call("get_transactions", { limit: 3 }));
     const delIds = listForDel.transactions.map((t: any) => t.id);
@@ -945,4 +1072,5 @@ try {
   // The Zen stub's listener would otherwise keep the Bun event loop alive
   // forever after main() returns - the script must exit for CI/deploy gates.
   (zenStub as { stop: (closeActiveConnections?: boolean) => void } | null)?.stop(true);
+  (ebStub as { stop: (closeActiveConnections?: boolean) => void } | null)?.stop(true);
 }
