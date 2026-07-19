@@ -1,7 +1,7 @@
 {
   "serverInfo": {
     "name": "myfinancemcp",
-    "version": "0.10.0"
+    "version": "0.11.0"
   },
   "authentication": {
     "required": true,
@@ -247,6 +247,90 @@
       "annotations": {
         "readOnlyHint": false,
         "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false
+      }
+    },
+    {
+      "name": "update_account",
+      "title": "Update account",
+      "description": "Rename an account or change its type, entity or main currency. Transactions keep their history; an entity change only affects future transactions.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "account": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Current account name (see get_accounts)."
+          },
+          "new_name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 40
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "cash",
+              "bank",
+              "card",
+              "investment",
+              "manual"
+            ]
+          },
+          "entity": {
+            "type": "string",
+            "enum": [
+              "personal",
+              "business"
+            ]
+          },
+          "currency": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 3,
+            "description": "Main currency the balance is shown in."
+          }
+        },
+        "required": [
+          "account"
+        ],
+        "additionalProperties": false,
+        "$schema": "http://json-schema.org/draft-07/schema#"
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false
+      }
+    },
+    {
+      "name": "delete_account",
+      "title": "Delete one account",
+      "description": "Delete ONE money account (see get_accounts) together with its balance snapshots. If it still holds transactions, pass delete_transactions=true to confirm deleting them too. To erase the whole profile use delete_all_data instead.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "account": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Account name to delete."
+          },
+          "delete_transactions": {
+            "type": "boolean",
+            "description": "Must be true when the account still has transactions."
+          }
+        },
+        "required": [
+          "account"
+        ],
+        "additionalProperties": false,
+        "$schema": "http://json-schema.org/draft-07/schema#"
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true,
         "idempotentHint": false,
         "openWorldHint": false
       }
@@ -1091,9 +1175,9 @@
       }
     },
     {
-      "name": "delete_account",
-      "title": "Delete account",
-      "description": "Erase the account and ALL financial data permanently (GDPR). Requires confirm='DELETE'.",
+      "name": "delete_all_data",
+      "title": "Delete all data",
+      "description": "Erase the user profile and ALL financial data permanently (GDPR). For removing a single money account use delete_account instead. Requires confirm='DELETE'.",
       "inputSchema": {
         "type": "object",
         "properties": {

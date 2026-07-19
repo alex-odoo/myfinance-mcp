@@ -1,5 +1,6 @@
 import { db, logEvent } from "../db";
 import { convert, round2 } from "../fx";
+import { pickFreeName } from "../accounts";
 import { EXPENSE_CATEGORIES, INCOME_CATEGORIES } from "../categories";
 import { merchantCategoryMap, normMerchant } from "../merchantMemory";
 import { decryptToken } from "./crypto";
@@ -86,15 +87,29 @@ export async function syncZenMoney(userId: string, opts: SyncOptions = {}) {
       mappedOurIds.add(existing.id);
       continue;
     }
-    const name = namesTaken.has(zen.title.toLowerCase()) ? `${zen.title} (ZenMoney)` : zen.title;
-    const created = await db.account.create({
-      data: { userId, name, type, provider: "zenmoney", externalId: zen.id, currency },
-    });
+    const name = pickFreeName(zen.title, namesTaken, currency ? [currency, "ZenMoney"] : ["ZenMoney"]);
+    let created;
+    try {
+      created = await db.account.create({
+        data: { userId, name, type, provider: "zenmoney", externalId: zen.id, currency },
+      });
+    } catch {
+      throw new Error(
+        `Cannot create account "${name}" for ZenMoney account "${zen.title}": the name is already taken. ` +
+          `Rename or delete the clashing account (update_account / delete_account), then sync again.`
+      );
+    }
     namesTaken.add(name.toLowerCase());
     ourAccounts.push(created);
     accountMap[zen.id] = { accountId: created.id, enabled: true };
     mappedOurIds.add(created.id);
     accountsCreated++;
+  }
+
+  // Persist the map right away: a failure later in the sync must not orphan
+  // the accounts just created (same-name adoption entries included).
+  if (accountsCreated > 0 || Object.keys(accountMap).length > Object.keys((connection.accountMap ?? {}) as object).length) {
+    await db.bankConnection.update({ where: { id: connection.id }, data: { accountMap: accountMap as object } });
   }
 
   const ourAccountId = (zenId: string | null | undefined): string | undefined => {

@@ -46,6 +46,8 @@ On first connect you sign in with Google or register with an email and password.
 | `log_balance`         | Anchor an account's balance at a date; later flows compute from the snapshot                       |
 | `import_transactions` | Bulk statement import (up to 500 rows/call): dedup by bank reference or derived key, twin merge, reconciliation check |
 | `create_account`      | Create a bank / card / cash / investment account with currency and personal/business entity        |
+| `update_account`      | Rename an account or change its type, entity or main currency                                      |
+| `delete_account`      | Delete one money account (with its transactions after explicit confirmation)                       |
 | `get_accounts`        | All accounts with balances and net worth, converted to base currency                               |
 | `get_summary`         | Period totals by category, merchant or month; expense or income breakdown, category drill-down and exclusions |
 | `get_transactions`    | List and filter raw transactions                                                                   |
@@ -62,7 +64,7 @@ On first connect you sign in with Google or register with an email and password.
 | `sync_bank`           | Pull booked transactions and balances from the connected bank; incremental, transfer pairing, dedup-safe. Healthy connections also auto-sync server-side roughly daily |
 | `connect_zenmoney`    | Link a ZenMoney account (international and .ru backends auto-detected) for read-only sync          |
 | `sync_zenmoney`       | Pull ZenMoney accounts and transactions; incremental, dedup-safe, keeps your manual edits          |
-| `delete_account`      | Permanently delete the user account and ALL data (GDPR erasure)                                    |
+| `delete_all_data`     | Permanently delete the user profile and ALL data (GDPR erasure)                                    |
 | `ping`                | Health and auth check                                                                              |
 
 ## MCP Apps
@@ -74,11 +76,11 @@ Four tools return an interactive dashboard (`ui://myfinancemcp/dashboard`) rende
 - Receipt photos are parsed by YOUR AI client; images never reach this server.
 - Amounts, merchants and notes are never written to server logs (blind logs); telemetry stores event types and ids only.
 - OAuth 2.1 with PKCE, encrypted tokens, rate-limited sign-in.
-- All 24 tools carry MCP annotations (read-only and destructive ops flagged, connector tools marked open-world), so clients can gate confirmations correctly.
+- All 26 tools carry MCP annotations (read-only and destructive ops flagged, connector tools marked open-world), so clients can gate confirmations correctly.
 - Bank access is strictly read-only: open banking consent via Enable Banking (the bank authenticates the user; we never see credentials), ZenMoney via the user's own API token. Session ids and tokens are stored AES-256-GCM encrypted.
 - CSV export and instant full deletion are tools, not support tickets.
 - Hosted instance: EU data residency, row-level security keyed to your account.
-- 130 automated end-to-end checks (full OAuth flow, every tool, import dedup semantics, GDPR deletion) run in CI and as a hard deploy gate.
+- 138 automated end-to-end checks (full OAuth flow, every tool, import dedup semantics, GDPR deletion) run in CI and as a hard deploy gate.
 
 See [SECURITY.md](SECURITY.md) for the disclosure policy.
 
@@ -137,7 +139,7 @@ bun run e2e            # self-contained end-to-end suite (spawns its own server)
 bun run lint
 ```
 
-The e2e suite (130 checks) covers the full OAuth flow (discovery, dynamic registration, PKCE, refresh rotation), every tool, statement-import dedup semantics, ZenMoney sync against a stubbed Diff API, and GDPR deletion.
+The e2e suite (138 checks) covers the full OAuth flow (discovery, dynamic registration, PKCE, refresh rotation), every tool, statement-import dedup semantics, ZenMoney sync against a stubbed Diff API, and GDPR deletion.
 
 ## API Endpoints
 

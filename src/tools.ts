@@ -223,6 +223,97 @@ export function registerFinanceTools(server: McpServer, userId: string): void {
   );
 
   server.registerTool(
+    "update_account",
+    {
+      title: "Update account",
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+      description:
+        "Rename an account or change its type, entity or main currency. Transactions keep their history; an entity change only affects future transactions.",
+      inputSchema: {
+        account: z.string().min(1).describe("Current account name (see get_accounts)."),
+        new_name: z.string().min(1).max(40).optional(),
+        type: z.enum(ACCOUNT_TYPES).optional(),
+        entity: entitySchema.optional(),
+        currency: currencySchema.optional().describe("Main currency the balance is shown in."),
+      },
+    },
+    async ({ account, new_name, type, entity, currency }) => {
+      if (!new_name && !type && !entity && !currency) {
+        throw new Error("Nothing to change. Pass new_name, type, entity or currency.");
+      }
+      const acc = await resolveAccount(userId, account);
+      if (new_name && new_name.toLowerCase() !== acc.name.toLowerCase()) {
+        const siblings = await db.account.findMany({ where: { userId } });
+        if (siblings.some((a) => a.id !== acc.id && a.name.toLowerCase() === new_name.toLowerCase())) {
+          throw new Error(`Account "${new_name}" already exists.`);
+        }
+      }
+      const updated = await db.account.update({
+        where: { id: acc.id },
+        data: {
+          ...(new_name ? { name: new_name } : {}),
+          ...(type ? { type } : {}),
+          ...(entity ? { entity } : {}),
+          ...(currency ? { currency: currency.toUpperCase() } : {}),
+        },
+      });
+      return text({ ok: true, account: updated.name, type: updated.type, currency: updated.currency, entity: updated.entity });
+    }
+  );
+
+  server.registerTool(
+    "delete_account",
+    {
+      title: "Delete one account",
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
+      description:
+        "Delete ONE money account (see get_accounts) together with its balance snapshots. If it still holds transactions, pass delete_transactions=true to confirm deleting them too. To erase the whole profile use delete_all_data instead.",
+      inputSchema: {
+        account: z.string().min(1).describe("Account name to delete."),
+        delete_transactions: z
+          .boolean()
+          .optional()
+          .describe("Must be true when the account still has transactions."),
+      },
+    },
+    async ({ account, delete_transactions }) => {
+      const acc = await resolveAccount(userId, account);
+      const txCount = await db.transaction.count({ where: { accountId: acc.id } });
+      if (txCount > 0 && delete_transactions !== true) {
+        throw new Error(
+          `Account "${acc.name}" still has ${txCount} transaction(s). Pass delete_transactions=true to delete them ` +
+            `together with the account, or move them to another account first via update_transaction.`
+        );
+      }
+      const counterLegs = await db.transaction.count({ where: { userId, counterAccountId: acc.id } });
+      // Detach any bank/ZenMoney sync mapping so connectors stop targeting a dead id.
+      const connections = await db.bankConnection.findMany({ where: { userId } });
+      for (const c of connections) {
+        const map = (c.accountMap ?? {}) as Record<string, { accountId: string; enabled: boolean }>;
+        let touched = false;
+        for (const entry of Object.values(map)) {
+          if (entry && entry.accountId === acc.id && entry.enabled) {
+            entry.enabled = false;
+            touched = true;
+          }
+        }
+        if (touched) {
+          await db.bankConnection.update({ where: { id: c.id }, data: { accountMap: map as object } });
+        }
+      }
+      await db.account.delete({ where: { id: acc.id } }); // cascades transactions + snapshots
+      logEvent("account_removed", userId, { had_transactions: txCount });
+      return text({
+        deleted: acc.name,
+        transactions_deleted: txCount,
+        ...(counterLegs > 0
+          ? { note: `${counterLegs} transfer(s) on other accounts pointed to this one; they remain as outgoing transfers.` }
+          : {}),
+      });
+    }
+  );
+
+  server.registerTool(
     "get_accounts",
     {
       _meta: DASHBOARD_TOOL_META,
@@ -1309,11 +1400,12 @@ export function registerFinanceTools(server: McpServer, userId: string): void {
   );
 
   server.registerTool(
-    "delete_account",
+    "delete_all_data",
     {
-      title: "Delete account",
+      title: "Delete all data",
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
-      description: "Erase the account and ALL financial data permanently (GDPR). Requires confirm='DELETE'.",
+      description:
+        "Erase the user profile and ALL financial data permanently (GDPR). For removing a single money account use delete_account instead. Requires confirm='DELETE'.",
       inputSchema: { confirm: z.literal("DELETE") },
     },
     async () => {

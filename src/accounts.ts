@@ -3,6 +3,20 @@ import { convert, round2 } from "./fx";
 
 export const ACCOUNT_TYPES = ["cash", "bank", "card", "investment", "manual"] as const;
 
+/**
+ * First free name among base, then "base (suffix)" for each suffix, then
+ * "base (2)", "base (3)"... Connectors need this because multi-currency banks
+ * repeat the holder's name on every sub-account and (userId, name) is unique.
+ */
+export function pickFreeName(base: string, takenLower: Set<string>, suffixes: string[] = []): string {
+  const candidates = [base, ...suffixes.map((s) => `${base} (${s})`)];
+  for (const c of candidates) if (!takenLower.has(c.toLowerCase())) return c;
+  for (let i = 2; ; i++) {
+    const c = `${base} (${i})`;
+    if (!takenLower.has(c.toLowerCase())) return c;
+  }
+}
+
 export async function resolveAccount(userId: string, name?: string) {
   if (!name || name.toLowerCase() === "manual") {
     return db.account.upsert({

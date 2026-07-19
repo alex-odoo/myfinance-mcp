@@ -166,6 +166,9 @@ function startEbStub() {
           accounts: [
             { uid: "eb-acc-1", name: "Main Account", currency: "EUR", account_id: { iban: "FI2112345600000785" } },
             { uid: "eb-acc-2", name: "Savings", currency: "EUR", account_id: { iban: "FI2112345600000786" } },
+            // Multi-currency sub-account repeating the same display name, like
+            // Revolut repeats the holder's name on RON/EUR/USD sub-accounts.
+            { uid: "eb-acc-3", name: "Main Account", currency: "RON", account_id: { iban: "FI2112345600000787" } },
           ],
         });
       }
@@ -193,6 +196,12 @@ function startEbStub() {
             { entry_reference: "ref-6", transaction_amount: eur("200.00"), credit_debit_indicator: "CRDT", status: "BOOK", booking_date: "2026-07-16", remittance_information: ["Own transfer"] },
           ],
         });
+      }
+      if (url.pathname === "/accounts/eb-acc-3/transactions") {
+        return Response.json({ transactions: [] });
+      }
+      if (url.pathname === "/accounts/eb-acc-3/balances") {
+        return Response.json({ balances: [{ balance_type: "CLBD", balance_amount: { currency: "RON", amount: "0.00" } }] });
       }
       if (url.pathname === "/accounts/eb-acc-1/balances") {
         return Response.json({ balances: [{ balance_type: "CLBD", balance_amount: eur("3000.55") }] });
@@ -986,12 +995,32 @@ async function main(): Promise<void> {
     // Twin: hand-logged before the bank confirms the same 15.30 EUR spend
     await call("log_expense", { amount: 15.3, currency: "EUR", category: "restaurants", merchant: "Cafe X", date: "2026-07-16" });
 
+    // Name clash: the user already tracks "Main Account" by hand (CSV-import style)
+    await call("create_account", { name: "Main Account", type: "bank", currency: "EUR" });
+    // Orphan from an "interrupted" earlier sync: created but never mapped
+    const { db: odb } = await import("../src/db");
+    const testUser = await odb.user.findFirstOrThrow({ where: { email: EMAIL } });
+    await odb.account.create({
+      data: { userId: testUser.id, name: "Orphan Savings", type: "bank", provider: "enablebanking", externalId: "eb-acc-2", currency: "EUR" },
+    });
+
     const consent = await fetch(ebStart.authorize_url);
     ok("eb consent callback succeeds", consent.status === 200 && (await consent.text()).includes("Bank connected"));
 
     const ebs1 = payload(await call("sync_bank", {}));
     ok("eb first sync counts", ebs1.accounts_created === 2 && ebs1.imported === 2 && ebs1.transfers === 1 && ebs1.manual_twins_merged === 1, JSON.stringify(ebs1));
-    ok("eb pending skipped + balances anchored", ebs1.pending_rows_skipped === 1 && ebs1.balances_anchored === 2, JSON.stringify(ebs1));
+    ok("eb pending skipped + balances anchored", ebs1.pending_rows_skipped === 1 && ebs1.balances_anchored === 3, JSON.stringify(ebs1));
+
+    const ebAccs = payload(await call("get_accounts", {}));
+    const ebNames = ebAccs.accounts.map((a: any) => a.name);
+    ok(
+      "eb multi-currency naming + orphan adoption",
+      ebNames.includes("Main Account (EUR)") &&
+        ebNames.includes("Main Account (RON)") &&
+        ebNames.includes("Orphan Savings") &&
+        !ebNames.includes("Savings"),
+      JSON.stringify(ebNames)
+    );
 
     const ebLidl = payload(await call("get_transactions", { merchant: "Lidl Helsinki" }));
     ok("eb mcc category mapping", ebLidl.count === 1 && ebLidl.transactions[0].category === "groceries", JSON.stringify(ebLidl));
@@ -1041,7 +1070,7 @@ async function main(): Promise<void> {
     );
 
     const ebStatus = payload(await call("connect_bank", { action: "status" }));
-    ok("eb status", ebStatus.connected === true && ebStatus.bank === "Mock Bank" && ebStatus.accounts_synced === 2 && !!ebStatus.consent_valid_until, JSON.stringify(ebStatus));
+    ok("eb status", ebStatus.connected === true && ebStatus.bank === "Mock Bank" && ebStatus.accounts_synced === 3 && !!ebStatus.consent_valid_until, JSON.stringify(ebStatus));
 
     const ebDisc = payload(await call("connect_bank", { action: "disconnect" }));
     ok("eb disconnect", ebDisc.disconnected === true);
@@ -1055,6 +1084,27 @@ async function main(): Promise<void> {
     const delIds = listForDel.transactions.map((t: any) => t.id);
     const bulkDel = payload(await call("delete_transactions", { ids: delIds }));
     ok("bulk delete by ids", bulkDel.deleted === delIds.length, JSON.stringify(bulkDel));
+
+    // 12g. Account management: update_account + delete_account (one account, not GDPR)
+    const tmpA = payload(await call("create_account", { name: "Temp Acc", type: "cash", currency: "EUR" }));
+    ok("create temp account", tmpA.ok === true);
+    const updNoop = await call("update_account", { account: "Temp Acc" });
+    ok("update_account requires a change", isErr(updNoop));
+    const updClash = await call("update_account", { account: "Temp Acc", new_name: "Cash Stash" });
+    ok("update_account rejects name clash", isErr(updClash));
+    const updAcc = payload(await call("update_account", { account: "Temp Acc", new_name: "Temp Renamed", entity: "business", type: "bank" }));
+    ok(
+      "update_account renames + retypes",
+      updAcc.ok === true && updAcc.account === "Temp Renamed" && updAcc.entity === "business" && updAcc.type === "bank",
+      JSON.stringify(updAcc)
+    );
+    await call("log_expense", { amount: 5, currency: "EUR", category: "groceries", account: "Temp Renamed" });
+    const delGuard = await call("delete_account", { account: "Temp Renamed" });
+    ok("delete_account guards non-empty account", isErr(delGuard));
+    const delAcc = payload(await call("delete_account", { account: "Temp Renamed", delete_transactions: true }));
+    ok("delete_account cascades transactions", delAcc.deleted === "Temp Renamed" && delAcc.transactions_deleted === 1, JSON.stringify(delAcc));
+    const accsAfterDel = payload(await call("get_accounts", {}));
+    ok("deleted account gone", !accsAfterDel.accounts.some((a: any) => a.name === "Temp Renamed"), JSON.stringify(accsAfterDel.accounts.map((a: any) => a.name)));
     void handLogged;
   } else {
     const settings = await mcpCall(tokens.access_token, {
@@ -1103,10 +1153,10 @@ async function main(): Promise<void> {
       jsonrpc: "2.0",
       id: 5,
       method: "tools/call",
-      params: { name: "delete_account", arguments: { confirm: "DELETE" } },
+      params: { name: "delete_all_data", arguments: { confirm: "DELETE" } },
     });
     const wipe = JSON.parse(wipeRes.json?.result?.content?.[0]?.text ?? "{}");
-    ok("delete_account wipes test user", wipe.deleted === true, JSON.stringify(wipeRes.json));
+    ok("delete_all_data wipes test user", wipe.deleted === true, JSON.stringify(wipeRes.json));
     const afterWipe = await mcpCall(refreshed.access_token, { jsonrpc: "2.0", id: 6, method: "tools/call", params: { name: "ping", arguments: {} } });
     ok("wiped user token rejected", afterWipe.status === 401);
   }

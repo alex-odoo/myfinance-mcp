@@ -1,4 +1,5 @@
 import { db, logEvent } from "../db";
+import { pickFreeName } from "../accounts";
 import { convert, round2 } from "../fx";
 import { EXPENSE_CATEGORIES, INCOME_CATEGORIES } from "../categories";
 import { merchantCategoryMap, normMerchant } from "../merchantMemory";
@@ -71,26 +72,43 @@ export async function syncEnableBanking(userId: string, opts: SyncOptions = {}) 
   const ourAccounts = await db.account.findMany({ where: { userId } });
   const namesTaken = new Set(ourAccounts.map((a) => a.name.toLowerCase()));
 
+  let mapDirty = false;
   for (const acc of accountsInfo) {
     if (accountMap[acc.uid]) continue;
+    // Re-attach orphans from an interrupted sync (account created, map never saved).
+    const orphan = ourAccounts.find((a) => a.provider === "enablebanking" && a.externalId === acc.uid);
+    if (orphan) {
+      accountMap[acc.uid] = { accountId: orphan.id, enabled: true };
+      mapDirty = true;
+      continue;
+    }
     const iban = acc.account_id?.iban ?? undefined;
     const baseName =
       acc.name ?? acc.product ?? (iban ? `Account ...${iban.slice(-4)}` : `${meta.aspsp?.name ?? "Bank"} account`);
-    const name = namesTaken.has(baseName.toLowerCase()) ? `${baseName} (${meta.aspsp?.name ?? "bank"})` : baseName;
-    const created = await db.account.create({
-      data: {
-        userId,
-        name,
-        type: "bank",
-        provider: "enablebanking",
-        externalId: acc.uid,
-        currency: acc.currency?.toUpperCase() ?? undefined,
-      },
-    });
+    const currency = acc.currency?.toUpperCase();
+    const bank = meta.aspsp?.name ?? "bank";
+    const name = pickFreeName(baseName, namesTaken, currency ? [currency, `${bank} ${currency}`] : [bank]);
+    let created;
+    try {
+      created = await db.account.create({
+        data: { userId, name, type: "bank", provider: "enablebanking", externalId: acc.uid, currency },
+      });
+    } catch {
+      throw new Error(
+        `Cannot create account "${name}" for bank sub-account ${iban ?? acc.uid}: the name is already taken. ` +
+          `Rename or delete the clashing account (update_account / delete_account), then sync again.`
+      );
+    }
     namesTaken.add(name.toLowerCase());
     ourAccounts.push(created);
     accountMap[acc.uid] = { accountId: created.id, enabled: true };
+    mapDirty = true;
     accountsCreated++;
+  }
+  // Persist the map right away: a failure later in the sync must not orphan
+  // the accounts just created or re-attached.
+  if (mapDirty) {
+    await db.bankConnection.update({ where: { id: connection.id }, data: { accountMap: accountMap as object } });
   }
 
   const firstSync = Object.values(accountMap).every((m) => !m.cursor);
