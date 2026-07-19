@@ -31,7 +31,15 @@ await bootstrapUser();
 await pruneOldEvents();
 setInterval(() => void pruneOldEvents(), 24 * 60 * 60 * 1000);
 if (config.autoSyncIntervalMs > 0) {
-  setInterval(() => void runAutoSync().catch(() => {}), config.autoSyncIntervalMs);
+  // Tick failures must be visible: a silently swallowed error here once cost a
+  // day of missed syncs. Error messages only - never row data (blind-logs rule).
+  setInterval(
+    () =>
+      void runAutoSync().catch((e: unknown) => {
+        console.error("[autosync] tick failed:", e instanceof Error ? e.message : String(e));
+      }),
+    config.autoSyncIntervalMs
+  );
 }
 
 const provider = new FinanceOAuthProvider(new OAuthStore());
