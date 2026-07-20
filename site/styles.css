@@ -463,6 +463,44 @@ footer.site { padding: 36px 0 52px; font-size: 14px; color: var(--muted); border
   .swm { opacity: 1; }
 }
 
+/* ---------- blog ---------- */
+.postlist { max-width: 860px; border-top: 1px solid var(--rule); margin-top: 44px; }
+.post-row { display: block; text-decoration: none; padding: 28px 4px 30px; border-bottom: 1px solid var(--rule); }
+.post-row .pd { font-family: var(--mono); font-size: 12.5px; color: var(--muted); display: block; margin-bottom: 10px; }
+.post-row h2 { font-size: clamp(1.3rem, 2.4vw, 1.7rem); margin-bottom: 8px; }
+.post-row:hover h2 { color: var(--accent); }
+.post-row p { color: var(--muted); font-size: 15.5px; max-width: 66ch; }
+.post-row .more { font-family: var(--mono); font-size: 13px; color: var(--accent); display: inline-block; margin-top: 12px; }
+.post { max-width: 740px; padding: 56px 0 96px; }
+.post .crumbs { margin-bottom: 28px; }
+.post h1 { font-size: clamp(2rem, 4.2vw, 2.9rem); margin-bottom: 14px; }
+.post-meta { font-family: var(--mono); font-size: 12.5px; color: var(--muted); margin-bottom: 40px; display: block; }
+.post h2 { font-size: 1.45rem; margin: 46px 0 12px; }
+.post h3 { font-size: 1.12rem; margin: 30px 0 8px; letter-spacing: -.01em; }
+.post p, .post li { color: var(--muted); font-size: 16.5px; }
+.post p + p { margin-top: 14px; }
+.post strong { color: var(--ink); }
+.post ul, .post ol { padding-left: 24px; margin: 14px 0; display: flex; flex-direction: column; gap: 8px; }
+.post a { color: var(--accent); text-underline-offset: 3px; }
+.post .lede { font-size: 18.5px; color: var(--ink); }
+.tldr {
+  border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--rule));
+  background: var(--surface); border-radius: 14px; padding: 22px 26px; margin: 34px 0 8px;
+}
+.tldr .tk { font-family: var(--mono); font-size: 11.5px; letter-spacing: .1em; text-transform: uppercase; color: var(--accent); display: block; margin-bottom: 10px; }
+.tldr ul { margin: 0; gap: 7px; }
+.tldr li { font-size: 15.5px; }
+.post .callout {
+  border-left: 3px solid var(--accent); background: var(--accent-tint);
+  padding: 14px 18px; border-radius: 0 10px 10px 0; font-size: 15.5px; margin: 20px 0;
+}
+.post .dialog { border: 1px solid var(--rule); border-radius: 14px; background: var(--surface); padding: 20px 22px; margin: 20px 0; display: flex; flex-direction: column; gap: 10px; }
+.post .dialog .u, .post .dialog .a { max-width: 92%; padding: 10px 14px; border-radius: 12px; font-size: 15px; line-height: 1.5; }
+.post .dialog .u { align-self: flex-end; background: var(--ink); color: var(--paper); border-bottom-right-radius: 4px; }
+.post .dialog .a { align-self: flex-start; background: var(--accent-tint); color: var(--ink); border-bottom-left-radius: 4px; }
+.post .srcs { font-size: 13.5px; }
+.post .srcs li { font-size: 13.5px; }
+
 /* ---------- demo video section ---------- */
 .video-shell {
   position: relative; border: 1px solid var(--rule); border-radius: 16px; overflow: hidden;

@@ -30,5 +30,10 @@ Server URL: https://myfinance-mcp.com/mcp (Streamable HTTP, OAuth 2.0 with PKCE 
 - https://myfinance-mcp.com/actual-budget-mcp : Actual Budget alternative (open source, hosted vs self-hosted)
 - https://myfinance-mcp.com/firefly-iii-mcp : Firefly III alternative (open source, zero-setup vs self-hosted)
 - https://myfinance-mcp.com/pocketguard-mcp : PocketGuard alternative
+- https://myfinance-mcp.com/blog : blog with practical guides on tracking money with AI
+- https://myfinance-mcp.com/blog/track-expenses-with-ai : how to track expenses with AI in 2026 (Claude, ChatGPT), the architecture that keeps numbers honest
+- https://myfinance-mcp.com/blog/is-it-safe-to-share-financial-data-with-ai : six-question safety checklist for any AI finance tool
+- https://myfinance-mcp.com/blog/import-bank-statement-into-ai : importing CSV/PDF bank statements through AI with deduplication and reconciliation
+- https://myfinance-mcp.com/blog/what-is-an-mcp-server-for-personal-finance : MCP explained in plain words, bridge vs standalone finance servers
 - https://myfinance-mcp.com/privacy : privacy policy and terms
 - https://github.com/alex-odoo/myfinance-mcp : open-source repository (MIT)

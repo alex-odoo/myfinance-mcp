@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Import a Bank Statement into AI: PDF/CSV to Clean Data</title>
+<meta name="description" content="AI parses bank statements well and ruins them two ways: invented numbers and duplicate rows. How to get a clean, reconciled import from any CSV or PDF export.">
+<link rel="canonical" href="https://myfinance-mcp.com/blog/import-bank-statement-into-ai">
+<meta name="theme-color" content="#FAF8F3" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#181712" media="(prefers-color-scheme: dark)">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="icon" href="/favicon.ico" sizes="48x48">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<link rel="preload" href="/fonts/Switzer-Variable.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="/styles.css">
+<meta property="og:type" content="article">
+<meta property="og:url" content="https://myfinance-mcp.com/blog/import-bank-statement-into-ai">
+<meta property="og:title" content="Import a Bank Statement into AI: PDF/CSV to Clean Data">
+<meta property="og:description" content="AI parses bank statements well and ruins them two ways: invented numbers and duplicate rows. How to get a clean, reconciled import from any CSV or PDF export.">
+<meta property="og:image" content="https://myfinance-mcp.com/og.png">
+<meta name="twitter:card" content="summary_large_image">
+<script type="application/ld+json">{"@context": "https://schema.org", "@type": "BlogPosting", "headline": "Import a Bank Statement into AI: From PDF Mess to Clean Data in One Message", "url": "https://myfinance-mcp.com/blog/import-bank-statement-into-ai", "datePublished": "2026-07-20", "dateModified": "2026-07-20", "author": {"@type": "Organization", "name": "Rteam", "url": "https://rteam.agency"}, "publisher": {"@type": "Organization", "name": "Rteam", "url": "https://rteam.agency"}, "image": "https://myfinance-mcp.com/og.png", "description": "How to get a clean, reconciled bank statement import through an AI assistant: deduplication, reconciliation against the statement total, and the traps to avoid."}</script>
+<script type="application/ld+json">{"@context": "https://schema.org", "@type": "BreadcrumbList", "itemListElement": [{"@type": "ListItem", "position": 1, "name": "Home", "item": "https://myfinance-mcp.com/"}, {"@type": "ListItem", "position": 2, "name": "Blog", "item": "https://myfinance-mcp.com/blog"}, {"@type": "ListItem", "position": 3, "name": "Import a Bank Statement into AI", "item": "https://myfinance-mcp.com/blog/import-bank-statement-into-ai"}]}</script>
+</head>
+<body>
+<header class="site">
+  <div class="wrap site-inner">
+    <a class="logo" href="/">
+      <svg class="mark" width="26" height="26" viewBox="0 0 64 64" aria-hidden="true">
+        <g>
+          <polygon class="mk-top" points="18,6 52,6 46,14 27,14 27,24 40,24 40,32 18,32"/>
+          <polygon class="mk-bot" points="18,38 27,38 27,53 21,58 18,58 18,49 8,49 8,42 18,42"/>
+        </g>
+        <clipPath id="mkclip">
+          <polygon points="18,6 52,6 46,14 27,14 27,24 40,24 40,32 18,32"/>
+          <polygon points="18,38 27,38 27,53 21,58 18,58 18,49 8,49 8,42 18,42"/>
+        </clipPath>
+        <g clip-path="url(#mkclip)"><rect class="mk-sheen" x="-24" y="-12" width="14" height="88"/></g>
+      </svg>
+      MyFinance&nbsp;<b>MCP</b></a>
+    <nav class="main" aria-label="Main">
+      <a href="/#how">How it works</a>
+      <a href="/#install">Install</a>
+      <a href="/alternatives">Alternatives</a>
+      <a href="/blog">Blog</a>
+      <a href="/#faq">FAQ</a>
+    </nav>
+    <a class="gh-link" href="https://github.com/alex-odoo/myfinance-mcp" target="_blank" rel="noopener">★ GitHub</a>
+    <a class="hd-cta" href="/#install">Connect</a>
+  </div>
+</header>
+
+<main>
+<article class="wrap post">
+  <nav class="crumbs" aria-label="Breadcrumb"><a href="/">Home</a> / <a href="/blog">Blog</a> / Import a bank statement into AI</nav>
+  <h1>Import a bank statement into AI: from PDF mess to clean data in one message</h1>
+  <span class="post-meta">2026-07-20 · 7 min read</span>
+
+  <p class="lede">Somewhere on your disk there is a folder of bank statement PDFs you have never opened twice. The data in them answers every question you have about your own money, and until recently, extracting it meant an evening with Excel and regret. Vision models ended that evening. But "AI can read my statement" and "AI imported my statement correctly" are different claims, and the distance between them is exactly two failure modes.</p>
+
+  <div class="tldr">
+    <span class="tk">TL;DR</span>
+    <ul>
+      <li>Modern AI reads CSV and PDF statements reliably. The parsing is solved; the bookkeeping is not.</li>
+      <li>Failure mode 1: silent invention. A model transcribing 200 rows will occasionally round, merge or invent one. Always reconcile against the statement total.</li>
+      <li>Failure mode 2: duplicates. Re-import the same file, or overlap a statement with hand-logged expenses, and your totals quietly double.</li>
+      <li>Fix both with two rules: every row carries the bank's own reference id, and every import ends with a checksum against the statement.</li>
+    </ul>
+  </div>
+
+  <h2>Why statements beat bank APIs (for most people, still, in 2026)</h2>
+  <p>Open banking is real in the EU and UK, and where it works it is the better answer. But coverage is uneven: US access runs through commercial aggregators, many banks worldwide expose nothing, and every aggregator supports a finite list. The statement file is the universal fallback: every bank on earth produces one, it needs no consent flow, and it contains the bank's own canonical record of what happened. If your tooling handles statements well, no bank is unsupported.</p>
+
+  <h2>Failure mode 1: the model invents a number</h2>
+  <p>Ask an LLM to transcribe a 200-row PDF and it will get 199 rows right with total confidence, which is precisely the problem: you cannot see which row is wrong. Long transcriptions drift: merged rows, a rounded amount, an off-by-one date at a page break.</p>
+  <p>The defense is an accounting idea, not an AI idea: <strong>reconciliation</strong>. Every statement states its own total (or opening and closing balance). After import, the sum of imported rows must equal that total, computed by a database, not by the model that did the transcription. A mismatch means a specific row is wrong, and the difference tells you roughly where to look.</p>
+  <p class="callout">Whatever tool you use, never accept an import without a checksum line: "187 rows, net -2,431.90 EUR, matches statement". If your tool cannot say that sentence, add the check yourself: ask the AI for the imported sum and compare against the statement footer.</p>
+
+  <h2>Failure mode 2: the duplicate spiral</h2>
+  <p>The subtler killer. Duplicates arrive from three directions:</p>
+  <ul>
+    <li><strong>Re-imports.</strong> You drop June's statement, then later a May-June export with overlapping rows.</li>
+    <li><strong>Manual overlap.</strong> You logged the dinner by voice on Tuesday; the same charge arrives in Friday's statement. Naive imports now count it twice; naive dedup deletes your version with the correct category and keeps the bank's cryptic one.</li>
+    <li><strong>Chunking.</strong> AI clients split big files into batches to stay within output limits. Batch two does not remember batch one, so recurring identical charges (two 1.50 metro taps on the same day) get merged or doubled depending on the guesswork.</li>
+  </ul>
+  <p>The fix is boring and absolute: <strong>stable ids</strong>. Banks print a reference for every transaction; a correct import carries that reference on every row, making re-imports no-ops instead of disasters. This is the same idempotency idea YNAB formalized for CSV imports years ago, and any AI-era tool that skipped it has re-learned why it exists. For the manual-overlap case, the right behavior is a merge that keeps your category and note while attaching the bank's reference, not a delete.</p>
+
+  <h2>What a good import looks like end to end</h2>
+  <div class="dialog" aria-label="Example chat">
+    <span class="u">[drops revolut-june.pdf] import this into my EUR account</span>
+    <span class="a">Imported 143 of 156 rows into Revolut EUR. Skipped 13: 11 already imported (same bank reference), 2 merged with your manual entries (kept your categories). Net for June: -2,431.90 EUR, matches the statement. Largest new expense: 380.00 EUR, flights.</span>
+  </div>
+  <p>Every sentence in that reply is a safety property: counted rows, named skip reasons, merge behavior, reconciled total. This flow is what we built <a href="/">MyFinance MCP</a> around (open source, MIT, free while in beta): your AI client parses the file, the server enforces ids, dedup and reconciliation, and SQL does every sum. But the properties are tool-agnostic; hold any workflow, including a spreadsheet one, to the same standard.</p>
+
+  <h2>Practical tips that save an hour each</h2>
+  <ul>
+    <li><strong>Prefer CSV over PDF when your bank offers both.</strong> Same data, zero transcription risk; the AI only maps columns.</li>
+    <li><strong>Scanned-image PDFs are the hard case.</strong> Low-quality scans of paper statements still mis-OCR digits in 2026. Reconciliation catches the damage, but expect to fix a row or two by hand.</li>
+    <li><strong>Import history in statement-sized chunks,</strong> month by month, checking the total after each. One giant "here are 3 years" file maximizes both failure modes at once.</li>
+    <li><strong>Expenses-only imports distort net worth.</strong> If you import spending but not income or balances, anchor the account with its real balance afterward, or every trend chart will show you going broke.</li>
+    <li><strong>Multi-currency: keep the original currency per row</strong> and let the tool convert at the transaction date's rate. Converting everything to one currency during import throws information away permanently.</li>
+  </ul>
+
+  <h2>Where this approach ends</h2>
+  <p>Statement import is batch catch-up, not real-time awareness: you learn about June in July. If your bank is reachable by read-only open banking (EU/UK), a daily sync closes that gap and demotes statements to a backup plan. And if you need audited books for a business, none of this replaces accounting software; it feeds it.</p>
+
+  <h2>Try it this week</h2>
+  <ol>
+    <li>Download last month's statement from your main account, CSV if available.</li>
+    <li>Pick a tool that stores rows with bank references and reconciles totals. (<a href="/#install">Ours connects to Claude or ChatGPT in under a minute</a>; bring your own if you prefer, just interrogate its dedup.)</li>
+    <li>Drop the file in, read the import summary line by line, verify the total against the statement footer.</li>
+    <li>Drop the same file in again. If anything imports twice, stop using that tool.</li>
+  </ol>
+
+  <p>That folder of PDFs is the most complete dataset anyone has ever kept about you. This is the year it starts working for you instead of against you.</p>
+
+  <p class="fineprint">Last updated: July 20, 2026. Product names are trademarks of their respective owners. MyFinance MCP is an independent open-source project by Rteam.</p>
+</article>
+</main>
+
+<div class="final">
+  <div class="wrap">
+    <h2>Track money inside the AI you already use.</h2>
+    <p>Free and open source. It works with Claude, ChatGPT and any MCP client.</p>
+    <div class="cta-row center">
+      <a class="btn btn-solid" href="/#install">Quick install</a>
+      <a class="btn btn-ghost" href="https://github.com/alex-odoo/myfinance-mcp" target="_blank" rel="noopener">★ Star on GitHub</a>
+    </div>
+  </div>
+</div>
+
+<footer class="site">
+  <div class="wrap foot-inner">
+    <a href="/">Home</a>
+    <a href="/alternatives">Alternatives</a>
+    <a href="/blog">Blog</a>
+    <a href="https://github.com/alex-odoo/myfinance-mcp" target="_blank" rel="noopener">GitHub</a>
+    <a href="/#contact">Contact</a>
+    <a href="/privacy">Privacy &amp; Terms</a>
+    <span class="cr">Open source under MIT. Built by <a href="https://rteam.agency" target="_blank" rel="noopener">Rteam</a>.</span>
+  </div>
+</footer>
+
+</body>
+</html>

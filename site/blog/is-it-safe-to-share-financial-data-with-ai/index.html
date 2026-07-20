@@ -1,0 +1,150 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Is It Safe to Share Financial Data with AI? 2026 Checklist</title>
+<meta name="description" content="ChatGPT can now connect to bank accounts and experts are worried. Six questions to ask any AI finance tool before it sees a transaction, with honest answers.">
+<link rel="canonical" href="https://myfinance-mcp.com/blog/is-it-safe-to-share-financial-data-with-ai">
+<meta name="theme-color" content="#FAF8F3" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#181712" media="(prefers-color-scheme: dark)">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="icon" href="/favicon.ico" sizes="48x48">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<link rel="preload" href="/fonts/Switzer-Variable.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="/styles.css">
+<meta property="og:type" content="article">
+<meta property="og:url" content="https://myfinance-mcp.com/blog/is-it-safe-to-share-financial-data-with-ai">
+<meta property="og:title" content="Is It Safe to Share Financial Data with AI? 2026 Checklist">
+<meta property="og:description" content="ChatGPT can now connect to bank accounts and experts are worried. Six questions to ask any AI finance tool before it sees a transaction, with honest answers.">
+<meta property="og:image" content="https://myfinance-mcp.com/og.png">
+<meta name="twitter:card" content="summary_large_image">
+<script type="application/ld+json">{"@context": "https://schema.org", "@type": "BlogPosting", "headline": "Is It Safe to Share Financial Data with AI? A Practical 2026 Checklist", "url": "https://myfinance-mcp.com/blog/is-it-safe-to-share-financial-data-with-ai", "datePublished": "2026-07-20", "dateModified": "2026-07-20", "author": {"@type": "Organization", "name": "Rteam", "url": "https://rteam.agency"}, "publisher": {"@type": "Organization", "name": "Rteam", "url": "https://rteam.agency"}, "image": "https://myfinance-mcp.com/og.png", "description": "Six questions to ask any AI finance tool before it sees a transaction, with examples of good and bad answers."}</script>
+<script type="application/ld+json">{"@context": "https://schema.org", "@type": "BreadcrumbList", "itemListElement": [{"@type": "ListItem", "position": 1, "name": "Home", "item": "https://myfinance-mcp.com/"}, {"@type": "ListItem", "position": 2, "name": "Blog", "item": "https://myfinance-mcp.com/blog"}, {"@type": "ListItem", "position": 3, "name": "Is It Safe to Share Financial Data with AI?", "item": "https://myfinance-mcp.com/blog/is-it-safe-to-share-financial-data-with-ai"}]}</script>
+</head>
+<body>
+<header class="site">
+  <div class="wrap site-inner">
+    <a class="logo" href="/">
+      <svg class="mark" width="26" height="26" viewBox="0 0 64 64" aria-hidden="true">
+        <g>
+          <polygon class="mk-top" points="18,6 52,6 46,14 27,14 27,24 40,24 40,32 18,32"/>
+          <polygon class="mk-bot" points="18,38 27,38 27,53 21,58 18,58 18,49 8,49 8,42 18,42"/>
+        </g>
+        <clipPath id="mkclip">
+          <polygon points="18,6 52,6 46,14 27,14 27,24 40,24 40,32 18,32"/>
+          <polygon points="18,38 27,38 27,53 21,58 18,58 18,49 8,49 8,42 18,42"/>
+        </clipPath>
+        <g clip-path="url(#mkclip)"><rect class="mk-sheen" x="-24" y="-12" width="14" height="88"/></g>
+      </svg>
+      MyFinance&nbsp;<b>MCP</b></a>
+    <nav class="main" aria-label="Main">
+      <a href="/#how">How it works</a>
+      <a href="/#install">Install</a>
+      <a href="/alternatives">Alternatives</a>
+      <a href="/blog">Blog</a>
+      <a href="/#faq">FAQ</a>
+    </nav>
+    <a class="gh-link" href="https://github.com/alex-odoo/myfinance-mcp" target="_blank" rel="noopener">★ GitHub</a>
+    <a class="hd-cta" href="/#install">Connect</a>
+  </div>
+</header>
+
+<main>
+<article class="wrap post">
+  <nav class="crumbs" aria-label="Breadcrumb"><a href="/">Home</a> / <a href="/blog">Blog</a> / Is it safe to share financial data with AI?</nav>
+  <h1>Is it safe to share financial data with AI? A practical checklist</h1>
+  <span class="post-meta">2026-07-20 · 7 min read</span>
+
+  <p class="lede">In May 2026 OpenAI started letting ChatGPT connect directly to users' financial accounts. Within days, security researchers were publicly listing reasons to think twice. They are not wrong, and they are also not saying "never". The useful question is not "is AI safe for financial data?" but "is this specific tool built to handle it?". That question has a checklist.</p>
+
+  <div class="tldr">
+    <span class="tk">TL;DR</span>
+    <ul>
+      <li>The real risks are concrete: chat retention, training on your data, server logs, one-account-takeover-gets-everything, and vendors with no professional duty of care.</li>
+      <li>Six questions filter most bad tools: training? logs? residency? export and delete? open source? read-only bank access?</li>
+      <li>Structured finance tools that store records in a database expose less to the model than pasting statements into a chat window.</li>
+      <li>Whatever you choose: never paste account numbers, SSNs or credentials into any chat.</li>
+    </ul>
+  </div>
+
+  <h2>Why this stopped being theoretical</h2>
+  <p>Two things happened in the last year. First, AI assistants got the plumbing to reach real accounts: MCP connectors, bank integrations, and in May 2026 ChatGPT's own financial accounts feature, launched for Pro subscribers with wider rollout planned. Second, adoption ran ahead of hygiene: a TD Bank survey in March 2026 found 55% of Americans using AI in financial decisions, while a Stanford study of chatbot privacy (October 2025) showed how much sensitive detail leaks into ordinary conversations.</p>
+  <p>When The Record asked security experts about the ChatGPT rollout, the concerns were specific. Diana Kelley of Noma Security pointed out that one compromised ChatGPT account now yields "a consolidated picture of your balances, spending, investments, debts, goals and financial history". Ram Varadarajan of Acalvio called the concentration a high-value target for account takeover. Ridhi Shetty of the Center for Democracy and Technology noted the tool "doesn't abide by the obligations that professional financial advisors have".</p>
+  <p>Notice what nobody said: that AI reading your transactions is inherently dangerous. The danger lives in implementation details. So interrogate the details.</p>
+
+  <h2>The six questions</h2>
+
+  <h3>1. Is my data used to train models?</h3>
+  <p>The single biggest divider. Consumer chat products historically default to training on conversations unless you opt out. A purpose-built finance tool should be able to say plainly: your records are never training data. If the answer takes a lawyer to parse, treat it as "yes".</p>
+
+  <h3>2. What lands in server logs?</h3>
+  <p>Breaches usually leak logs and backups, not primary databases. Ask whether amounts, merchant names and descriptions appear in operational logs. Most vendors have never been asked this question, which is itself an answer. (This is a design decision we made early in <a href="/">MyFinance MCP</a>: server logs carry tool names and latency, never amounts or merchants. Blind logs cost us debugging convenience and are worth it.)</p>
+
+  <h3>3. Where does the data live, and under which law?</h3>
+  <p>EU residency puts your records under GDPR: deletion rights, breach notification duties, purpose limitation. US-hosted consumer apps sit under a patchwork. Not a dealbreaker either way, but you should know which regime applies before an incident, not after.</p>
+
+  <h3>4. Can I leave with my data, and can I truly delete it?</h3>
+  <p>Two commands to test on day one, while you have nothing to lose: full export (CSV counts, a proprietary backup does not) and full deletion. If deletion is a support ticket instead of a button or a tool call, the real answer is no.</p>
+
+  <h3>5. Can anyone audit the code?</h3>
+  <p>Open source is not automatically secure, but it makes claims checkable. When a vendor says "encrypted at rest" or "receipt photos never reach the server", open code turns marketing into a verifiable statement. Closed tools can be fine; they just require more trust with less evidence.</p>
+
+  <h3>6. If it touches my bank, is the access read-only?</h3>
+  <p>Open banking consents in the EU and UK are read-only by construction: an aggregator can list transactions but cannot move money. A tool that asks for your actual banking credentials, rather than a redirect to your bank's own consent screen, fails this question instantly. Also check that bank tokens are stored encrypted, not plaintext in a database column.</p>
+
+  <h2>The paste-into-chat baseline</h2>
+  <p>Here is the counterintuitive part: the popular "safe-feeling" habit of pasting a statement into a chat window is often the worst option. The full text of your statement enters conversation history, subject to retention, human review programs, and training defaults of whatever chat product you use. A structured tool that stores records in a database and returns computed totals actually exposes less: the model sees your question and a summary, not a scrolling wall of raw transactions.</p>
+  <p class="callout">Rule that survives every tool choice: account numbers, passwords, and government IDs never belong in any chat, with any vendor, under any setting. No budgeting question needs them.</p>
+
+  <h2>What we still cannot promise you</h2>
+  <p>Honesty section. No vendor, us included, can promise you zero breach risk; the honest claims are about blast radius (what a breach would expose) and recovery (how fast you can delete and leave). Beta software carries beta risk. And the June 2026 Journal of Financial Planning study showing AI advice varying by user demographics is a reminder that even with perfect data handling, the advice layer deserves human judgment. Safety is not a property you buy once; it is a posture.</p>
+
+  <h2>Do this before connecting anything</h2>
+  <ol>
+    <li>Run the six questions against your candidate tool. Written answers or code links, not vibes.</li>
+    <li>Test export and delete first, while your account is empty.</li>
+    <li>Enable MFA on the AI account itself. Per Kelley's warning, it is now a financial account.</li>
+    <li>Start with one month of data, not your full history, and see how the tool behaves.</li>
+  </ol>
+  <p>If you want our own answers to all six questions in one place, they are on the <a href="/#security">security section</a> of the homepage, with the code on GitHub to check them against.</p>
+
+  <p>Fear is not a privacy strategy, and neither is convenience. A checklist is both.</p>
+
+  <h2>Sources</h2>
+  <ul class="srcs">
+    <li><a href="https://therecord.media/experts-warn-of-privacy-cyber-risks-ai-finance" target="_blank" rel="noopener">The Record, May 18, 2026: Experts warn of privacy risks as AI firms connect to financial accounts</a></li>
+    <li><a href="https://news.stanford.edu/stories/2025/10/ai-chatbot-privacy-concerns-risks-research" target="_blank" rel="noopener">Stanford Report, October 2025: privacy risks of AI chatbot conversations</a></li>
+    <li><a href="https://stories.td.com/us/en/article/nearly-80-of-americans-use-ai-tools-but-most-still-want-humans-making-financial-decisions-td-survey-finds" target="_blank" rel="noopener">TD Bank survey, March 2026</a></li>
+    <li><a href="https://www.cnbc.com/2026/07/07/ai-personal-finance-advice.html" target="_blank" rel="noopener">CNBC, July 2026, on the Journal of Financial Planning study</a></li>
+  </ul>
+
+  <p class="fineprint">Last updated: July 20, 2026. Product names are trademarks of their respective owners. MyFinance MCP is an independent open-source project by Rteam.</p>
+</article>
+</main>
+
+<div class="final">
+  <div class="wrap">
+    <h2>Track money inside the AI you already use.</h2>
+    <p>Free and open source. It works with Claude, ChatGPT and any MCP client.</p>
+    <div class="cta-row center">
+      <a class="btn btn-solid" href="/#install">Quick install</a>
+      <a class="btn btn-ghost" href="https://github.com/alex-odoo/myfinance-mcp" target="_blank" rel="noopener">★ Star on GitHub</a>
+    </div>
+  </div>
+</div>
+
+<footer class="site">
+  <div class="wrap foot-inner">
+    <a href="/">Home</a>
+    <a href="/alternatives">Alternatives</a>
+    <a href="/blog">Blog</a>
+    <a href="https://github.com/alex-odoo/myfinance-mcp" target="_blank" rel="noopener">GitHub</a>
+    <a href="/#contact">Contact</a>
+    <a href="/privacy">Privacy &amp; Terms</a>
+    <span class="cr">Open source under MIT. Built by <a href="https://rteam.agency" target="_blank" rel="noopener">Rteam</a>.</span>
+  </div>
+</footer>
+
+</body>
+</html>
