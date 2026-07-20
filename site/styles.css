@@ -500,6 +500,14 @@ footer.site { padding: 36px 0 52px; font-size: 14px; color: var(--muted); border
 .post .dialog .a { align-self: flex-start; background: var(--accent-tint); color: var(--ink); border-bottom-left-radius: 4px; }
 .post .srcs { font-size: 13.5px; }
 .post .srcs li { font-size: 13.5px; }
+.post .dialog.anim .u, .post .dialog.anim .a { opacity: 0; transform: translateY(6px); transition: opacity .3s ease, transform .3s ease; }
+.post .dialog.anim .u.shown, .post .dialog.anim .a.shown { opacity: 1; transform: none; }
+.post .clipv { margin: 24px 0 8px; }
+.post .clipnote { font-size: 13.5px; color: var(--muted); margin-top: 10px; }
+.post .demo-tabs { margin: 20px 0; }
+.post .demo-tabs .tabs { margin-bottom: 16px; }
+.post .demo-tabs .panel { padding: 22px 24px; }
+.post .demo-tabs .dialog { margin: 12px 0; }
 
 /* ---------- demo video section ---------- */
 .video-shell {

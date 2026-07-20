@@ -85,6 +85,28 @@
   </ul>
   <p>The fix is boring and absolute: <strong>stable ids</strong>. Banks print a reference for every transaction; a correct import carries that reference on every row, making re-imports no-ops instead of disasters. This is the same idempotency idea YNAB formalized for CSV imports years ago, and any AI-era tool that skipped it has re-learned why it exists. For the manual-overlap case, the right behavior is a merge that keeps your category and note while attaching the bank's reference, not a delete.</p>
 
+  <p>See the difference yourself. Same June statement, dropped a second time by accident:</p>
+  <div class="demo-tabs" data-demo-tabs>
+    <div class="tabs" role="tablist" aria-label="Import behavior comparison">
+      <button class="tab" role="tab" aria-selected="true">Naive import</button>
+      <button class="tab" role="tab" aria-selected="false">With stable ids</button>
+    </div>
+    <div class="panel on" role="tabpanel">
+      <div class="dialog" data-noanim aria-label="Naive import result">
+        <span class="u">[drops revolut-june.pdf again] import this</span>
+        <span class="a">Imported 156 rows into Revolut EUR. June total is now -4,863.80 EUR.</span>
+      </div>
+      <p>No error, no warning, a confident summary. Every transaction now exists twice, June spending doubled, and every budget shows an overspend. You will discover this weeks later, and unpicking duplicates by hand is worse than the original Excel evening.</p>
+    </div>
+    <div class="panel" role="tabpanel">
+      <div class="dialog" data-noanim aria-label="Import with stable ids result">
+        <span class="u">[drops revolut-june.pdf again] import this</span>
+        <span class="a">Imported 0 of 156 rows: all 156 already exist (same bank reference). June total unchanged: -2,431.90 EUR.</span>
+      </div>
+      <p>The re-import is a no-op because every row carries the bank's own reference. Drop the file five times, nothing changes. This is the behavior to demand from any tool before trusting it with history.</p>
+    </div>
+  </div>
+
   <h2>What a good import looks like end to end</h2>
   <div class="dialog" aria-label="Example chat">
     <span class="u">[drops revolut-june.pdf] import this into my EUR account</span>
@@ -141,5 +163,6 @@
   </div>
 </footer>
 
+<script src="/blog.js" defer></script>
 </body>
 </html>
