@@ -139,7 +139,8 @@ export function registerFinanceTools(server: McpServer, userId: string): void {
     {
       title: "Ping",
       annotations: { readOnlyHint: true, openWorldHint: false },
-      description: "Health check for the MyFinance MCP connection.",
+      description:
+        "Health check for the MyFinance MCP connection. Returns the signed-in account email - call this when the user asks which account is connected.",
       inputSchema: {},
     },
     async () => {
@@ -1330,7 +1331,7 @@ export function registerFinanceTools(server: McpServer, userId: string): void {
     {
       title: "Get settings",
       annotations: { readOnlyHint: true, openWorldHint: false },
-      description: "Base currency and timezone.",
+      description: "Signed-in account email, base currency and timezone.",
       inputSchema: {},
     },
     async () => {

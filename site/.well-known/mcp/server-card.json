@@ -13,7 +13,7 @@
     {
       "name": "ping",
       "title": "Ping",
-      "description": "Health check for the MyFinance MCP connection.",
+      "description": "Health check for the MyFinance MCP connection. Returns the signed-in account email - call this when the user asks which account is connected.",
       "inputSchema": {
         "type": "object",
         "properties": {},
@@ -1016,7 +1016,7 @@
     {
       "name": "get_settings",
       "title": "Get settings",
-      "description": "Base currency and timezone.",
+      "description": "Signed-in account email, base currency and timezone.",
       "inputSchema": {
         "type": "object",
         "properties": {},
