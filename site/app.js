@@ -28,10 +28,10 @@
       '<div class="track"><div class="fill' + (warn ? " w" : "") + '" data-w="' + pct + '" style="--tw:' + pct + '%"></div></div>' +
       '<span class="amt">' + amt + " · " + pct + "%</span></div>";
   }
-  function acct(name, tag, val) {
+  function acct(name, tag, val, pos) {
     return '<div class="acct"><span class="an"><b>' + name + "</b>" +
       (tag ? '<span class="tag">' + tag + "</span>" : "") +
-      '</span><span class="av">' + val + "</span></div>";
+      '</span><span class="av' + (pos ? " pos" : "") + '">' + val + "</span></div>";
   }
   function renderBudgets() {
     var r = el("div", "render");
@@ -67,10 +67,23 @@
     return r;
   }
 
+  function renderSync() {
+    var r = el("div", "render");
+    r.innerHTML = "<h4>Revolut EUR · synced just now</h4>" +
+      acct("Salary", "new", "+2,050.00", true) +
+      acct("Bolt ride", "new", "-8.40") +
+      acct("Lidl", "merged", "-24.50") +
+      acct("Zara", "new", "-49.90");
+    return r;
+  }
+
   var scenarios = [
     { user: "Spent 24.50 eur on groceries at Lidl",
       ai: "Logged: 24.50 EUR, groceries. Here's where you are this month:",
       render: renderBudgets },
+    { user: "Sync my bank",
+      ai: "27 new transactions from Revolut. Duplicates skipped, your hand-logged Lidl entry merged, everything categorized:",
+      render: renderSync },
     { user: "How much did I spend on restaurants in June?",
       ai: "412 EUR across 18 visits, 14% of your June spending, up 6% from May.",
       render: renderSummary },
@@ -87,25 +100,27 @@
     });
   }
 
-  function staticDemo() {
-    var s = scenarios[0];
-    body.appendChild(el("div", "msg user", s.user));
-    body.appendChild(el("div", "msg ai", s.ai));
-    var r = s.render();
-    body.appendChild(r);
-    r.classList.add("show");
-    fillBars(r);
+  /* The chat accumulates like a real conversation and auto-scrolls; a full
+     loop ends with a soft fade-restart. Chip clicks interrupt whatever is
+     playing (seq token) and append the chosen scenario to the history. */
+  var seq = 0;
+
+  function scrollBottom() {
+    if (body) body.scrollTop = body.scrollHeight;
   }
 
-  function typeText(node, text, cb) {
+  function typeText(node, text, mySeq, cb) {
+    if (reduced) { node.textContent = text; if (cb) cb(); return; }
     var i = 0;
     var caret = el("span", "caret");
     node.appendChild(caret);
     (function tick() {
+      if (seq !== mySeq) { caret.remove(); return; }
       if (i < text.length) {
         caret.insertAdjacentText("beforebegin", text.charAt(i));
         i++;
-        setTimeout(tick, 24 + Math.random() * 30);
+        scrollBottom();
+        setTimeout(tick, 22 + Math.random() * 26);
       } else {
         caret.remove();
         if (cb) cb();
@@ -113,34 +128,64 @@
     })();
   }
 
-  function playScenario(idx) {
-    body.innerHTML = "";
+  function playScenario(idx, mySeq) {
     var s = scenarios[idx];
     var u = el("div", "msg user", "");
     body.appendChild(u);
-    typeText(u, s.user, function () {
+    scrollBottom();
+    typeText(u, s.user, mySeq, function () {
       setTimeout(function () {
+        if (seq !== mySeq) return;
         var dots = el("div", "msg ai", '<span class="typing-dots"><i></i><i></i><i></i></span>');
         body.appendChild(dots);
+        scrollBottom();
         setTimeout(function () {
           dots.remove();
+          if (seq !== mySeq) return;
           var a = el("div", "msg ai", "");
           body.appendChild(a);
-          typeText(a, s.ai, function () {
+          scrollBottom();
+          typeText(a, s.ai, mySeq, function () {
             var r = s.render();
             body.appendChild(r);
-            requestAnimationFrame(function () { r.classList.add("show"); });
+            requestAnimationFrame(function () { r.classList.add("show"); scrollBottom(); });
             fillBars(r);
-            setTimeout(function () { playScenario((idx + 1) % scenarios.length); }, 5200);
+            setTimeout(scrollBottom, 400);
+            if (reduced) return;
+            setTimeout(function () {
+              if (seq !== mySeq) return;
+              var next = (idx + 1) % scenarios.length;
+              if (next === 0) restartLoop(mySeq); else playScenario(next, mySeq);
+            }, 5200);
           });
-        }, 900);
-      }, 350);
+        }, reduced ? 0 : 900);
+      }, reduced ? 0 : 350);
     });
   }
 
-  if (body) {
-    if (reduced) { staticDemo(); } else { playScenario(0); }
+  function restartLoop(mySeq) {
+    body.classList.add("fade");
+    setTimeout(function () {
+      body.classList.remove("fade");
+      if (seq !== mySeq) return;
+      body.innerHTML = "";
+      playScenario(0, mySeq);
+    }, 450);
   }
+
+  var chipsWrap = document.getElementById("demoChips");
+  if (body && chipsWrap) {
+    chipsWrap.querySelectorAll("button").forEach(function (b) {
+      b.addEventListener("click", function () {
+        seq++;
+        /* keep the history from growing unbounded on rapid clicks */
+        while (body.children.length > 9) body.removeChild(body.firstChild);
+        playScenario(parseInt(b.getAttribute("data-s"), 10), seq);
+      });
+    });
+  }
+
+  if (body) playScenario(0, seq);
 
   /* ---------- install tabs ---------- */
   var tabs = document.querySelectorAll(".tab");
