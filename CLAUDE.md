@@ -41,6 +41,13 @@ bun run lint
 
 Password hash: `bun -e "console.log(await Bun.password.hash(process.argv[1]))" 'pw'`
 
+## Database
+
+Schema changes go through `prisma db push`. After any push that adds a table,
+re-run `psql "$DATABASE_URL" -f prisma/rls.sql` - Prisma creates tables with
+RLS off, and a public-schema table without RLS is exposed through the Supabase
+Data API to anyone with the anon key (see the header of that file).
+
 ## Design rules (simplicity contract)
 
 - **Zero setup, no forms, no category picking.** Natural language / photo IS the input; category is a fixed enum the server enforces.
