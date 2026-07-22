@@ -17,6 +17,15 @@ echo "==> Local gate: typecheck + e2e"
 bun run build
 bun run e2e >/dev/null && echo "    e2e green"
 
+echo "==> DB gate: Row-Level Security on every public table"
+# prisma db push creates new tables with RLS OFF; without RLS the Supabase Data
+# API exposes them to anyone with the anon key. rls.sql is idempotent.
+DATABASE_URL=$(grep -E '^DATABASE_URL=' .env | cut -d= -f2- | tr -d '"')
+psql "$DATABASE_URL" -q -f prisma/rls.sql
+UNPROTECTED=$(psql "$DATABASE_URL" -tA -c "SELECT count(*) FROM pg_tables WHERE schemaname='public' AND NOT rowsecurity;")
+[ "$UNPROTECTED" = "0" ] || { echo "FATAL: $UNPROTECTED public table(s) without RLS"; exit 1; }
+echo "    RLS green (all public tables)"
+
 echo "==> Commit + push"
 git add -A
 git diff --cached --quiet || git commit -m "$MSG"
