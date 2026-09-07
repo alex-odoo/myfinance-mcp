@@ -650,6 +650,43 @@ async function main(): Promise<void> {
       JSON.stringify(zaraAfter.transactions[0])
     );
 
+    // 12f. A hand-logged transfer between two OTHER accounts is not the twin of a
+    // statement row on a third account (Wise -> Mono EUR -> Mono UAH hops, 2026-09-07).
+    await call("create_account", { name: "Twin Wise", type: "bank", currency: "RON" });
+    await call("log_transfer", { amount: 77.77, from_account: "Revolut", to_account: "IBKR", received_amount: 15, received_currency: "USD", note: "hop-elsewhere" });
+    const impHop = payload(
+      await call("import_transactions", {
+        account: "Twin Wise",
+        transactions: [{ date: today(), amount: -77.77, currency: "RON", type: "transfer", external_id: "TRANSFER-hop-1" }],
+      })
+    );
+    ok(
+      "import: transfer between two other accounts is NOT merged as a twin",
+      impHop.imported === 1 && impHop.manual_twins_merged === 0,
+      JSON.stringify(impHop)
+    );
+    const hopRow = payload(await call("get_transactions", { query: "hop-elsewhere" })).transactions?.[0];
+    ok("import: the other transfer stays on its own account", hopRow?.account === "Revolut", JSON.stringify(hopRow));
+    // Receiving leg: statement of the DESTINATION account confirms a hand-logged transfer
+    // into it - the row keeps its source account, only the counter key is stamped.
+    await call("log_transfer", { amount: 55.55, from_account: "Twin Wise", to_account: "Revolut", note: "twin-leg-in" });
+    const impLeg = payload(
+      await call("import_transactions", {
+        account: "Revolut",
+        transactions: [{ date: today(), amount: 55.55, currency: "RON", external_id: "TOPUP-leg-1" }],
+      })
+    );
+    ok("import: receiving leg merges into the hand-logged transfer", impLeg.manual_twins_merged === 1 && impLeg.imported === 0, JSON.stringify(impLeg));
+    const legRow = payload(await call("get_transactions", { query: "twin-leg-in" })).transactions?.[0];
+    ok("import: merged receiving leg is not flipped onto its destination", legRow?.account === "Twin Wise", JSON.stringify(legRow));
+    const impLegAgain = payload(
+      await call("import_transactions", {
+        account: "Revolut",
+        transactions: [{ date: today(), amount: 55.55, currency: "RON", external_id: "TOPUP-leg-1" }],
+      })
+    );
+    ok("import: receiving leg re-import is skipped by counter key", impLegAgain.imported === 0 && impLegAgain.skipped?.[0]?.reason === "merged_transfer_leg", JSON.stringify(impLegAgain));
+
     // 12g. Dedup precision: recurring merchants, same-day twins, external_id authority
     const lime = payload(
       await call("import_transactions", {

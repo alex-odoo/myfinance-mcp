@@ -757,6 +757,10 @@ export function registerFinanceTools(server: McpServer, userId: string): void {
         // the dedup key. User-entered category/note/date stay untouched.
         const manualTwin = candidates.find((c) => {
           if (c.source === "bank") return false;
+          // A hand-logged transfer between two OTHER accounts is a different money
+          // movement even at the same amount and day (Wise -> Mono EUR -> Mono UAH
+          // hops): only a transfer that touches this account can be the twin.
+          if (c.type === "transfer" && c.accountId !== acc.id && c.counterAccountId !== acc.id) return false;
           const cm = normalize(c.merchant);
           if (rm && cm) return cm.includes(rm) || rm.includes(cm);
           // no merchant info to compare: only exact same day counts as duplicate (conservative)
@@ -764,10 +768,17 @@ export function registerFinanceTools(server: McpServer, userId: string): void {
         });
         if (manualTwin) {
           usedCandidates.add(manualTwin.id);
+          // The statement row is the RECEIVING leg of a hand-logged transfer into this
+          // account: keep the row where it is and stamp the key on the counter side,
+          // otherwise the transfer would be flipped onto its own destination.
+          const twinIsCounterLeg =
+            manualTwin.type === "transfer" && manualTwin.counterAccountId === acc.id && manualTwin.accountId !== acc.id;
           if (!dryRun) {
             await db.transaction.update({
               where: { id: manualTwin.id },
-              data: { accountId: acc.id, externalId, entity: row.entity ?? acc.entity },
+              data: twinIsCounterLeg
+                ? { counterExternalId: externalId }
+                : { accountId: acc.id, externalId, entity: row.entity ?? acc.entity },
             });
           }
           merged++;
