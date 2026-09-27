@@ -26,7 +26,11 @@ export interface TokenRecord {
 export class OAuthStore {
   async getClient(clientId: string): Promise<OAuthClientInformationFull | undefined> {
     const row = await db.oauthClient.findUnique({ where: { clientId } });
-    return row ? (row.data as unknown as OAuthClientInformationFull) : undefined;
+    if (!row) return undefined;
+    const client = row.data as unknown as OAuthClientInformationFull;
+    // Clients registered before secrets stopped expiring still carry a 30-day
+    // client_secret_expires_at; ignore it so their connectors keep refreshing.
+    return client.client_secret ? { ...client, client_secret_expires_at: 0 } : client;
   }
 
   async saveClient(client: OAuthClientInformationFull): Promise<void> {

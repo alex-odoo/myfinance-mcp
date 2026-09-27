@@ -55,6 +55,11 @@ app.use(
     resourceServerUrl: new URL(`${config.baseUrl}/mcp`),
     resourceName: "MyFinance MCP",
     scopesSupported: ["finance"],
+    // The SDK default expires DCR client secrets after 30 days. claude.ai
+    // registers once per connector and never re-registers, so day 31 its
+    // refresh gets invalid_client and the connector dies (2026-09-24).
+    // 0 = never expires (RFC 7591); legacy rows are normalized in OAuthStore.
+    clientRegistrationOptions: { clientSecretExpirySeconds: 0 },
   })
 );
 app.use(provider.loginRouter());

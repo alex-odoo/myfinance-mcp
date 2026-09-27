@@ -316,6 +316,48 @@ async function main(): Promise<void> {
   const client: any = await reg.json();
   ok("dynamic registration", reg.status === 201 && !!client.client_id, JSON.stringify(client));
 
+  // 2b. Confidential clients (claude.ai registers client_secret_post) must keep
+  // a working secret forever: the SDK's 30-day default killed every claude.ai
+  // connector on day 31 (2026-09-24). Spawn mode only: writes to the DB.
+  if (!externalBase) {
+    const confRes = await fetch(asMeta.registration_endpoint, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        client_name: "Gate A e2e confidential",
+        redirect_uris: [REDIRECT_URI],
+        grant_types: ["authorization_code", "refresh_token"],
+        response_types: ["code"],
+        token_endpoint_auth_method: "client_secret_post",
+      }),
+    });
+    const conf: any = await confRes.json();
+    ok(
+      "confidential client secret never expires",
+      confRes.status === 201 && !!conf.client_secret && conf.client_secret_expires_at === 0,
+      JSON.stringify({ status: confRes.status, expires: conf.client_secret_expires_at })
+    );
+    // Legacy row: stamped with an expiry that has passed, as pre-fix rows are
+    const { db: cdb } = await import("../src/db");
+    await cdb.oauthClient.update({
+      where: { clientId: conf.client_id },
+      data: { data: { ...conf, client_secret_expires_at: Math.floor(Date.now() / 1000) - 60 } },
+    });
+    const legacyRes = await fetch(asMeta.token_endpoint, {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        grant_type: "refresh_token",
+        refresh_token: "e2e-not-a-real-token",
+        client_id: conf.client_id,
+        client_secret: conf.client_secret,
+      }),
+    });
+    const legacy: any = await legacyRes.json();
+    ok("legacy expired secret still passes client auth", legacy.error === "invalid_grant", JSON.stringify(legacy));
+    await cdb.oauthClient.delete({ where: { clientId: conf.client_id } });
+  }
+
   // 3. Authorize -> login form
   const verifier = b64url(randomBytes(48));
   const challenge = b64url(createHash("sha256").update(verifier).digest());
