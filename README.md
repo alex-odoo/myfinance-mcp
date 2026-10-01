@@ -16,7 +16,7 @@ https://myfinance-mcp.com/mcp
 
 **On ChatGPT:** Settings → Apps → Create app → paste the URL → choose OAuth → Create.
 
-On first connect you sign in with Google or register with an email and password. Your data persists across reconnections.
+On first connect you sign in with your Google account; that first sign-in creates your MyFinance account. Your data persists across reconnections.
 
 ## Why
 
