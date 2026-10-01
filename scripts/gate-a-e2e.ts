@@ -61,6 +61,8 @@ async function mcpCall(token: string, body: unknown): Promise<any> {
 let serverProc: Subprocess | null = null;
 /** OAuth clients this run registered; spawn mode deletes them on exit. */
 const createdClients: string[] = [];
+/** Spawn-mode test user, to prove delete_all_data leaves nothing keyed to it. */
+let testUserId = "";
 let zenStub: { stop: (closeActiveConnections?: boolean) => void } | null = null;
 let ebStub: { stop: (closeActiveConnections?: boolean) => void } | null = null;
 
@@ -1243,6 +1245,7 @@ async function main(): Promise<void> {
     // Orphan from an "interrupted" earlier sync: created but never mapped
     const { db: odb } = await import("../src/db");
     const testUser = await odb.user.findFirstOrThrow({ where: { email: EMAIL } });
+    testUserId = testUser.id;
     await odb.account.create({
       data: { userId: testUser.id, name: "Orphan Savings", type: "bank", provider: "enablebanking", externalId: "eb-acc-2", currency: "EUR" },
     });
@@ -1665,6 +1668,15 @@ async function main(): Promise<void> {
     ok("delete_all_data wipes test user", wipe.deleted === true, JSON.stringify(wipeRes.json));
     const afterWipe = await mcpCall(refreshed.access_token, { jsonrpc: "2.0", id: 6, method: "tools/call", params: { name: "ping", arguments: {} } });
     ok("wiped user token rejected", afterWipe.status === 401);
+    // Events have no relation to users, so nothing cascades: the wipe deletes
+    // them itself, and its own tool_call is logged without the user id.
+    const { db: wdb } = await import("../src/db");
+    let leftover = -1;
+    for (let i = 0; i < 10 && leftover !== 0; i++) {
+      await Bun.sleep(100);
+      leftover = await wdb.event.count({ where: { userId: testUserId } });
+    }
+    ok("delete_all_data leaves no events of the user", !!testUserId && leftover === 0, `found ${leftover}`);
   }
 
   console.log(`\ne2e PASSED: ${passed} checks green.`);

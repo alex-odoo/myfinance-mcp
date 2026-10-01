@@ -75,13 +75,13 @@ Four tools return an interactive dashboard (`ui://myfinancemcp/dashboard`) rende
 ## Security & Privacy
 
 - Receipt photos are parsed by YOUR AI client; images never reach this server.
-- Amounts, merchants and notes are never written to server logs (blind logs); telemetry stores event types and ids only.
+- Amounts, merchants and notes are never written to server logs (blind logs); usage events keep tool names, timings, error classes and coded argument values, keyed to the account and deleted with it.
 - OAuth 2.1 with PKCE, rotating refresh tokens, rate-limited sign-in.
 - All 27 tools carry MCP annotations (read-only and destructive ops flagged, connector tools marked open-world), so clients can gate confirmations correctly.
 - Bank access is strictly read-only: open banking consent via Enable Banking (the bank authenticates the user; we never see credentials), ZenMoney via the user's own API token. Session ids and tokens are stored AES-256-GCM encrypted.
 - CSV export and instant full deletion are tools, not support tickets.
 - Hosted instance: EU data residency (Supabase, eu-central-1), TLS to the database with a pinned CA. Every query is scoped to your account by the server; the database's own API is closed to everyone (row-level security, deny-all).
-- 179 automated end-to-end checks (full OAuth flow for public and confidential clients, every tool, import dedup semantics, GDPR deletion) run as a hard deploy gate; CI runs lint and typecheck on every push.
+- 206 automated end-to-end checks (full OAuth flow for public and confidential clients incl. browser binding and audience checks, every tool, import dedup semantics, GDPR deletion) run as a hard deploy gate; CI runs lint and typecheck on every push.
 
 See [SECURITY.md](SECURITY.md) for the disclosure policy.
 
@@ -152,7 +152,7 @@ bun run e2e            # end-to-end suite (spawns its own server; WRITES to the 
 bun run lint
 ```
 
-The e2e suite (179 checks) covers the full OAuth flow (discovery, dynamic registration, PKCE, refresh rotation, revocation; public and confidential clients), every tool, statement-import dedup semantics, ZenMoney sync against a stubbed Diff API, and GDPR deletion.
+The e2e suite (206 checks) covers the full OAuth flow (discovery, dynamic registration, PKCE, refresh rotation, revocation; public and confidential clients), every tool, statement-import dedup semantics, ZenMoney sync against a stubbed Diff API, and GDPR deletion.
 
 ## API Endpoints
 
