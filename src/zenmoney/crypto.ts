@@ -17,10 +17,16 @@ export function encryptToken(plain: string): string {
   return `${iv.toString("base64")}.${ct.toString("base64")}.${cipher.getAuthTag().toString("base64")}`;
 }
 
+// encryptToken always writes the full 16-byte GCM tag. Without a pinned length
+// GCM also verifies a truncated tag (4 bytes = 2^-32 forgery odds per try).
+const TAG_BYTES = 16;
+
 export function decryptToken(enc: string): string {
   const [iv, ct, tag] = enc.split(".");
   if (!iv || !ct || !tag) throw new Error("Stored token is malformed. Reconnect with connect_zenmoney.");
-  const decipher = createDecipheriv("aes-256-gcm", key(), Buffer.from(iv, "base64"));
-  decipher.setAuthTag(Buffer.from(tag, "base64"));
+  const tagBuf = Buffer.from(tag, "base64");
+  if (tagBuf.length !== TAG_BYTES) throw new Error("Stored token is malformed. Reconnect with connect_zenmoney.");
+  const decipher = createDecipheriv("aes-256-gcm", key(), Buffer.from(iv, "base64"), { authTagLength: TAG_BYTES });
+  decipher.setAuthTag(tagBuf);
   return Buffer.concat([decipher.update(Buffer.from(ct, "base64")), decipher.final()]).toString("utf8");
 }
