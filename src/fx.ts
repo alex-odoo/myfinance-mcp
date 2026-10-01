@@ -47,42 +47,56 @@ async function ratesInDb(date: Date): Promise<Map<string, number>> {
   return new Map(rows.map((r) => [r.quote, Number(r.rate)]));
 }
 
-/** Fetch + cache rates for a date. Returns the map (may be empty if all sources down). */
-async function ensureRates(date: Date): Promise<Map<string, number>> {
-  const existing = await ratesInDb(date);
-  if (existing.size > 0) return existing;
+const covers = (rates: Map<string, number>, currencies: string[]) =>
+  currencies.every((c) => c === "EUR" || rates.has(c));
+
+/**
+ * Fetch + cache what a date is missing for `needed`. Each source fills its
+ * own part of the day: a day where one source answered must not freeze
+ * without the other's (2026-10-01: NBU answered, ECB did not, the day held
+ * UAH only, and every USD/GBP/AED conversion that day failed as "Unknown
+ * currency"). USD present = the ECB set was fetched, so a currency still
+ * missing then is one ECB does not publish; no refetch for it.
+ */
+async function ensureRates(date: Date, needed: string[]): Promise<Map<string, number>> {
+  const cached = await ratesInDb(date);
+  const missing = needed.filter((c) => c !== "EUR" && !cached.has(c));
+  if (missing.length === 0) return cached;
 
   const key = dateKey(date);
-  const rates: Record<string, number> = {};
+  const fetched: Record<string, number> = {};
+  if (missing.some((c) => c !== "UAH") && !cached.has("USD")) {
+    const ecb = await fetchFrankfurter(key);
+    if (ecb) Object.assign(fetched, ecb);
+  }
+  if (missing.includes("UAH")) {
+    const uahPerEur = await fetchNbuUahPerEur(key);
+    if (uahPerEur) fetched.UAH = uahPerEur;
+  }
+  const usd = fetched.USD ?? cached.get("USD");
+  if (usd && !cached.has("AED")) fetched.AED ??= usd * AED_PER_USD;
 
-  const ecb = await fetchFrankfurter(key);
-  if (ecb) Object.assign(rates, ecb);
-
-  const uahPerEur = await fetchNbuUahPerEur(key);
-  if (uahPerEur) rates.UAH = uahPerEur;
-
-  if (rates.USD && !rates.AED) rates.AED = rates.USD * AED_PER_USD;
-
-  if (Object.keys(rates).length === 0) return existing; // all sources down
-
-  await db.fxRate.createMany({
-    data: Object.entries(rates).map(([quote, rate]) => ({ date, quote, rate })),
-    skipDuplicates: true,
-  });
-  return new Map(Object.entries(rates));
+  const fresh = Object.entries(fetched).filter(([quote]) => !cached.has(quote));
+  if (fresh.length > 0) {
+    await db.fxRate.createMany({
+      data: fresh.map(([quote, rate]) => ({ date, quote, rate })),
+      skipDuplicates: true,
+    });
+  }
+  return new Map([...cached, ...fresh]);
 }
 
-/** Rates for date with fallback to the nearest earlier cached/fetchable day. */
-async function ratesWithFallback(date: Date): Promise<{ rates: Map<string, number>; usedDate: Date }> {
-  const direct = await ensureRates(date);
-  if (direct.size > 0) return { rates: direct, usedDate: date };
+/** Rates covering `needed` for date, else the nearest earlier cached day that covers them. */
+async function ratesWithFallback(date: Date, needed: string[]): Promise<Map<string, number>> {
+  const direct = await ensureRates(date, needed);
+  if (covers(direct, needed)) return direct;
 
   for (let i = 1; i <= MAX_FALLBACK_DAYS; i++) {
-    const earlier = new Date(date.getTime() - i * 86_400_000);
-    const cached = await ratesInDb(earlier);
-    if (cached.size > 0) return { rates: cached, usedDate: earlier };
+    const cached = await ratesInDb(new Date(date.getTime() - i * 86_400_000));
+    if (covers(cached, needed)) return cached;
   }
-  throw new Error("FX rates unavailable: all sources down and no cached rates within 7 days");
+  if (direct.size === 0) throw new Error("FX rates unavailable: all sources down and no cached rates within 7 days");
+  return direct; // the day is fetched but no source publishes the currency: eurPer names it
 }
 
 function eurPer(rates: Map<string, number>, currency: string): number {
@@ -104,7 +118,7 @@ export async function convert(
   date: Date
 ): Promise<{ converted: number; rate: number }> {
   if (from === to) return { converted: round2(amount), rate: 1 };
-  const { rates } = await ratesWithFallback(date);
+  const rates = await ratesWithFallback(date, [from, to]);
   const rate = eurPer(rates, from) / eurPer(rates, to);
   return { converted: round2(amount * rate), rate };
 }
