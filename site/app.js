@@ -203,7 +203,7 @@
   if (mail) {
     mail.addEventListener("click", function (ev) {
       ev.preventDefault();
-      var addr = ["alex", "rteam.top"].join("@");
+      var addr = ["alex", "a-systems.pro"].join("@");
       mail.textContent = addr;
       mail.href = "mailto:" + addr;
     }, { once: true });

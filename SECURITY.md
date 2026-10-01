@@ -4,7 +4,7 @@ MyFinance MCP handles personal financial data, so security reports get priority 
 
 ## Reporting a vulnerability
 
-Email **alex@rteam.top** with the details. Please include steps to reproduce and the potential impact. You will get a response within 48 hours.
+Email **alex@a-systems.pro** with the details. Please include steps to reproduce and the potential impact. You will get a response within 48 hours.
 
 Please do NOT open a public GitHub issue for security problems, and do not test against the hosted instance with other users' data.
 
