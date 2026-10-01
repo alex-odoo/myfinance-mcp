@@ -85,13 +85,19 @@ const MCC_MAP: Array<[test: (mcc: number) => boolean, category: string]> = [
   [(m) => m === 8211 || m === 8220 || m === 8299 || m === 5942, "education"],
   [(m) => m === 7230 || m === 7298 || m === 7997, "personal_care"],
   [(m) => m === 4814 || m === 4899 || m === 4900, "utilities"],
-  [(m) => m === 6012 || m === 6051, "fees"],
 ];
+
+// Money movement, not spending: wires/money orders, cash disbursement, ATM,
+// card-to-card and loan repayments (6012), quasi-cash such as crypto or
+// e-wallet top-ups (6051), stored-value loads. No category guess ("other"):
+// a 2,000 EUR top-up must not inflate "fees".
+const MONEY_MOVEMENT_MCC = new Set([4829, 6010, 6011, 6012, 6051, 6540]);
 
 const normalize = (s: string) => s.toLowerCase().replace(/[^\p{L}\p{N}]/gu, "");
 
 /** MCC -> category lookup, shared by all bank connectors. */
 export function mccCategory(mcc: number): string | undefined {
+  if (MONEY_MOVEMENT_MCC.has(mcc)) return undefined;
   for (const [test, category] of MCC_MAP) if (test(mcc)) return category;
   return undefined;
 }
