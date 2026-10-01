@@ -69,6 +69,12 @@ rsync -az --delete \
   --exclude '.git' --exclude 'state-e2e' --filter=':- .gitignore' \
   ./ "$SERVER:$REMOTE_DIR/"
 
+# nginx right after rsync, before the long image build: rsync just rewrote
+# files nginx may still include from the deploy dir, and anything that reloads
+# nginx on this shared box mid-build must find a config that tests clean.
+echo "==> Sync nginx configs (tested before going live)"
+remote "bash $REMOTE_DIR/deploy/remote-nginx-sync.sh"
+
 echo "==> Rebuild + restart container"
 remote "set -e
   cd $REMOTE_DIR
@@ -77,9 +83,6 @@ remote "set -e
   docker compose build --quiet --build-arg GIT_SHA=$SHA
   docker compose up -d
 "
-
-echo "==> Sync nginx configs (tested before going live)"
-remote "bash $REMOTE_DIR/deploy/remote-nginx-sync.sh"
 
 echo "==> Health check (container must serve $SHA)"
 # Boot runs DB steps before listening, so poll; a healthy OLD container (failed

@@ -1466,7 +1466,7 @@ async function main(): Promise<void> {
     const mDst = mAccs.accounts.find((a: any) => a.name === "Merge Dst");
     ok("merge counter rewrite + balance", mDst?.balance === 64, JSON.stringify(mDst));
     // 12r. Whole-repo review fixes (2026-10-01): each check pins a bug the
-    // review reproduced; ids refer to specs/review-2026-10-01.md.
+    // review reproduced (finding ids of that review).
     type Rec = { id: string; amount: number; name: string; account: string; budget: string };
     // TR-7: an impossible date is refused, not rolled into the next month
     ok("impossible date refused", isErr(await call("log_expense", { amount: 1, category: "other", date: "2026-09-31" })));
