@@ -76,12 +76,12 @@ Four tools return an interactive dashboard (`ui://myfinancemcp/dashboard`) rende
 
 - Receipt photos are parsed by YOUR AI client; images never reach this server.
 - Amounts, merchants and notes are never written to server logs (blind logs); telemetry stores event types and ids only.
-- OAuth 2.1 with PKCE, encrypted tokens, rate-limited sign-in.
+- OAuth 2.1 with PKCE, rotating refresh tokens, rate-limited sign-in.
 - All 27 tools carry MCP annotations (read-only and destructive ops flagged, connector tools marked open-world), so clients can gate confirmations correctly.
 - Bank access is strictly read-only: open banking consent via Enable Banking (the bank authenticates the user; we never see credentials), ZenMoney via the user's own API token. Session ids and tokens are stored AES-256-GCM encrypted.
 - CSV export and instant full deletion are tools, not support tickets.
 - Hosted instance: EU data residency, row-level security keyed to your account.
-- 154 automated end-to-end checks (full OAuth flow, every tool, import dedup semantics, GDPR deletion) run in CI and as a hard deploy gate.
+- 179 automated end-to-end checks (full OAuth flow for public and confidential clients, every tool, import dedup semantics, GDPR deletion) run as a hard deploy gate; CI runs lint and typecheck on every push.
 
 See [SECURITY.md](SECURITY.md) for the disclosure policy.
 
@@ -140,7 +140,7 @@ bun run e2e            # self-contained end-to-end suite (spawns its own server)
 bun run lint
 ```
 
-The e2e suite (154 checks) covers the full OAuth flow (discovery, dynamic registration, PKCE, refresh rotation), every tool, statement-import dedup semantics, ZenMoney sync against a stubbed Diff API, and GDPR deletion.
+The e2e suite (179 checks) covers the full OAuth flow (discovery, dynamic registration, PKCE, refresh rotation, revocation; public and confidential clients), every tool, statement-import dedup semantics, ZenMoney sync against a stubbed Diff API, and GDPR deletion.
 
 ## API Endpoints
 

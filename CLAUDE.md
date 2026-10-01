@@ -24,7 +24,8 @@ DATA and the MATH; the AI client owns the ADVICE.
 ```
 
 One-way Mac -> server: local `bun run build` + `bun run e2e` gate, commit +
-push `main`, rsync, `docker compose build && up -d`, nginx sync, health check.
+push `main`, rsync, `docker compose build && up -d`, nginx sync, health check
+(`/health` must report the deployed commit). Every step aborts the deploy on failure.
 **Never edit code on the box.** Secrets live in `app.env` on the server
 (chmod 600) - not in repo, not rsynced.
 

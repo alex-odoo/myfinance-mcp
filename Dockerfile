@@ -12,6 +12,11 @@ RUN bunx prisma generate
 
 COPY src ./src
 
+# Commit being deployed (deploy.sh passes it); /health reports it. Last
+# layer, so a new sha never invalidates the install/generate cache.
+ARG GIT_SHA=dev
+ENV GIT_SHA=$GIT_SHA
+
 USER bun
 
 EXPOSE 8788

@@ -88,7 +88,7 @@ function recordResponse(
 // High-volume telemetry types get the 90d retention. Product milestones
 // (bank_imported, bulk_deleted, account_deleted) are kept forever: they are
 // low-volume and feed the public lifetime counters on the landing (/api/stats).
-const PRUNED_EVENT_TYPES = ["tool_call", "client_init", "logged", "summary_run"];
+const PRUNED_EVENT_TYPES = ["tool_call", "client_init", "logged", "summary_run", "oauth_error"];
 
 export async function pruneOldEvents(): Promise<void> {
   await db.event

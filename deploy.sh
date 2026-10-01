@@ -15,7 +15,10 @@ export PATH="$HOME/homebrew/bin:$PATH"
 
 echo "==> Local gate: typecheck + e2e"
 bun run build
-bun run e2e >/dev/null && echo "    e2e green"
+# Never `cmd && echo ok` for a gate: set -e ignores a failure on the left of
+# &&, so a red e2e used to fall through to commit, push and deploy.
+bun run e2e >/dev/null || { echo "FATAL: e2e failed, nothing deployed" >&2; exit 1; }
+echo "    e2e green"
 
 echo "==> DB gate: Row-Level Security on every public table"
 # prisma db push creates new tables with RLS OFF; without RLS the Supabase Data
@@ -29,7 +32,12 @@ echo "    RLS green (all public tables)"
 echo "==> Commit + push"
 git add -A
 git diff --cached --quiet || git commit -m "$MSG"
-git remote get-url origin >/dev/null 2>&1 && git push origin main || echo "    (no origin remote yet, skipping push)"
+if git remote get-url origin >/dev/null 2>&1; then
+  git push origin main # a rejected push stops the deploy: prod never runs unpushed code
+else
+  echo "    (no origin remote yet, skipping push)"
+fi
+SHA=$(git rev-parse --short=12 HEAD)
 
 echo "==> Rsync code to $SERVER:$REMOTE_DIR"
 rsync -az --delete \
@@ -42,7 +50,7 @@ echo "==> Rebuild + restart container"
 ssh -i "$SSH_KEY" "$SERVER" "set -e
   cd $REMOTE_DIR
   test -f app.env || { echo 'FATAL: $REMOTE_DIR/app.env missing (bootstrap first)'; exit 1; }
-  docker compose build --quiet
+  docker compose build --quiet --build-arg GIT_SHA=$SHA
   docker compose up -d
 "
 
@@ -101,9 +109,20 @@ PY
   fi
 "
 
-echo "==> Health check"
-sleep 2
-ssh -i "$SSH_KEY" "$SERVER" "curl -sf http://127.0.0.1:8788/health" && echo "    container healthy"
+echo "==> Health check (container must serve $SHA)"
+# Boot runs DB steps before listening, so poll; a healthy OLD container (failed
+# recreate) must not pass, hence the commit match, not just a 200.
+healthy=0
+for _ in $(seq 1 20); do
+  body=$(ssh -i "$SSH_KEY" "$SERVER" "curl -sf http://127.0.0.1:8788/health" 2>/dev/null || true)
+  if [[ "$body" == *"\"commit\":\"$SHA\""* ]]; then
+    healthy=1
+    break
+  fi
+  sleep 3
+done
+[ "$healthy" = 1 ] || { echo "FATAL: container not serving $SHA after 60s (ssh $SERVER docker logs myfinance-mcp)" >&2; exit 1; }
+echo "    container healthy, serving $SHA"
 for d in "$DOMAIN" "$LEGACY_DOMAIN"; do
   if curl -sf --max-time 10 "https://$d/health" >/dev/null 2>&1; then
     echo "    https://$d healthy"

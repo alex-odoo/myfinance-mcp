@@ -3,7 +3,7 @@ import { mcpAuthRouter } from "@modelcontextprotocol/sdk/server/auth/router.js";
 import { requireBearerAuth } from "@modelcontextprotocol/sdk/server/auth/middleware/bearerAuth.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { config, assertConfig } from "./config";
-import { db } from "./db";
+import { db, logEvent } from "./db";
 import { OAuthStore } from "./oauth/store";
 import { FinanceOAuthProvider } from "./oauth/provider";
 import { bootstrapUser } from "./users";
@@ -48,6 +48,36 @@ const app = express();
 app.set("trust proxy", 1);
 app.use(express.json({ limit: "1mb" }));
 
+// The SDK answers OAuth endpoint failures itself (no next(err)), so without
+// this a refused client leaves no trace: in Sept 2026 every claude.ai
+// connector got invalid_client for days and nothing on our side showed it.
+// invalid_grant is routine churn (rotated or expired refresh tokens) and goes
+// to telemetry only. Error codes and client ids only, never secrets or tokens.
+app.use(["/token", "/revoke", "/register"], (req, res, next) => {
+  const endpoint = req.baseUrl; // mount path; req.path is "/" here
+  const json = res.json.bind(res);
+  res.json = (body: unknown) => {
+    if (res.statusCode >= 400) {
+      const { error, error_description: desc } = (body ?? {}) as { error?: unknown; error_description?: unknown };
+      // Parsed by the SDK's own urlencoded parser by the time it responds.
+      const clientId = (req.body as { client_id?: unknown } | undefined)?.client_id;
+      const meta = {
+        endpoint,
+        status: res.statusCode,
+        error: typeof error === "string" ? error : "unknown",
+        desc: typeof desc === "string" ? desc.slice(0, 160) : null,
+        client_id: typeof clientId === "string" ? clientId.slice(0, 64) : null,
+      };
+      logEvent("oauth_error", undefined, meta);
+      if (meta.error !== "invalid_grant") {
+        console.error(`[oauth] ${meta.endpoint} ${meta.status} ${meta.error}: ${meta.desc ?? ""} (client ${meta.client_id ?? "-"})`);
+      }
+    }
+    return json(body);
+  };
+  next();
+});
+
 app.use(
   mcpAuthRouter({
     provider,
@@ -58,7 +88,7 @@ app.use(
     // The SDK default expires DCR client secrets after 30 days. claude.ai
     // registers once per connector and never re-registers, so day 31 its
     // refresh gets invalid_client and the connector dies (2026-09-24).
-    // 0 = never expires (RFC 7591); legacy rows are normalized in OAuthStore.
+    // 0 = never expires (RFC 7591); older rows: see OAuthStore.getClient.
     clientRegistrationOptions: { clientSecretExpirySeconds: 0 },
   })
 );
@@ -110,7 +140,7 @@ app.get("/mcp", bearerAuth, methodNotAllowed);
 app.delete("/mcp", bearerAuth, methodNotAllowed);
 
 app.get("/health", (_req, res) => {
-  res.json({ ok: true, server: SERVER_NAME, version: SERVER_VERSION });
+  res.json({ ok: true, server: SERVER_NAME, version: SERVER_VERSION, commit: config.gitSha });
 });
 
 // Public aggregate counters for the landing stats section.

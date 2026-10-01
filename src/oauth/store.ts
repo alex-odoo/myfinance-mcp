@@ -20,6 +20,23 @@ export interface TokenRecord {
 }
 
 /**
+ * Until 2026-09-27 the SDK stamped every DCR secret with a 30-day expiry;
+ * claude.ai never re-registers, so those connectors died on day 31. A row
+ * carrying exactly that default stamp is treated as never expiring. Any other
+ * stored expiry is enforced by the SDK, which is how a leaked client is cut
+ * off: set a past client_secret_expires_at on its row.
+ */
+const SDK_DEFAULT_SECRET_TTL_S = 30 * 24 * 60 * 60;
+
+function hasSdkDefaultSecretStamp(client: OAuthClientInformationFull): boolean {
+  const expiresAt = client.client_secret_expires_at ?? 0;
+  if (!client.client_secret || expiresAt <= 0) return false;
+  // The provider re-stamps client_id_issued_at right after the SDK computed
+  // the expiry, so allow a few seconds of drift (all prod rows: exactly 0).
+  return Math.abs(expiresAt - (client.client_id_issued_at ?? 0) - SDK_DEFAULT_SECRET_TTL_S) <= 10;
+}
+
+/**
  * Supabase-backed OAuth state (was a JSON file in Gate A). The container is
  * stateless now: restarts and redeploys keep every session alive.
  */
@@ -28,9 +45,7 @@ export class OAuthStore {
     const row = await db.oauthClient.findUnique({ where: { clientId } });
     if (!row) return undefined;
     const client = row.data as unknown as OAuthClientInformationFull;
-    // Clients registered before secrets stopped expiring still carry a 30-day
-    // client_secret_expires_at; ignore it so their connectors keep refreshing.
-    return client.client_secret ? { ...client, client_secret_expires_at: 0 } : client;
+    return hasSdkDefaultSecretStamp(client) ? { ...client, client_secret_expires_at: 0 } : client;
   }
 
   async saveClient(client: OAuthClientInformationFull): Promise<void> {

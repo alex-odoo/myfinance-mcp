@@ -3,7 +3,9 @@
  * spawns the server with test credentials, then walks the exact path a
  * Claude.ai custom connector takes: metadata discovery -> dynamic client
  * registration -> authorize (login form) -> PKCE code exchange -> MCP
- * initialize/tools/ping -> refresh -> negative cases.
+ * initialize/tools/ping -> refresh -> negative cases. The OAuth path runs
+ * twice: as a public client and as a confidential one (client_secret_post,
+ * which is how claude.ai registers).
  *
  * Usage: bun run scripts/gate-a-e2e.ts [baseUrl]
  * With baseUrl argument it tests a running (e.g. production) server instead
@@ -52,6 +54,8 @@ async function mcpCall(token: string, body: unknown): Promise<any> {
 }
 
 let serverProc: Subprocess | null = null;
+/** OAuth clients this run registered; spawn mode deletes them on exit. */
+const createdClients: string[] = [];
 let zenStub: { stop: (closeActiveConnections?: boolean) => void } | null = null;
 let ebStub: { stop: (closeActiveConnections?: boolean) => void } | null = null;
 
@@ -301,61 +305,144 @@ async function main(): Promise<void> {
   const prmRoot: any = await (await fetch(`${BASE}/.well-known/oauth-protected-resource`)).json();
   ok("protected resource metadata (root variant)", prmRoot.resource?.endsWith("/mcp"));
 
-  // 2. Dynamic client registration
-  const reg = await fetch(asMeta.registration_endpoint, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({
-      client_name: "Gate A e2e",
-      redirect_uris: [REDIRECT_URI],
-      grant_types: ["authorization_code", "refresh_token"],
-      response_types: ["code"],
-      token_endpoint_auth_method: "none",
-    }),
-  });
-  const client: any = await reg.json();
-  ok("dynamic registration", reg.status === 201 && !!client.client_id, JSON.stringify(client));
-
-  // 2b. Confidential clients (claude.ai registers client_secret_post) must keep
-  // a working secret forever: the SDK's 30-day default killed every claude.ai
-  // connector on day 31 (2026-09-24). Spawn mode only: writes to the DB.
-  if (!externalBase) {
-    const confRes = await fetch(asMeta.registration_endpoint, {
+  const form = (url: string, params: Record<string, string>) =>
+    fetch(url, {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams(params),
+    });
+  const tokenPost = (params: Record<string, string>) => form(asMeta.token_endpoint, params);
+  const oauthError = async (res: Response) => ((await res.json()) as { error?: string }).error;
+  const register = async (clientName: string, authMethod: "none" | "client_secret_post") => {
+    const res = await fetch(asMeta.registration_endpoint, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
-        client_name: "Gate A e2e confidential",
+        client_name: clientName,
         redirect_uris: [REDIRECT_URI],
         grant_types: ["authorization_code", "refresh_token"],
         response_types: ["code"],
-        token_endpoint_auth_method: "client_secret_post",
+        token_endpoint_auth_method: authMethod,
       }),
     });
-    const conf: any = await confRes.json();
+    const json: any = await res.json();
+    if (json.client_id) createdClients.push(json.client_id);
+    return { status: res.status, json };
+  };
+
+  // 2. Dynamic client registration
+  const { status: regStatus, json: client } = await register("Gate A e2e", "none");
+  ok("dynamic registration", regStatus === 201 && !!client.client_id, JSON.stringify(client));
+
+  // 2b. Confidential client, registered the way claude.ai does it
+  // (client_secret_post). The secret must never expire (the SDK's 30-day
+  // default killed every claude.ai connector on day 31, 2026-09-24), it must
+  // really be checked, refusals must leave a trace, and the whole flow must
+  // work with it. Spawn mode only: writes to the DB.
+  if (!externalBase) {
+    const { status: confStatus, json: conf } = await register("Gate A e2e confidential", "client_secret_post");
     ok(
       "confidential client secret never expires",
-      confRes.status === 201 && !!conf.client_secret && conf.client_secret_expires_at === 0,
-      JSON.stringify({ status: confRes.status, expires: conf.client_secret_expires_at })
+      confStatus === 201 && !!conf.client_secret && conf.client_secret_expires_at === 0,
+      JSON.stringify({ status: confStatus, expires: conf.client_secret_expires_at })
     );
-    // Legacy row: stamped with an expiry that has passed, as pre-fix rows are
+    const auth = { client_id: conf.client_id, client_secret: conf.client_secret };
+    const fakeRefresh = { grant_type: "refresh_token", refresh_token: "e2e-not-a-real-token" };
+    // invalid_grant = client auth passed and the (fake) grant was judged
+    ok("right secret passes client auth", (await oauthError(await tokenPost({ ...fakeRefresh, ...auth }))) === "invalid_grant");
+    ok(
+      "wrong secret -> invalid_client",
+      (await oauthError(await tokenPost({ ...fakeRefresh, ...auth, client_secret: "wrong" }))) === "invalid_client"
+    );
+    ok(
+      "missing secret -> invalid_client",
+      (await oauthError(await tokenPost({ ...fakeRefresh, client_id: conf.client_id }))) === "invalid_client"
+    );
     const { db: cdb } = await import("../src/db");
+    const refusalWhere = {
+      type: "oauth_error",
+      AND: [
+        { meta: { path: ["client_id"], equals: conf.client_id } },
+        { meta: { path: ["error"], equals: "invalid_client" } },
+      ],
+    };
+    let refusals = 0;
+    for (let i = 0; i < 30 && refusals < 2; i++) {
+      await Bun.sleep(100); // logEvent is fire-and-forget
+      refusals = await cdb.event.count({ where: refusalWhere });
+    }
+    ok("client refusals logged as oauth_error events", refusals === 2, `found ${refusals}`);
+
+    // Full flow with the secret: code exchange, refresh rotation, revocation
+    const confVerifier = b64url(randomBytes(48));
+    const confAuthUrl = new URL(asMeta.authorization_endpoint);
+    confAuthUrl.searchParams.set("response_type", "code");
+    confAuthUrl.searchParams.set("client_id", conf.client_id);
+    confAuthUrl.searchParams.set("redirect_uri", REDIRECT_URI);
+    confAuthUrl.searchParams.set("code_challenge", b64url(createHash("sha256").update(confVerifier).digest()));
+    confAuthUrl.searchParams.set("code_challenge_method", "S256");
+    const confHtml = await (await fetch(confAuthUrl)).text();
+    const confRequestId = confHtml.match(/name="request_id" value="([^"]+)"/)?.[1] ?? "";
+    const confLogin = await fetch(`${BASE}/login`, {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ request_id: confRequestId, email: EMAIL, password: PASSWORD }),
+      redirect: "manual",
+    });
+    const confCode = new URL(confLogin.headers.get("location") ?? "http://invalid/").searchParams.get("code") ?? "";
+    ok("confidential: login redirects with code", confLogin.status === 302 && !!confCode);
+    const confTokRes = await tokenPost({
+      grant_type: "authorization_code",
+      code: confCode,
+      code_verifier: confVerifier,
+      redirect_uri: REDIRECT_URI,
+      ...auth,
+    });
+    const confTok: any = await confTokRes.json();
+    ok("confidential: code + secret -> tokens", confTokRes.status === 200 && !!confTok.refresh_token, JSON.stringify(confTok));
+    const confRefRes = await tokenPost({ grant_type: "refresh_token", refresh_token: confTok.refresh_token, ...auth });
+    const confRef: any = await confRefRes.json();
+    ok(
+      "confidential: refresh with secret rotates",
+      confRefRes.status === 200 && !!confRef.refresh_token && confRef.refresh_token !== confTok.refresh_token,
+      JSON.stringify({ status: confRefRes.status, error: confRef.error })
+    );
+    const confPing = await mcpCall(confRef.access_token, {
+      jsonrpc: "2.0",
+      id: 90,
+      method: "tools/call",
+      params: { name: "ping", arguments: {} },
+    });
+    ok("confidential: refreshed access token works", confPing.status === 200);
+    const revRes = await form(asMeta.revocation_endpoint, { token: confRef.refresh_token, ...auth });
+    ok("confidential: revoke with secret", revRes.status === 200);
+    ok(
+      "revoked refresh token refused",
+      (await oauthError(await tokenPost({ grant_type: "refresh_token", refresh_token: confRef.refresh_token, ...auth }))) ===
+        "invalid_grant"
+    );
+
+    // A row registered before 2026-09-27 carries the SDK's 30-day default
+    // stamp (issued 31 days ago, so expired yesterday): it must keep working.
+    const legacyIssued = Math.floor(Date.now() / 1000) - 31 * 86_400;
+    await cdb.oauthClient.update({
+      where: { clientId: conf.client_id },
+      data: { data: { ...conf, client_id_issued_at: legacyIssued, client_secret_expires_at: legacyIssued + 30 * 86_400 } },
+    });
+    ok(
+      "legacy 30-day default stamp still passes client auth",
+      (await oauthError(await tokenPost({ ...fakeRefresh, ...auth }))) === "invalid_grant"
+    );
+    // Any other past expiry on the row is enforced: that is how a leaked
+    // client gets cut off.
     await cdb.oauthClient.update({
       where: { clientId: conf.client_id },
       data: { data: { ...conf, client_secret_expires_at: Math.floor(Date.now() / 1000) - 60 } },
     });
-    const legacyRes = await fetch(asMeta.token_endpoint, {
-      method: "POST",
-      headers: { "content-type": "application/x-www-form-urlencoded" },
-      body: new URLSearchParams({
-        grant_type: "refresh_token",
-        refresh_token: "e2e-not-a-real-token",
-        client_id: conf.client_id,
-        client_secret: conf.client_secret,
-      }),
-    });
-    const legacy: any = await legacyRes.json();
-    ok("legacy expired secret still passes client auth", legacy.error === "invalid_grant", JSON.stringify(legacy));
-    await cdb.oauthClient.delete({ where: { clientId: conf.client_id } });
+    ok(
+      "stored past secret expiry is enforced",
+      (await oauthError(await tokenPost({ ...fakeRefresh, ...auth }))) === "invalid_client"
+    );
   }
 
   // 3. Authorize -> login form
@@ -413,31 +500,24 @@ async function main(): Promise<void> {
   ok("state round-trip", cbUrl.searchParams.get("state") === "e2e-state-123");
 
   // 6. Token exchange with wrong verifier rejected
-  const badToken = await fetch(asMeta.token_endpoint, {
-    method: "POST",
-    headers: { "content-type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({
-      grant_type: "authorization_code",
-      code: code!,
-      code_verifier: b64url(randomBytes(48)),
-      client_id: client.client_id,
-      redirect_uri: REDIRECT_URI,
-    }),
+  const badToken = await tokenPost({
+    grant_type: "authorization_code",
+    code: code!,
+    code_verifier: b64url(randomBytes(48)),
+    client_id: client.client_id,
+    redirect_uri: REDIRECT_URI,
   });
   ok("wrong PKCE verifier rejected", badToken.status === 400);
 
   // 7. Token exchange
-  const tokenRes = await fetch(asMeta.token_endpoint, {
-    method: "POST",
-    headers: { "content-type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({
-      grant_type: "authorization_code",
-      code: code!,
-      code_verifier: verifier,
-      client_id: client.client_id,
-      redirect_uri: REDIRECT_URI,
-    }),
-  });
+  const codeExchange = {
+    grant_type: "authorization_code",
+    code: code!,
+    code_verifier: verifier,
+    client_id: client.client_id,
+    redirect_uri: REDIRECT_URI,
+  };
+  const tokenRes = await tokenPost(codeExchange);
   const tokens: any = await tokenRes.json();
   ok(
     "code -> tokens",
@@ -446,17 +526,7 @@ async function main(): Promise<void> {
   );
 
   // 8. Code is single-use
-  const replay = await fetch(asMeta.token_endpoint, {
-    method: "POST",
-    headers: { "content-type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({
-      grant_type: "authorization_code",
-      code: code!,
-      code_verifier: verifier,
-      client_id: client.client_id,
-      redirect_uri: REDIRECT_URI,
-    }),
-  });
+  const replay = await tokenPost(codeExchange);
   ok("code replay rejected", replay.status === 400);
 
   // 9. MCP without token -> 401 + WWW-Authenticate
@@ -1344,26 +1414,11 @@ async function main(): Promise<void> {
   }
 
   // 13. Refresh token rotation
-  const refreshRes = await fetch(asMeta.token_endpoint, {
-    method: "POST",
-    headers: { "content-type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({
-      grant_type: "refresh_token",
-      refresh_token: tokens.refresh_token,
-      client_id: client.client_id,
-    }),
-  });
+  const refreshGrant = { grant_type: "refresh_token", refresh_token: tokens.refresh_token, client_id: client.client_id };
+  const refreshRes = await tokenPost(refreshGrant);
   const refreshed: any = await refreshRes.json();
   ok("refresh -> new tokens", refreshRes.status === 200 && !!refreshed.access_token);
-  const oldRefresh = await fetch(asMeta.token_endpoint, {
-    method: "POST",
-    headers: { "content-type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({
-      grant_type: "refresh_token",
-      refresh_token: tokens.refresh_token,
-      client_id: client.client_id,
-    }),
-  });
+  const oldRefresh = await tokenPost(refreshGrant);
   ok("old refresh token invalidated", oldRefresh.status === 400);
   const pingNew = await mcpCall(refreshed.access_token, {
     jsonrpc: "2.0",
@@ -1393,9 +1448,28 @@ async function main(): Promise<void> {
 try {
   await main();
 } finally {
+  // Spawn mode writes to the real database: never leave the run's OAuth
+  // clients behind (a confidential one holds a secret that never expires),
+  // whether the run passed or failed. External mode has no DB access.
+  if (!externalBase && createdClients.length) {
+    try {
+      const { db } = await import("../src/db");
+      const where = { clientId: { in: createdClients } };
+      await db.oauthCode.deleteMany({ where });
+      await db.oauthAccessToken.deleteMany({ where });
+      await db.oauthRefreshToken.deleteMany({ where });
+      await db.oauthClient.deleteMany({ where });
+      await db.event.deleteMany({
+        where: { type: "oauth_error", OR: createdClients.map((id) => ({ meta: { path: ["client_id"], equals: id } })) },
+      });
+      await db.$disconnect();
+    } catch (e) {
+      console.error("WARN: e2e OAuth client cleanup failed:", e instanceof Error ? e.message : String(e));
+    }
+  }
   (serverProc as Subprocess | null)?.kill();
   // The Zen stub's listener would otherwise keep the Bun event loop alive
-  // forever after main() returns - the script must exit for CI/deploy gates.
+  // forever after main() returns - the script must exit for the deploy gate.
   (zenStub as { stop: (closeActiveConnections?: boolean) => void } | null)?.stop(true);
   (ebStub as { stop: (closeActiveConnections?: boolean) => void } | null)?.stop(true);
 }
