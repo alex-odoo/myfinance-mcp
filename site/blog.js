@@ -19,13 +19,15 @@
 
   /* ---- videos: play while visible, pause offscreen ---- */
   const clips = document.querySelectorAll("video[data-inview]");
-  if (reduced) {
+  if (reduced || !("IntersectionObserver" in window)) {
     clips.forEach((v) => { v.controls = true; });
-  } else if ("IntersectionObserver" in window) {
+  } else {
     const vio = new IntersectionObserver((entries) => {
       entries.forEach((e) => {
         const v = e.target;
-        if (e.intersectionRatio >= 0.4) v.play().catch(() => {});
+        // Autoplay refused (Low Power Mode, a browser block): hand the
+        // visitor the controls instead of a frozen poster.
+        if (e.intersectionRatio >= 0.4) v.play().catch(() => { v.controls = true; });
         else v.pause();
       });
     }, { threshold: [0, 0.4] });

@@ -247,16 +247,8 @@
   document.querySelectorAll(".swm").forEach(function (w) { io.observe(w); });
 
   /* ---------- global stats + world map ---------- */
-  /* Early-days seed: timezones shown on the map while real coverage catches up.
-     Merged with the live timezone_list from /api/stats, dupes collapse by point. */
-  var SEED_TZS = [
-    "Europe/Kyiv", "Europe/Warsaw", "Europe/Berlin", "Europe/London", "Europe/Paris",
-    "Europe/Madrid", "Europe/Lisbon", "Europe/Amsterdam", "Europe/Prague", "Europe/Bucharest",
-    "Europe/Vienna", "Europe/Istanbul", "Asia/Dubai", "Asia/Jerusalem", "Asia/Singapore",
-    "Asia/Tokyo", "Asia/Bangkok", "Asia/Kolkata", "America/New_York", "America/Chicago",
-    "America/Los_Angeles", "America/Toronto", "America/Sao_Paulo", "America/Mexico_City",
-    "Australia/Sydney"
-  ];
+  /* Live timezones only: the section promises every number is real, so the
+     map never pads itself with seed zones (it hides until it has a real dot). */
   var SVGNS = "http://www.w3.org/2000/svg";
   /* UTC-equivalent zones resolve to [500,250] (lon 0, lat 0 - open ocean): skip. */
   var UTC_TZS = { "UTC": 1, "Etc/UTC": 1, "Etc/GMT": 1 };
@@ -317,8 +309,10 @@
       document.getElementById("stTx").setAttribute("data-count", s.transactions);
       document.getElementById("stFiles").setAttribute("data-count", s.files || 0);
       document.getElementById("stCur").setAttribute("data-count", s.currencies || 0);
-      var plotted = buildMap(res[1], SEED_TZS.concat(s.timezone_list || []));
+      var plotted = buildMap(res[1], s.timezone_list || []);
       document.getElementById("mapCount").setAttribute("data-count", plotted);
+      var mapBlock = statsSec.querySelector(".map-block");
+      if (mapBlock && plotted === 0) mapBlock.hidden = true;
       statsSec.hidden = false;
       statsSec.querySelectorAll(".reveal").forEach(function (r) { io.observe(r); });
     }).catch(function () { /* stats unavailable: section stays hidden */ });
