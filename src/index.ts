@@ -14,7 +14,7 @@ import { EXPENSE_CATEGORIES, INCOME_CATEGORIES } from "./categories";
 import { instrumentTransport, pruneOldEvents } from "./telemetry";
 import { ebCreateSession } from "./enablebanking/client";
 import { runAutoSync } from "./autosync";
-import { encryptToken } from "./zenmoney/crypto";
+import { decryptToken, encryptToken } from "./zenmoney/crypto";
 
 assertConfig();
 
@@ -42,6 +42,7 @@ await pruneOldEvents();
 setInterval(() => void pruneOldEvents(), 24 * 60 * 60 * 1000);
 
 const store = new OAuthStore();
+const provider = new FinanceOAuthProvider(store);
 // Production only: see hashLegacySecrets (the e2e gate shares this database).
 if (process.env.NODE_ENV === "production") {
   const rekeyed = await store.hashLegacySecrets();
@@ -49,7 +50,7 @@ if (process.env.NODE_ENV === "production") {
 }
 const pruneOAuth = async () => {
   await store.pruneExpired();
-  const dropped = await store.pruneIdleClients();
+  const dropped = await store.pruneIdleClients(provider.pendingClientIds());
   if (dropped) console.log(`[oauth] dropped ${dropped} idle client registration(s)`);
 };
 await pruneOAuth();
@@ -71,8 +72,6 @@ if (config.autoSyncIntervalMs > 0) {
     config.autoSyncIntervalMs
   );
 }
-
-const provider = new FinanceOAuthProvider(store);
 
 const app = express();
 app.set("trust proxy", 1);
@@ -110,15 +109,16 @@ app.use(
     next();
   },
   express.urlencoded({ extended: false }),
-  async (req, res, next) => {
+  (req, res, next) => {
     if (req.method !== "GET" && req.method !== "POST") return next();
     const params = (req.method === "POST" ? req.body : req.query) as Record<string, unknown> | undefined;
     // Idle registrations are pruned (OAuthStore.pruneIdleClients). The SDK
     // answers an unknown client_id with bare JSON in the sign-in window; say
     // what to do instead. Not a redirect: the client cannot be trusted.
-    if (typeof params?.client_id === "string" && !(await store.getClient(params.client_id))) {
-      res
-        .status(400)
+    const json = res.json.bind(res);
+    res.json = (body: unknown) => {
+      if (res.statusCode !== 400 || (body as { error?: unknown } | null)?.error !== "invalid_client") return json(body);
+      return res
         .set("Cache-Control", "no-store")
         .type("html")
         .send(
@@ -128,8 +128,7 @@ app.use(
             "This connection is no longer registered with MyFinance. Remove MyFinance from your AI client's connectors and add it again."
           )
         );
-      return;
-    }
+    };
     const problem = authorizeRequestProblem(params ?? {});
     if (!problem) return next();
     // Leave the same trace as the oauth_error middleware below, so a client
@@ -382,8 +381,9 @@ function readCookie(req: express.Request, name: string): string | undefined {
 
 type BankLinkMeta = Record<string, unknown> & {
   state?: string;
+  startedAt?: number; // connect_bank action=start; the link's 30 minutes run from here
   aspsp?: { name?: string };
-  pendingCode?: string;
+  pendingCode?: string; // the bank's authorization code, encrypted like session ids
   codeAt?: number;
   confirmHash?: string;
 };
@@ -416,7 +416,9 @@ app.get(`${BANK_PATH}/callback`, async (req, res) => {
     return fail(400, "Unknown or expired link", "Restart the connection from your AI chat with connect_bank.");
   }
   const { link, meta, endAttempt } = pending;
-  if (Date.now() - link.updatedAt.getTime() > BANK_LINK_TTL_MS) {
+  // From the start, not from the last write: reloading this page rewrites
+  // the row and must not keep the link alive.
+  if (Date.now() - (meta.startedAt ?? link.updatedAt.getTime()) > BANK_LINK_TTL_MS) {
     await endAttempt("Bank authorization link expired before consent");
     return fail(400, "Link expired", "Link expired, restart from your AI chat with connect_bank.");
   }
@@ -431,7 +433,15 @@ app.get(`${BANK_PATH}/callback`, async (req, res) => {
   const browserKey = randomBytes(32).toString("base64url");
   await db.bankConnection.update({
     where: { id: link.id },
-    data: { meta: { ...meta, pendingCode: code, codeAt: Date.now(), confirmHash: sha256(browserKey).toString("hex") } as object },
+    data: {
+      meta: {
+        ...meta,
+        startedAt: meta.startedAt ?? link.updatedAt.getTime(),
+        pendingCode: encryptToken(code),
+        codeAt: Date.now(),
+        confirmHash: sha256(browserKey).toString("hex"),
+      } as object,
+    },
   });
   res.cookie(BANK_CONFIRM_COOKIE, browserKey, {
     httpOnly: true,
@@ -453,7 +463,13 @@ app.post(`${BANK_PATH}/confirm`, express.urlencoded({ extended: false }), async 
     res.status(status).type("html").send(callbackPage(title, text, false));
   const pending = state ? await pendingBankLink(state) : undefined;
   if (!pending?.meta.pendingCode || !pending.meta.confirmHash) {
-    return fail(400, "Unknown or expired link", "Restart the connection from your AI chat with connect_bank.");
+    // Also the second request of a double click, which finds the first one
+    // finishing (or finished) the connection.
+    return fail(
+      400,
+      "Link already used or expired",
+      "If you just confirmed, go back to your AI chat and run sync_bank. Otherwise restart the connection with connect_bank."
+    );
   }
   const { link, meta, rest, endAttempt } = pending;
   const browserKey = readCookie(req, BANK_CONFIRM_COOKIE);
@@ -471,8 +487,24 @@ app.post(`${BANK_PATH}/confirm`, express.urlencoded({ extended: false }), async 
       .type("html")
       .send(callbackPage("Not connected", "Nothing was connected and no access was granted to anyone.", false));
   }
+  // Claim the code: of two confirms (a double click) one takes it, the
+  // other finds it gone, so the loser's failed bank call cannot overwrite
+  // the winner's connection. The state goes with it: a reload of the bank's
+  // return page meanwhile cannot re-arm the link.
+  const { pendingCode: _taken, state: _state, ...claimed } = meta;
+  const { count: won } = await db.bankConnection.updateMany({
+    where: { id: link.id, meta: { path: ["pendingCode"], equals: meta.pendingCode! } },
+    data: { meta: claimed as object },
+  });
+  if (won !== 1) {
+    return fail(
+      400,
+      "Link already used or expired",
+      "If you just confirmed, go back to your AI chat and run sync_bank. Otherwise restart the connection with connect_bank."
+    );
+  }
   try {
-    const session = await ebCreateSession(meta.pendingCode!);
+    const session = await ebCreateSession(decryptToken(meta.pendingCode!));
     await db.bankConnection.update({
       where: { id: link.id },
       data: {

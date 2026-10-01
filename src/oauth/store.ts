@@ -158,10 +158,12 @@ export class OAuthStore {
       const live = { token: key, clientId, expiresAt: { gt: now } };
       // First use: claim the rotation. Of two concurrent first uses one
       // UPDATE matches; the other waits on the row lock, re-checks, finds
-      // rotatedAt set and falls through to the grace rule below.
+      // rotatedAt set and falls through to the grace rule below. The grant
+      // id is the row's own, except on a row from before grants: it joins
+      // the grant its successor starts, so a replay of it reaches that one.
       const { count: claimed } = await tx.oauthRefreshToken.updateMany({
         where: { ...live, rotatedAt: null },
-        data: { rotatedAt: now },
+        data: { rotatedAt: now, grantId: tokens.refresh.grantId },
       });
       if (claimed !== 1) {
         const row = await tx.oauthRefreshToken.findFirst({ where: live, select: { rotatedAt: true, grantId: true } });
@@ -237,19 +239,28 @@ export class OAuthStore {
    * client with a live refresh token is never touched: that is the one
    * claude.ai keeps for good.
    */
-  async pruneIdleClients(): Promise<number> {
+  async pruneIdleClients(signingIn: ReadonlySet<string> = new Set()): Promise<number> {
     const now = new Date();
-    const live = { where: { expiresAt: { gt: now } }, select: { clientId: true }, distinct: ["clientId" as const] };
-    const [codes, access, refresh] = await Promise.all([
-      db.oauthCode.findMany(live),
-      db.oauthAccessToken.findMany(live),
-      db.oauthRefreshToken.findMany(live),
-    ]);
-    const inUse = [...new Set([...codes, ...access, ...refresh].map((r) => r.clientId))];
-    const { count } = await db.oauthClient.deleteMany({
-      where: { createdAt: { lt: new Date(now.getTime() - IDLE_CLIENT_TTL_MS) }, clientId: { notIn: inUse } },
+    const old = await db.oauthClient.findMany({
+      where: { createdAt: { lt: new Date(now.getTime() - IDLE_CLIENT_TTL_MS) } },
+      select: { clientId: true },
     });
-    return count;
+    let dropped = 0;
+    // Chunks keep every IN list far below the bind-parameter limit.
+    for (let i = 0; i < old.length; i += 500) {
+      const chunk = old.slice(i, i + 500).map((c) => c.clientId);
+      const live = { where: { clientId: { in: chunk }, expiresAt: { gt: now } }, select: { clientId: true } };
+      const [codes, access, refresh] = await Promise.all([
+        db.oauthCode.findMany(live),
+        db.oauthAccessToken.findMany(live),
+        db.oauthRefreshToken.findMany(live),
+      ]);
+      const inUse = new Set([...codes, ...access, ...refresh].map((r) => r.clientId));
+      // A sign-in in progress holds no code yet, only a pending request.
+      const idle = chunk.filter((id) => !inUse.has(id) && !signingIn.has(id));
+      if (idle.length) dropped += (await db.oauthClient.deleteMany({ where: { clientId: { in: idle } } })).count;
+    }
+    return dropped;
   }
 
   /**
@@ -262,18 +273,32 @@ export class OAuthStore {
   async hashLegacySecrets(): Promise<number> {
     const now = new Date();
     let rekeyed = 0;
-    const legacy = (keys: string[]) => keys.filter((k) => !HASHED_KEY.test(k));
-    for (const code of legacy((await db.oauthCode.findMany({ select: { code: true } })).map((r) => r.code))) {
+    const codes = (await db.oauthCode.findMany({ select: { code: true } })).map((r) => r.code);
+    for (const code of codes.filter((k) => !HASHED_KEY.test(k))) {
       rekeyed += (await db.oauthCode.updateMany({ where: { code }, data: { code: secretKey(code) } })).count;
     }
-    for (const token of legacy((await db.oauthAccessToken.findMany({ select: { token: true } })).map((r) => r.token))) {
-      rekeyed += (await db.oauthAccessToken.updateMany({ where: { token }, data: { token: secretKey(token) } })).count;
-    }
-    for (const token of legacy((await db.oauthRefreshToken.findMany({ select: { token: true } })).map((r) => r.token))) {
+    // Legacy rows carry no link between an access token and its refresh
+    // token; the client + user pair is the sign-in they came from, so an
+    // access token joins the grant of the one refresh token of its pair.
+    const grantOfPair = new Map<string, string | null>();
+    const legacyRefresh = await db.oauthRefreshToken.findMany({ select: { token: true, clientId: true, userId: true } });
+    for (const r of legacyRefresh.filter((r) => !HASHED_KEY.test(r.token))) {
+      const grantId = crypto.randomUUID();
+      const pair = `${r.clientId}|${r.userId}`;
+      grantOfPair.set(pair, grantOfPair.has(pair) ? null : grantId); // two refresh tokens: ambiguous
       rekeyed += (
         await db.oauthRefreshToken.updateMany({
-          where: { token },
-          data: { token: secretKey(token), grantId: crypto.randomUUID(), grantIssuedAt: now },
+          where: { token: r.token },
+          data: { token: secretKey(r.token), grantId, grantIssuedAt: now },
+        })
+      ).count;
+    }
+    const legacyAccess = await db.oauthAccessToken.findMany({ select: { token: true, clientId: true, userId: true } });
+    for (const a of legacyAccess.filter((a) => !HASHED_KEY.test(a.token))) {
+      rekeyed += (
+        await db.oauthAccessToken.updateMany({
+          where: { token: a.token },
+          data: { token: secretKey(a.token), grantId: grantOfPair.get(`${a.clientId}|${a.userId}`) ?? null },
         })
       ).count;
     }

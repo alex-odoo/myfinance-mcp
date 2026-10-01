@@ -68,25 +68,33 @@ export async function findOrCreateGoogleUser(email: string, sub: string): Promis
   return { id: created.id, email: created.email };
 }
 
-/** The account signs in with Google; an emailed code would bypass its identity check. */
-export class GoogleLinkedAccountError extends Error {
-  constructor() {
-    super("account signs in with Google");
+/** How an account that may not use email codes signs in instead. */
+export type OtherSignIn = "google" | "password";
+
+/** The account signs in another way; an emailed code would bypass what guards it. */
+export class NoEmailSignInError extends Error {
+  constructor(readonly method: OtherSignIn) {
+    super(`account signs in with ${method}`);
   }
 }
+
+const otherSignIn = (u: { googleSub: string | null; passwordHash: string | null }): OtherSignIn | null =>
+  u.googleSub ? "google" : u.passwordHash ? "password" : null;
 
 /**
  * Email-code sign-in: the code proved control of the mailbox, which is the
  * whole identity of an email account (created here on first sign-in). An
- * account linked to Google is refused: a mailbox can change hands (a
- * reassigned Workspace address), and Google's stable sub is what guards that
- * account, so the mailbox alone must not open it.
+ * account with a stronger guard is refused: a mailbox can change hands (a
+ * reassigned Workspace address), and Google's stable sub or the operator's
+ * password is what protects that account, so the mailbox alone must not
+ * open it.
  */
 export async function findOrCreateEmailUser(email: string): Promise<SessionUser> {
   const normalized = email.trim().toLowerCase();
   const existing = await db.user.findUnique({ where: { email: normalized } });
   if (existing) {
-    if (existing.googleSub) throw new GoogleLinkedAccountError();
+    const other = otherSignIn(existing);
+    if (other) throw new NoEmailSignInError(other);
     return { id: existing.id, email: existing.email };
   }
   try {
@@ -99,15 +107,19 @@ export async function findOrCreateEmailUser(email: string): Promise<SessionUser>
     // Two first sign-ins of the same address raced: the other one created it.
     const raced = await db.user.findUnique({ where: { email: normalized } });
     if (!raced) throw e;
-    if (raced.googleSub) throw new GoogleLinkedAccountError();
+    const other = otherSignIn(raced);
+    if (other) throw new NoEmailSignInError(other);
     return { id: raced.id, email: raced.email };
   }
 }
 
-/** Is this address an account that signs in with Google (for the code email's wording). */
-export async function isGoogleLinked(email: string): Promise<boolean> {
-  const user = await db.user.findUnique({ where: { email: email.trim().toLowerCase() }, select: { googleSub: true } });
-  return !!user?.googleSub;
+/** The way this address signs in instead of an email code, if any (for the email's wording). */
+export async function emailSignInBlocked(email: string): Promise<OtherSignIn | null> {
+  const user = await db.user.findUnique({
+    where: { email: email.trim().toLowerCase() },
+    select: { googleSub: true, passwordHash: true },
+  });
+  return user ? otherSignIn(user) : null;
 }
 
 export async function verifyLogin(email: string, password: string): Promise<SessionUser | null> {

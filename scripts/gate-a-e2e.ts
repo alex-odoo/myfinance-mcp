@@ -170,6 +170,9 @@ function startZenStub() {
  * transactions, one cross-account transfer pair, one cross-CURRENCY pair
  * (EUR debit + USD credit, FX-tolerance matched), one pending row.
  */
+let ebCodesIssued = 0;
+const ebCodesUsed = new Set<string>();
+
 function startEbStub() {
   const eur = (amount: string) => ({ currency: "EUR", amount });
   return Bun.serve({
@@ -186,11 +189,14 @@ function startEbStub() {
       }
       if (url.pathname === "/auth" && req.method === "POST") {
         const body = (await req.json()) as { state: string; redirect_url: string };
-        return Response.json({ url: `${body.redirect_url}?code=e2e-eb-code&state=${body.state}` });
+        return Response.json({ url: `${body.redirect_url}?code=e2e-eb-code-${++ebCodesIssued}&state=${body.state}` });
       }
       if (url.pathname === "/sessions" && req.method === "POST") {
         const body = (await req.json()) as { code: string };
-        if (body.code !== "e2e-eb-code") return new Response("bad code", { status: 400 });
+        // A bank's authorization code works once, as at a real bank
+        if (!body.code.startsWith("e2e-eb-code-") || ebCodesUsed.has(body.code)) return new Response("bad code", { status: 400 });
+        ebCodesUsed.add(body.code);
+        await Bun.sleep(150); // a real session call takes a moment: room for a double click
         return Response.json({
           session_id: "e2e-eb-session",
           aspsp: { name: "Mock Bank", country: "FI" },
@@ -725,6 +731,41 @@ async function main(): Promise<void> {
         !/\d{6}/.test(mailTo(googler).at(-1)?.text ?? ""),
       JSON.stringify(mailTo(googler).at(-1))
     );
+    // The operator account has a password: the mailbox alone must not open it
+    const sp = await startSignIn();
+    const pSend = await postForm("/login/email", { request_id: sp.rid, email: EMAIL }, sp.browser);
+    ok(
+      "password account gets a pointer to its password, not a code",
+      pSend.status === 200 && mailTo(EMAIL).at(-1)?.subject === "Sign in to MyFinance with your password" &&
+        !/\d{6}/.test(mailTo(EMAIL).at(-1)?.text ?? ""),
+      JSON.stringify(mailTo(EMAIL).at(-1))
+    );
+
+    // Wrong codes are budgeted per address across resends and IPs: attackers
+    // on many IPs cannot buy fresh guesses with a new code
+    const grind = `gate-a-grind-${randomBytes(4).toString("hex")}@test.local`;
+    createdUserEmails.push(grind);
+    const sgr = await startSignIn();
+    const fromIp = (n: number, path: string, params: Record<string, string>) =>
+      fetch(`${BASE}${path}`, {
+        method: "POST",
+        headers: { "content-type": "application/x-www-form-urlencoded", cookie: sgr.browser, "x-forwarded-for": `10.77.0.${n}` },
+        body: new URLSearchParams({ request_id: sgr.rid, ...params }),
+        redirect: "manual",
+      });
+    let lastWrong = "";
+    for (let i = 0; i < 10; i++) {
+      if (i % 5 === 0) await fromIp(100 + i, "/login/email", { email: grind }); // a fresh code every 5 tries
+      const real = mailTo(grind).at(-1)?.subject.slice(0, 6) ?? "";
+      lastWrong = await (await fromIp(i + 1, "/login/email/verify", { code: real === "000000" ? "000001" : "000000" })).text();
+    }
+    ok("10th wrong code for one address locks it, across resends and IPs", lastWrong.includes("Too many wrong codes for this address"));
+    ok(
+      "locked address gets no new code",
+      (await fromIp(200, "/login/email", { email: grind })).status === 429 && mailTo(grind).length === 2,
+      String(mailTo(grind).length)
+    );
+
     // Sends per address are capped: two more pass, the fourth is refused
     await postForm("/login/email", { request_id: sg.rid, email: googler }, sg.browser);
     await postForm("/login/email", { request_id: sg.rid, email: googler }, sg.browser);
@@ -1455,6 +1496,7 @@ async function main(): Promise<void> {
         });
       return { page, html, cookie, confirm };
     };
+    type Rec2 = Record<string, unknown>;
     const declined = await bankLink(ebStart.authorize_url);
     ok(
       "eb callback asks to confirm, naming the masked account",
@@ -1471,10 +1513,34 @@ async function main(): Promise<void> {
     ok("cancelled link is dead", (await declined.confirm("connect")).status === 400);
     ok("connection left in error after cancel", payload(await call("connect_bank", { action: "status" })).status === "error");
 
+    // The link's 30 minutes run from the start: a reload does not extend them
+    const ebStale = payload(await call("connect_bank", { action: "start", country: "FI", bank_name: "Mock Bank" }));
+    const staleRow = await odb.bankConnection.findFirstOrThrow({ where: { userId: testUser.id, provider: "enablebanking" } });
+    await odb.bankConnection.update({
+      where: { id: staleRow.id },
+      data: { meta: { ...(staleRow.meta as object), startedAt: Date.now() - 31 * 60_000 } },
+    });
+    ok("eb link older than 30 minutes from its start -> expired", (await fetch(ebStale.authorize_url)).status === 400);
+
     const ebStart2 = payload(await call("connect_bank", { action: "start", country: "FI", bank_name: "Mock Bank" }));
     const accepted = await bankLink(ebStart2.authorize_url);
-    const consent = await accepted.confirm("connect");
-    ok("eb confirm connects", consent.status === 200 && (await consent.text()).includes("Bank connected"));
+    const heldCode = new URL(ebStart2.authorize_url).searchParams.get("code") ?? "";
+    const heldMeta = (await odb.bankConnection.findFirstOrThrow({ where: { userId: testUser.id, provider: "enablebanking" } })).meta as Rec2;
+    ok(
+      "bank code held for the confirm is encrypted",
+      typeof heldMeta.pendingCode === "string" && !!heldCode && !String(heldMeta.pendingCode).includes(heldCode),
+      JSON.stringify({ held: String(heldMeta.pendingCode).slice(0, 12) })
+    );
+    // Double click: one confirm binds, the other finds the code taken and
+    // cannot undo the connection with its failed bank call
+    const [c1, c2] = await Promise.all([accepted.confirm("connect"), accepted.confirm("connect")]);
+    const bodies = [await c1.text(), await c2.text()];
+    ok(
+      "double-clicked confirm connects exactly once",
+      bodies.filter((b) => b.includes("Bank connected")).length === 1 && bodies.filter((b) => b.includes("already used")).length === 1,
+      JSON.stringify([c1.status, c2.status])
+    );
+    ok("connection active after the double click", payload(await call("connect_bank", { action: "status" })).status === "active");
     ok("confirmed link cannot be confirmed again", (await accepted.confirm("connect")).status === 400);
 
     const ebs1 = payload(await call("sync_bank", {}));

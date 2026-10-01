@@ -27,9 +27,9 @@ import {
   verifyLogin,
   findOrCreateGoogleUser,
   findOrCreateEmailUser,
-  isGoogleLinked,
+  emailSignInBlocked,
   GoogleAccountConflictError,
-  GoogleLinkedAccountError,
+  NoEmailSignInError,
   type SessionUser,
 } from "../users";
 import { config } from "../config";
@@ -50,8 +50,13 @@ const LOGIN_WINDOW_MS = 15 * 60 * 1000;
 
 // Email sign-in: a 6-digit code, 5 tries, 10 minutes. Sends are capped per
 // address (nobody's inbox becomes a target) and per IP (the Resend quota).
+// Wrong codes are also budgeted per address across codes and sign-ins: a
+// resend must not buy fresh guesses, or attackers on many IPs could grind
+// one address (10 a day = 1 in 100,000 per day at 6 digits).
 const EMAIL_CODE_TTL_MS = 10 * 60 * 1000;
 const EMAIL_CODE_MAX_ATTEMPTS = 5;
+const WRONG_CODES_PER_ADDRESS = 10;
+const WRONG_CODES_WINDOW_MS = 24 * 60 * 60 * 1000;
 const SENDS_PER_ADDRESS = 3;
 const SENDS_PER_ADDRESS_WINDOW_MS = 15 * 60 * 1000;
 const SENDS_PER_IP = 10;
@@ -226,7 +231,7 @@ function storableClientMetadata(client: RegisteredClient): RegisteredClient {
 export class FinanceOAuthProvider implements OAuthServerProvider {
   private readonly pending = new Map<string, PendingAuthRequest>();
   private readonly loginAttempts = new Map<string, { count: number; resetAt: number }>();
-  /** Email code sends, keyed "a:<address>" and "i:<ip>". */
+  /** Email code sends ("a:<address>", "i:<ip>") and wrong codes ("w:<address>"). */
   private readonly codeSends = new Map<string, { count: number; resetAt: number }>();
   /** Google OIDC state -> our pending auth request (CSRF binding). */
   private readonly googleStates = new Map<string, { requestId: string; expiresAt: number }>();
@@ -366,24 +371,44 @@ export class FinanceOAuthProvider implements OAuthServerProvider {
         res.status(400).type("html").send(loginPage(requestId, pendingReq.client, "Enter a valid email address."));
         return;
       }
-      if (!this.takeSend(`a:${email}`, SENDS_PER_ADDRESS, SENDS_PER_ADDRESS_WINDOW_MS) || !this.takeSend(`i:${ip}`, SENDS_PER_IP, SENDS_PER_IP_WINDOW_MS)) {
+      if (this.spent(`w:${email}`, WRONG_CODES_PER_ADDRESS)) {
+        res
+          .status(429)
+          .type("html")
+          .send(loginPage(requestId, pendingReq.client, "Too many wrong codes for this address. Try again tomorrow, or continue with Google."));
+        return;
+      }
+      // The IP is charged first: a request its own cap refuses must not use
+      // up the address's quota (that would lock the owner out for free).
+      if (!this.takeSend(`i:${ip}`, SENDS_PER_IP, SENDS_PER_IP_WINDOW_MS)) {
         res
           .status(429)
           .type("html")
           .send(loginPage(requestId, pendingReq.client, "Too many codes requested. Wait a few minutes, or continue with Google."));
         return;
       }
-      // An account linked to Google gets a pointer to Google instead of a
-      // code. The page reads the same either way, so it does not tell anyone
-      // which addresses have accounts.
+      if (!this.takeSend(`a:${email}`, SENDS_PER_ADDRESS, SENDS_PER_ADDRESS_WINDOW_MS)) {
+        this.refundSend(`i:${ip}`);
+        res
+          .status(429)
+          .type("html")
+          .send(loginPage(requestId, pendingReq.client, "Too many codes requested. Wait a few minutes, or continue with Google."));
+        return;
+      }
+      // An account that signs in another way gets a pointer to it instead
+      // of a code. The page reads the same either way, so it does not tell
+      // anyone which addresses have accounts.
       const code = String(randomInt(0, 1_000_000)).padStart(6, "0");
-      const sent = (await isGoogleLinked(email))
+      const other = await emailSignInBlocked(email);
+      const sent = other
         ? await sendMail(
             email,
-            "Sign in to MyFinance with Google",
+            other === "google" ? "Sign in to MyFinance with Google" : "Sign in to MyFinance with your password",
             "Someone asked for a MyFinance MCP sign-in code for this address.\n\n" +
-              "Your account signs in with Google: on the sign-in page, choose Continue with Google. No code was issued.\n\n" +
-              "If this was not you, ignore this email.\n\nMyFinance MCP - https://myfinance-mcp.com\n"
+              (other === "google"
+                ? "Your account signs in with Google: on the sign-in page, choose Continue with Google."
+                : "Your account signs in with its password: on the sign-in page, open Sign in with a password.") +
+              " No code was issued.\n\nIf this was not you, ignore this email.\n\nMyFinance MCP - https://myfinance-mcp.com\n"
           )
         : await sendMail(
             email,
@@ -394,6 +419,9 @@ export class FinanceOAuthProvider implements OAuthServerProvider {
               "MyFinance MCP - https://myfinance-mcp.com\n"
           );
       if (!sent) {
+        // Nothing reached the inbox: the attempt costs neither quota.
+        this.refundSend(`i:${ip}`);
+        this.refundSend(`a:${email}`);
         res
           .status(502)
           .type("html")
@@ -430,6 +458,15 @@ export class FinanceOAuthProvider implements OAuthServerProvider {
       const code = (typeof body.code === "string" ? body.code : "").trim();
       if (!timingSafeEqual(sha256(code), sentCode.hash)) {
         this.recordFailedLogin(ip);
+        this.takeSend(`w:${sentCode.email}`, WRONG_CODES_PER_ADDRESS, WRONG_CODES_WINDOW_MS);
+        if (this.spent(`w:${sentCode.email}`, WRONG_CODES_PER_ADDRESS)) {
+          pendingReq.emailCode = undefined;
+          res
+            .status(401)
+            .type("html")
+            .send(loginPage(requestId, pendingReq.client, "Too many wrong codes for this address. Try again tomorrow, or continue with Google."));
+          return;
+        }
         if (++sentCode.attempts >= EMAIL_CODE_MAX_ATTEMPTS) {
           pendingReq.emailCode = undefined;
           res.status(401).type("html").send(loginPage(requestId, pendingReq.client, "Too many wrong codes. Request a new one."));
@@ -445,8 +482,9 @@ export class FinanceOAuthProvider implements OAuthServerProvider {
       try {
         user = await findOrCreateEmailUser(sentCode.email);
       } catch (err) {
-        if (!(err instanceof GoogleLinkedAccountError)) throw err;
-        res.status(409).type("html").send(loginPage(requestId, pendingReq.client, "This account signs in with Google. Use Continue with Google."));
+        if (!(err instanceof NoEmailSignInError)) throw err;
+        const how = err.method === "google" ? "Google. Use Continue with Google." : "its password. Use Sign in with a password.";
+        res.status(409).type("html").send(loginPage(requestId, pendingReq.client, `This account signs in with ${how}`));
         return;
       }
       await this.finishLogin(requestId, pendingReq, user.id, res);
@@ -757,6 +795,23 @@ export class FinanceOAuthProvider implements OAuthServerProvider {
     const entry = this.loginAttempts.get(ip);
     if (!entry || entry.resetAt < Date.now()) return false;
     return entry.count >= LOGIN_MAX_ATTEMPTS;
+  }
+
+  /** Is the window of `key` used up (without counting anything)? */
+  private spent(key: string, max: number): boolean {
+    const entry = this.codeSends.get(key);
+    return !!entry && entry.resetAt >= Date.now() && entry.count >= max;
+  }
+
+  private refundSend(key: string): void {
+    const entry = this.codeSends.get(key);
+    if (entry && entry.count > 0) entry.count -= 1;
+  }
+
+  /** Client ids with a sign-in in progress (no code row yet): never pruned. */
+  pendingClientIds(): Set<string> {
+    const now = Date.now();
+    return new Set([...this.pending.values()].filter((p) => p.expiresAt >= now).map((p) => p.clientId));
   }
 
   /** Counts one code send against `key`; false once its window is used up. */

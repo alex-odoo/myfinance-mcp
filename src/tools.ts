@@ -1862,8 +1862,11 @@ export function registerFinanceTools(server: McpServer, userId: string): void {
             distinct: ["currency", "occurredAt"],
           });
           for (const p of pairs) await rateTo(p.currency, p.occurredAt);
-          // Budget caps are amounts in the base currency too.
-          const budgetRate = await rateTo(current.baseCurrency, parseDate(todayIn(current.timezone)));
+          // Budget caps are amounts in the base currency too (today's rate;
+          // no lookup at all without budgets).
+          const budgetRate = (await db.budget.count({ where: { userId } }))
+            ? await rateTo(current.baseCurrency, parseDate(todayIn(current.timezone)))
+            : undefined;
           // Every row is rewritten in a few statements: delete and re-insert
           // with the new base (Prisma cannot set a column from another one,
           // and one UPDATE per row took minutes on a long history). Columns
@@ -1888,8 +1891,9 @@ export function registerFinanceTools(server: McpServer, userId: string): void {
                 await px.transaction.deleteMany({ where: { userId } });
                 await px.transaction.createMany({ data });
                 const budgets = await px.budget.findMany({ where: { userId } });
+                if (budgets.length && budgetRate === undefined) throw new Error("Budgets changed during the base currency switch. Retry.");
                 for (const b of budgets) {
-                  await px.budget.update({ where: { id: b.id }, data: { amount: round2(Number(b.amount) * budgetRate) } });
+                  await px.budget.update({ where: { id: b.id }, data: { amount: round2(Number(b.amount) * budgetRate!) } });
                 }
                 await px.user.update({ where: { id: userId }, data: { baseCurrency: newBase } });
               },
@@ -2268,13 +2272,13 @@ export function registerFinanceTools(server: McpServer, userId: string): void {
           tokenEnc: "",
           status: "pending",
           lastError: null,
-          meta: { state, aspsp: { name: bank.name, country: country.toUpperCase() } },
+          meta: { state, startedAt: Date.now(), aspsp: { name: bank.name, country: country.toUpperCase() } },
         },
         create: {
           userId,
           provider: "enablebanking",
           status: "pending",
-          meta: { state, aspsp: { name: bank.name, country: country.toUpperCase() } },
+          meta: { state, startedAt: Date.now(), aspsp: { name: bank.name, country: country.toUpperCase() } },
         },
       });
       logEvent("bank_connected", userId, { provider: "enablebanking" });

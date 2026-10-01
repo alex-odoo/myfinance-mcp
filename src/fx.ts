@@ -56,6 +56,11 @@ const fallbackUrls = (day: string) => [
   `https://${day}.currency-api.pages.dev/v1/currencies/eur.min.json`,
 ];
 
+// Answered days, so a second currency or a code the snapshot lacks on the
+// same date costs no download. Map order = insertion: the oldest goes first.
+const fallbackDays = new Map<string, Record<string, number>>();
+const FALLBACK_CACHE_DAYS = 400;
+
 /**
  * Fallback rates for `date` (ISO codes, upper case), or the nearest earlier
  * published day within FALLBACK_DAYS_BACK. {} = the source answered and has
@@ -63,6 +68,17 @@ const fallbackUrls = (day: string) => [
  */
 async function fetchFallback(date: string): Promise<Record<string, number> | null> {
   if (date < FALLBACK_FIRST_DAY) return {};
+  const known = fallbackDays.get(date);
+  if (known) return known;
+  const rates = await downloadFallback(date);
+  if (rates) {
+    if (fallbackDays.size >= FALLBACK_CACHE_DAYS) fallbackDays.delete(fallbackDays.keys().next().value!);
+    fallbackDays.set(date, rates);
+  }
+  return rates;
+}
+
+async function downloadFallback(date: string): Promise<Record<string, number> | null> {
   for (let back = 0; back <= FALLBACK_DAYS_BACK; back++) {
     const day = dateKey(new Date(Date.parse(`${date}T00:00:00Z`) - back * 86_400_000));
     if (day < FALLBACK_FIRST_DAY) return {};
