@@ -3,8 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<script src="/consent.js"></script>
-<script async src="https://www.googletagmanager.com/gtag/js?id=G-SFT6JY9Q7W"></script>
+<script defer src="/consent.js"></script>
 <title>Privacy &amp; Terms - MyFinance MCP</title>
 <meta name="description" content="Privacy policy and terms for MyFinance MCP: what we store, what we never store, and how to export or delete your data.">
 <link rel="canonical" href="https://myfinance-mcp.com/privacy">
@@ -42,11 +41,11 @@
   <span class="updated num">Last updated: 2026-10-01</span>
 
   <h2>The short version</h2>
-  <p>Your financial records belong to you. We store what you log, import or sync (amounts, categories, merchants, dates, accounts) so the server can compute your summaries, and we do not sell or share it for advertising. The product has no third-party analytics; these marketing pages use Google Analytics, with cookies only if you allow them (details below). Export your transactions as CSV or delete your whole account from the chat at any time.</p>
+  <p>Your financial records belong to you. We store what you log, import or sync (amounts, categories, merchants, dates, accounts) so the server can compute your summaries, and we do not sell or share it for advertising. The product has no third-party analytics; these marketing pages use Google Analytics only if you allow it (details below). Export your transactions as CSV or delete your whole account from the chat at any time.</p>
 
   <h2>What we store</h2>
   <ul>
-    <li><strong>Your account:</strong> your email address and, if you sign in with Google, your Google account id. Used for sign-in. If you sign in by email, a one-time 6-digit code is sent to that address via Resend; the code lives only in the server's memory for 10 minutes and is never stored. When a new account is created, its email address is sent once to the operator as a signup notice (by email via Resend and to a private Telegram chat).</li>
+    <li><strong>Your account:</strong> your email address and, if you sign in with Google, your Google account id. Used for sign-in. If you sign in by email, a one-time 8-digit code is sent to that address via Resend; the code lives only in the server's memory for 10 minutes and is never stored. When a new account is created, its email address is sent once to the operator as a signup notice (by email via Resend and to a private Telegram chat).</li>
     <li><strong>Financial records:</strong> transactions you log, import or sync (amount, currency, category, merchant or counterparty, note, date, optional receipt line items, the bank's transaction reference), your accounts, balance snapshots, budgets, the categories you chose for specific merchants, and settings (base currency, timezone).</li>
     <li><strong>Bank connections, only if you create one:</strong> through <strong>Enable Banking</strong> (a licensed EU open-banking provider) we store the encrypted session id, the consent expiry, your bank's name and the list of accounts your bank returns (names, account identifiers such as IBAN, currencies). While the consent is valid (at most 90 days) the server pulls booked transactions and balances about once a day, including counterparty names and payment descriptions. Through <strong>ZenMoney</strong> we store your API token, encrypted, and sync your accounts and transactions. A bank link binds only after you confirm, on our page, which MyFinance account receives the access. Disconnecting revokes the bank session and erases the token; imported transactions stay until you delete them.</li>
     <li><strong>Sign-in tokens:</strong> access tokens (24 hours) and refresh tokens (replaced on every use; they lapse after 60 days without use and a year after you signed in) for the AI clients you connect, stored only as a one-way hash.</li>
@@ -69,13 +68,13 @@
   <ul>
     <li><strong>Supabase</strong> (database hosting, EU) and <strong>Hetzner</strong> (server hosting, EU): all stored data.</li>
     <li><strong>Enable Banking</strong> and <strong>ZenMoney</strong>: only if you connect them, the access you grant there.</li>
-    <li><strong>Google</strong>: sign-in, if you choose "Continue with Google"; Google Analytics on these marketing pages.</li>
+    <li><strong>Google</strong>: sign-in, if you choose "Continue with Google"; Google Analytics on these marketing pages, only if you allow it.</li>
     <li><strong>Resend</strong>: the sign-in codes we email you, if you sign in by email; with <strong>Telegram</strong>, the one-time signup notice with your email address, sent to the operator.</li>
   </ul>
 
   <h2 id="cookies">Website analytics and cookies</h2>
-  <p>These marketing pages use Google Analytics to understand how many people visit and which pages they read (page views, referrer, approximate region). It runs only on this website: the MCP endpoint and your financial data never touch it, and it cannot see who you are inside the product.</p>
-  <p>Analytics cookies (_ga and _ga_SFT6JY9Q7W, kept for up to 2 years) are set only after you click "Allow" in the cookie banner. Until then, and if you click "Decline", Google Analytics runs in Consent Mode: it receives cookieless pings with no identifiers, and no analytics cookie is set. Your choice itself is remembered in your browser's local storage, not in a cookie. You can change your mind at any time via "Cookie settings" in the footer of every page; declining also removes the analytics cookies already set. If you block Google Analytics with a content blocker, everything here keeps working.</p>
+  <p>These marketing pages can use Google Analytics to understand how many people visit and which pages they read (page views, referrer, approximate region). It runs only on this website: the MCP endpoint and your financial data never touch it, and it cannot see who you are inside the product.</p>
+  <p>Google Analytics is loaded only after you click "Allow" in the banner. Until then, and if you click "Decline", nothing is sent to Google at all and no analytics cookie is set. If you allow it, Google sets its cookies (_ga and _ga_SFT6JY9Q7W, kept for up to 2 years). Your choice itself is remembered in your browser's local storage, not in a cookie. You can change your mind at any time via "Cookie settings" in the footer of every page; declining removes the analytics cookies, including any set by these pages before October 1, 2026, when analytics ran without asking. If you block Google Analytics with a content blocker, everything here keeps working.</p>
 
   <h2>Your rights (GDPR)</h2>
   <ul>

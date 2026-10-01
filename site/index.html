@@ -3,8 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<script src="/consent.js"></script>
-<script async src="https://www.googletagmanager.com/gtag/js?id=G-SFT6JY9Q7W"></script>
+<script defer src="/consent.js"></script>
 <title>MyFinance MCP - Track your money by talking to your AI</title>
 <meta name="description" content="Free, open-source MCP server for personal finance. Connect Claude or ChatGPT and just say what you spent: expenses, budgets and net worth in 150+ currencies.">
 <link rel="canonical" href="https://myfinance-mcp.com/">
@@ -365,7 +364,7 @@
       <div class="sec-item"><span class="sk num">no image storage</span><h3>Receipts never leave the chat</h3><p>Your AI parses photos client-side; the server receives structured numbers only. There is no image storage to breach.</p></div>
       <div class="sec-item"><span class="sk num">eu residency</span><h3>EU data residency</h3><p>Postgres in Frankfurt, reached over TLS. Every query is scoped to your account by the server, and the database API is closed to everyone.</p></div>
       <div class="sec-item"><span class="sk num">blind logs</span><h3>Blind logs</h3><p>Amounts, merchants and notes are never written to server logs. Usage events keep tool names, timings and error codes, never amounts or merchants.</p></div>
-      <div class="sec-item"><span class="sk num">oauth 2.0 + pkce</span><h3>Standard authorization</h3><p>OAuth 2.0 with PKCE and rate-limited sign-in. Tokens are stored only as a one-way hash, and a stolen one is caught on reuse: the whole sign-in is revoked.</p></div>
+      <div class="sec-item"><span class="sk num">oauth 2.0 + pkce</span><h3>Standard authorization</h3><p>OAuth 2.0 with PKCE and rate-limited sign-in. Tokens are stored only as a one-way hash; refresh tokens rotate on every use, and a used one replayed later revokes the whole sign-in.</p></div>
       <div class="sec-item"><span class="sk num">mit license</span><h3>Open source</h3><p>Read the code, audit it, or self-host with your own database.</p></div>
       <div class="sec-item"><span class="sk num">gdpr</span><h3>GDPR by construction</h3><p>Transaction CSV plus a full profile export (portability) and instant full deletion (erasure) are tools, not support tickets.</p></div>
     </div>

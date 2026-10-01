@@ -12,7 +12,7 @@ Server URL: https://myfinance-mcp.com/mcp (Streamable HTTP, OAuth 2.0 with PKCE 
 - Category corrections are remembered per merchant: fix a synced transaction's category once and every future bank import of that merchant uses your choice (user-level memory, beats MCC guessing).
 - Every number is computed in SQL on the server; the LLM never does arithmetic over raw records.
 - Multi-currency (150+, RUB, KZT, GEL and TRY included: ECB and National Bank of Ukraine rates, plus a public daily snapshot for every other ISO 4217 currency from 2024-03-02): transactions keep the original amount and currency; the exchange rate to the user's base currency is frozen at transaction date.
-- Sign-in: Google or a one-time 8-digit code sent to any email address (the first sign-in creates the account). OAuth codes and tokens are stored only as SHA-256 hashes; refresh tokens rotate on every use, and a reused one revokes the whole sign-in (replay detection).
+- Sign-in: Google or a one-time 8-digit code sent to any email address (the first sign-in creates the account). OAuth codes and tokens are stored only as SHA-256 hashes; refresh tokens rotate on every use, and a used one presented again after a 30-second grace window (kept for parallel refreshes) revokes the whole sign-in (replay detection); access tokens live 24 hours.
 - Receipt photos are parsed client-side by the user's own AI; images never reach the server.
 - Bank statement import: hundreds of rows in one call with idempotent deduplication and total reconciliation.
 - Personal vs business entity tagging on accounts and transactions.

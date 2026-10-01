@@ -8,7 +8,8 @@
     "start": "bun run src/index.ts",
     "build": "tsc --noEmit",
     "e2e": "bun run scripts/gate-a-e2e.ts",
-    "lint": "eslint src scripts"
+    "lint": "eslint src scripts",
+    "check:site": "bun run scripts/check-site-facts.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",

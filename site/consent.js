@@ -1,9 +1,10 @@
-/* Google Analytics with consent (Consent Mode v2, advanced). gtag.js always
-   loads, but every storage type starts denied for every visitor, so GA gets
-   cookieless pings with no identifiers until the visitor clicks Allow.
-   Loaded synchronously in <head>, so the consent default is in dataLayer
-   before the config command. No inline script: the landing CSP allows
-   scripts from 'self' and googletagmanager.com only. */
+/* Google Analytics only with consent. Nothing is sent to Google until the
+   visitor clicks Allow: gtag.js itself is injected only then (or on a later
+   visit with the stored "granted"). Before a choice and after Decline no
+   request leaves for Google at all, not even a cookieless ping: several EU
+   regulators treat that transfer (IP, page, referrer) as needing consent.
+   Loaded with defer; banner styles live in styles.css. No inline script:
+   the landing CSP allows scripts from 'self' and googletagmanager.com only. */
 (function () {
   "use strict";
   var GA_ID = "G-SFT6JY9Q7W";
@@ -26,23 +27,7 @@
     } catch (e) { /* the choice still applies to this page */ }
   }
 
-  /* ---------- gtag bootstrap ---------- */
-  window.dataLayer = window.dataLayer || [];
-  function gtag() { window.dataLayer.push(arguments); }
-  window.gtag = gtag;
-
-  var choice = readChoice();
-  gtag("consent", "default", {
-    ad_storage: "denied",
-    ad_user_data: "denied",
-    ad_personalization: "denied",
-    analytics_storage: choice === "granted" ? "granted" : "denied"
-  });
-  gtag("set", "ads_data_redaction", true);
-  gtag("js", new Date());
-  gtag("config", GA_ID);
-
-  /* ---------- decline: drop GA cookies already set ---------- */
+  /* ---------- GA cookies ---------- */
   // GA4 writes _ga and _ga_<stream> on the widest domain the browser accepts
   // (.myfinance-mcp.com, .rteam.agency on the preview host). Expire them
   // host-only and on every parent domain; the browser ignores the rest.
@@ -63,52 +48,48 @@
     } catch (e) { /* cookies unavailable: nothing to drop */ }
   }
 
-  /* ---------- banner ---------- */
-  // Injected here, not in styles.css, so every page gets it. Colors come from
-  // the landing's tokens, with fallbacks for a page without styles.css.
-  var CSS =
-    ".mf-consent{--mfc-bg:var(--surface,#FFFDF8);--mfc-ink:var(--ink,#1C1B16);--mfc-muted:var(--muted,#6F6A5C);" +
-      "--mfc-rule:var(--rule,#E5E1D4);--mfc-acc:var(--accent,#0E6B4F);" +
-      "position:fixed;left:0;right:0;bottom:16px;z-index:60;box-sizing:border-box;" +
-      "width:calc(100% - 32px);max-width:760px;margin:0 auto;padding:16px 18px;" +
-      "display:flex;flex-wrap:wrap;align-items:center;gap:12px 20px;" +
-      "background:var(--mfc-bg);color:var(--mfc-ink);border:1px solid var(--mfc-rule);border-radius:14px;" +
-      "box-shadow:var(--shadow,0 1px 2px rgba(28,27,22,.05),0 8px 28px rgba(28,27,22,.06));" +
-      "font-family:var(--body,-apple-system,BlinkMacSystemFont,\"Helvetica Neue\",Arial,sans-serif);" +
-      "font-size:15px;line-height:1.5;text-align:left}" +
-    "@media (prefers-color-scheme:dark){.mf-consent{--mfc-bg:var(--surface,#201F18);--mfc-ink:var(--ink,#EDEAE0);" +
-      "--mfc-muted:var(--muted,#9B968A);--mfc-rule:var(--rule,#2F2D24);--mfc-acc:var(--accent,#3EC395)}}" +
-    ".mf-consent[hidden]{display:none}" +
-    ".mf-consent-copy{flex:999 1 300px;min-width:0}" +
-    ".mf-consent p{margin:0}" +
-    ".mf-consent a{color:var(--mfc-acc);text-underline-offset:3px}" +
-    ".mf-consent .mf-consent-now{margin-top:4px;color:var(--mfc-muted);font-size:13.5px}" +
-    ".mf-consent-actions{flex:1 1 auto;display:flex;gap:10px}" +
-    ".mf-consent button{flex:1 1 0;min-width:96px;min-height:44px;margin:0;padding:10px 18px;" +
-      "border:1px solid var(--mfc-ink);border-radius:10px;background:transparent;color:var(--mfc-ink);" +
-      "font-family:inherit;font-size:15px;font-weight:600;line-height:1.2;cursor:pointer}" +
-    ".mf-consent button:hover{border-color:var(--mfc-acc);color:var(--mfc-acc)}" +
-    ".mf-consent a:focus-visible,.mf-consent button:focus-visible{outline:2px solid var(--mfc-acc);outline-offset:3px}" +
-    // Room under the footer while the banner is up, so it never hides the last links.
-    "html.mf-consent-open body{padding-bottom:var(--mf-consent-h,0px)}" +
-    "@media (max-width:480px){.mf-consent{bottom:10px;width:calc(100% - 20px);padding:14px;font-size:14.5px}}" +
-    "@media print{.mf-consent{display:none}}";
+  /* ---------- GA, after consent only ---------- */
+  window.dataLayer = window.dataLayer || [];
+  function gtag() { window.dataLayer.push(arguments); }
+  window.gtag = gtag;
+  var gaLoaded = false;
 
+  function loadGa() {
+    if (gaLoaded) return;
+    gaLoaded = true;
+    gtag("consent", "default", {
+      ad_storage: "denied",
+      ad_user_data: "denied",
+      ad_personalization: "denied",
+      analytics_storage: "granted"
+    });
+    gtag("set", "ads_data_redaction", true);
+    gtag("js", new Date());
+    gtag("config", GA_ID);
+    var s = document.createElement("script");
+    s.async = true;
+    s.src = "https://www.googletagmanager.com/gtag/js?id=" + GA_ID;
+    document.head.appendChild(s);
+  }
+
+  var choice = readChoice();
+  if (choice === "granted") loadGa();
+  // Cookies from before this banner existed (GA ran unconditionally until
+  // 2026-10-01) go for everyone who has not allowed them.
+  else dropGaCookies();
+
+  /* ---------- banner ---------- */
   var banner, now, opener;
 
   function build() {
-    var style = document.createElement("style");
-    style.textContent = CSS;
-    document.head.appendChild(style);
-
     banner = document.createElement("div");
     banner.className = "mf-consent";
     banner.setAttribute("role", "region");
-    banner.setAttribute("aria-label", "Cookie consent");
+    banner.setAttribute("aria-label", "Analytics consent");
     banner.hidden = true;
     banner.innerHTML =
       '<div class="mf-consent-copy">' +
-        "<p>We use Google Analytics cookies to see which pages are useful. Your financial data is never part of this. " +
+        "<p>May we use Google Analytics to see which pages are useful? It loads only if you allow it, and your financial data is never part of it. " +
         '<a href="/privacy#cookies">Details</a></p>' +
         '<p class="mf-consent-now" hidden></p>' +
       "</div>" +
@@ -145,8 +126,8 @@
   function show(from) {
     if (!banner) build();
     now.hidden = !choice;
-    now.textContent = choice === "granted" ? "You allowed analytics cookies. You can change that here."
-      : choice === "denied" ? "You declined analytics cookies. You can change that here." : "";
+    now.textContent = choice === "granted" ? "You allowed Google Analytics. You can change that here."
+      : choice === "denied" ? "You declined Google Analytics. You can change that here." : "";
     banner.hidden = false;
     reserve();
     if (from) {
@@ -156,19 +137,40 @@
   }
 
   function hide() {
+    var hadFocus = banner.contains(document.activeElement);
     banner.hidden = true;
     reserve();
     if (opener) {
       opener.focus();
       opener = null;
+    } else if (hadFocus) {
+      // First-visit choice: the focused button just vanished; continue at
+      // the content instead of the top of the document.
+      var main = document.querySelector("main");
+      if (main) {
+        if (!main.hasAttribute("tabindex")) main.setAttribute("tabindex", "-1");
+        main.focus({ preventScroll: true });
+      }
     }
   }
 
   function decide(v) {
+    var was = choice;
     choice = v;
     saveChoice(v);
-    gtag("consent", "update", { analytics_storage: v });
-    if (v === "denied") dropGaCookies();
+    if (v === "granted") {
+      loadGa();
+    } else {
+      // Withdrawn on a page where GA already runs: Google's own opt-out flag
+      // stops it on this page (consent "denied" alone still lets it send a
+      // cookieless hit, e.g. the engagement beacon on leaving); from the
+      // next page on it is not loaded at all.
+      if (was === "granted" && gaLoaded) {
+        window["ga-disable-" + GA_ID] = true;
+        gtag("consent", "update", { analytics_storage: "denied" });
+      }
+      dropGaCookies();
+    }
     hide();
   }
 

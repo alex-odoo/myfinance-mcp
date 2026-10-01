@@ -23,8 +23,11 @@ BRANCH=$(git rev-parse --abbrev-ref HEAD)
 UNTRACKED=$(git ls-files --others --exclude-standard)
 [ -z "$UNTRACKED" ] || { echo "FATAL: untracked files (commit or .gitignore them first):" >&2; echo "$UNTRACKED" >&2; exit 1; }
 
-echo "==> Local gate: typecheck + e2e"
+echo "==> Local gate: typecheck + site facts + e2e"
 bun run build
+# Facts copied across the static pages (tool count, code length, FAQ
+# structured data) must match the code: a release used to leave some stale.
+bun run check:site
 # Never `cmd && echo ok` for a gate: set -e ignores a failure on the left of
 # &&, so a red e2e used to fall through to commit, push and deploy.
 bun run e2e >/dev/null || { echo "FATAL: e2e failed, nothing deployed" >&2; exit 1; }

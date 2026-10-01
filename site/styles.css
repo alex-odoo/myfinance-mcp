@@ -560,3 +560,30 @@ footer.site { padding: 36px 0 52px; font-size: 14px; color: var(--muted); border
 }
 .vplay:hover svg { transform: scale(1.06); background: var(--accent-deep); }
 .vplay.off { display: none; }
+
+/* Analytics consent banner (built by consent.js) */
+.mf-consent {
+  position: fixed; left: 0; right: 0; bottom: 16px; z-index: 60; box-sizing: border-box;
+  width: calc(100% - 32px); max-width: 760px; margin: 0 auto; padding: 16px 18px;
+  display: flex; flex-wrap: wrap; align-items: center; gap: 12px 20px;
+  background: var(--surface); color: var(--ink); border: 1px solid var(--rule); border-radius: 14px;
+  box-shadow: var(--shadow); font-family: var(--body); font-size: 15px; line-height: 1.5; text-align: left;
+}
+.mf-consent[hidden] { display: none; }
+.mf-consent-copy { flex: 999 1 300px; min-width: 0; }
+.mf-consent p { margin: 0; }
+.mf-consent a { color: var(--accent); text-underline-offset: 3px; }
+.mf-consent .mf-consent-now { margin-top: 4px; color: var(--muted); font-size: 13.5px; }
+.mf-consent-actions { flex: 1 1 auto; display: flex; gap: 10px; }
+.mf-consent button {
+  flex: 1 1 0; min-width: 96px; min-height: 44px; margin: 0; padding: 10px 18px;
+  border: 1px solid var(--ink); border-radius: 10px; background: transparent; color: var(--ink);
+  font-family: inherit; font-size: 15px; font-weight: 600; line-height: 1.2; cursor: pointer;
+}
+.mf-consent button:hover { border-color: var(--accent); color: var(--accent); }
+.mf-consent a:focus-visible, .mf-consent button:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+main:focus { outline: none; }
+/* Room under the footer while the banner is up, so it never hides the last links. */
+html.mf-consent-open body { padding-bottom: var(--mf-consent-h, 0px); }
+@media (max-width: 480px) { .mf-consent { bottom: 10px; width: calc(100% - 20px); padding: 14px; font-size: 14.5px; } }
+@media print { .mf-consent { display: none; } }
