@@ -1644,6 +1644,15 @@ async function main(): Promise<void> {
   });
   ok("new access token works", pingNew.status === 200);
 
+  // Prod smoke signs in as a REAL account: revoke what it was issued instead
+  // of leaving a live 60-day refresh token behind.
+  if (externalBase) {
+    await form(asMeta.revocation_endpoint, { token: refreshed.refresh_token, client_id: client.client_id });
+    await form(asMeta.revocation_endpoint, { token: refreshed.access_token, client_id: client.client_id });
+    const afterRevoke = await tokenPost({ grant_type: "refresh_token", refresh_token: refreshed.refresh_token, client_id: client.client_id });
+    ok("prod smoke revokes its own tokens", afterRevoke.status === 400);
+  }
+
   // 14. GDPR wipe (spawn mode only) - last, since it also revokes all tokens
   if (!externalBase) {
     const wipeRes = await mcpCall(refreshed.access_token, {
