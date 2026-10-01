@@ -118,6 +118,12 @@ model Transaction {
   @@unique([accountId, externalId])
   @@index([userId, occurredAt])
   @@index([userId, categoryKey])
+  // Per-row lookups of imports and syncs (dedup by reference, incoming
+  // transfer legs) and balances' incoming-transfer query: without these each
+  // one scanned the user's whole history, or every user's.
+  @@index([counterAccountId, occurredAt])
+  @@index([userId, externalId])
+  @@index([userId, counterExternalId])
   @@map("transactions")
 }
 
