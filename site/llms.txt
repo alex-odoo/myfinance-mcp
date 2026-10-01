@@ -11,11 +11,11 @@ Server URL: https://myfinance-mcp.com/mcp (Streamable HTTP, OAuth 2.0 with PKCE 
 - Real bank sync, read-only: EU/UK banks via Enable Banking open banking consent (connect_bank + sync_bank tools), plus ZenMoney sync via the user's own API token. Session ids and tokens stored AES-256-GCM encrypted; the server never sees bank credentials. Healthy connections auto-sync server-side roughly daily.
 - Category corrections are remembered per merchant: fix a synced transaction's category once and every future bank import of that merchant uses your choice (user-level memory, beats MCC guessing).
 - Every number is computed in SQL on the server; the LLM never does arithmetic over raw records.
-- Multi-currency: transactions keep the original amount and currency; the exchange rate to the user's base currency is frozen at transaction date.
+- Multi-currency (30+: the ECB reference currencies plus UAH and AED): transactions keep the original amount and currency; the exchange rate to the user's base currency is frozen at transaction date.
 - Receipt photos are parsed client-side by the user's own AI; images never reach the server.
 - Bank statement import: hundreds of rows in one call with idempotent deduplication and total reconciliation.
 - Personal vs business entity tagging on accounts and transactions.
-- Privacy: EU data residency, row-level security, no amounts or merchants in server logs, CSV export and instant full account deletion (GDPR).
+- Privacy: EU data residency (Frankfurt database, Falkenstein server), every query scoped to the user's account by the server, database API closed to the public (deny-all row-level security), TLS to the database, no amounts or merchants in server logs, CSV export and instant full account deletion that also revokes bank consent (GDPR).
 - Free while in beta. Built by Rteam (https://rteam.agency).
 
 ## Pages
