@@ -330,7 +330,7 @@
     await sleep(700);
 
     // 1. natural-language logging, foreign currency
-    await caption("Log spending in plain language - any currency, the rate is frozen that day");
+    await caption("Log spending in plain language - 30+ currencies, the rate is frozen that day");
     await typeUser("spent 120 aed on dinner in Dubai yesterday");
     await chip({ name: "log_expense", args: '{amount: 120, currency: "AED", category: "restaurants"}' });
     await assistant("Logged: 120 AED = 29.90 EUR, restaurants, yesterday. The rate is frozen at that date, so this total never drifts.");

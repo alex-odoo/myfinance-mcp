@@ -6,7 +6,7 @@
 <script async src="https://www.googletagmanager.com/gtag/js?id=G-SFT6JY9Q7W"></script>
 <script>window.dataLayer=window.dataLayer||[];function gtag(){dataLayer.push(arguments);}gtag('js',new Date());gtag('config','G-SFT6JY9Q7W');</script>
 <title>MyFinance MCP - Track your money by talking to your AI</title>
-<meta name="description" content="Free, open-source MCP server for personal finance. Connect Claude or ChatGPT and just say what you spent: expenses, budgets and net worth in any currency.">
+<meta name="description" content="Free, open-source MCP server for personal finance. Connect Claude or ChatGPT and just say what you spent: expenses, budgets and net worth in 30+ currencies.">
 <link rel="canonical" href="https://myfinance-mcp.com/">
 <meta name="theme-color" content="#FAF8F3" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#181712" media="(prefers-color-scheme: dark)">
@@ -40,7 +40,7 @@
   "author": { "@type": "Organization", "name": "Rteam", "url": "https://rteam.agency" },
   "sameAs": ["https://github.com/alex-odoo/myfinance-mcp", "https://smithery.ai/servers/alex-k4kb/MyFinance-MCP"],
   "datePublished": "2026-07-13",
-  "dateModified": "2026-07-20"
+  "dateModified": "2026-10-01"
 }
 </script>
 <script type="application/ld+json">
@@ -119,7 +119,7 @@
         <span class="chip acc">New · Live bank sync</span>
       </div>
       <h1>Track your money by <span class="talk">talking</span> to your AI.</h1>
-      <p class="hero-sub">Connect Claude or ChatGPT, then just say what you spent. Expenses, income, budgets and net worth, logged and computed for you, in any currency. Or <a href="#bank">connect your bank</a> and skip even the typing.</p>
+      <p class="hero-sub">Connect Claude or ChatGPT, then just say what you spent. Expenses, income, budgets and net worth, logged and computed for you, in 30+ currencies. Or <a href="#bank">connect your bank</a> and skip even the typing.</p>
       <div class="cta-row">
         <a class="btn btn-solid" href="#install">Quick install</a>
         <a class="btn btn-ghost" href="#video">See it in action</a>
@@ -172,7 +172,7 @@
   <div class="wrap">
     <span class="eyebrow">How it works</span>
     <h2>Three steps. No app to learn.</h2>
-    <p class="sec-sub">It works the moment you connect. Your base currency comes from your first transaction, your timezone from the conversation.</p>
+    <p class="sec-sub">It works the moment you connect. Your AI sets your base currency and timezone in the first conversation.</p>
     <div class="steps reveal">
       <div class="step">
         <span class="n">Step 1 / 3</span>
@@ -315,7 +315,7 @@
       <div class="feat"><span class="fi num">log</span><h3>Plain-language logging</h3><p>Say what you spent or earned; category, currency and date are extracted for you.</p></div>
       <div class="feat"><span class="fi num">scan</span><h3>Receipt photos</h3><p>Snap a receipt; your AI parses it in the chat. Images never reach our server.</p></div>
       <div class="feat"><span class="fi num">import</span><h3>Bank statement import</h3><p>Drop a CSV or PDF export; hundreds of rows in one call, duplicates detected, totals reconciled.</p></div>
-      <div class="feat"><span class="fi num">fx</span><h3>Every currency</h3><p>Log in whatever you paid in; summaries answer in your base currency, rate frozen at transaction date.</p></div>
+      <div class="feat"><span class="fi num">fx</span><h3>30+ currencies</h3><p>Log in the currency you paid in (ECB reference currencies plus UAH and AED); summaries answer in your base currency, rate frozen at transaction date.</p></div>
       <div class="feat"><span class="fi num">cap</span><h3>Budgets</h3><p>Monthly caps per category or overall, with live progress. Alerts only when you actually exceed one.</p></div>
       <div class="feat"><span class="fi num">trend</span><h3>Summaries and trends</h3><p>By category, merchant or month; month-over-month deltas computed server-side.</p></div>
       <div class="feat"><span class="fi num">split</span><h3>Personal vs business</h3><p>Tag accounts and transactions; a founder's combined view with a clean business cut for your accountant.</p></div>
@@ -346,7 +346,7 @@
           <li>Say it, snap it, or import the statement</li>
           <li>Works inside Claude or ChatGPT, free</li>
           <li>Math in SQL, never AI guessing</li>
-          <li>Any currency, honest totals</li>
+          <li>30+ currencies, honest totals</li>
         </ul>
       </div>
     </div>
@@ -362,8 +362,8 @@
     <p class="sec-sub">Finance-grade by construction, not by badge.</p>
     <div class="sec-grid reveal">
       <div class="sec-item"><span class="sk num">no image storage</span><h3>Receipts never leave the chat</h3><p>Your AI parses photos client-side; the server receives structured numbers only. There is no image storage to breach.</p></div>
-      <div class="sec-item"><span class="sk num">eu residency</span><h3>EU data residency</h3><p>Postgres hosted in the EU with row-level security keyed to your account.</p></div>
-      <div class="sec-item"><span class="sk num">blind logs</span><h3>Blind logs</h3><p>Amounts, merchants and notes are never written to server logs. Telemetry stores event types and ids only.</p></div>
+      <div class="sec-item"><span class="sk num">eu residency</span><h3>EU data residency</h3><p>Postgres in Frankfurt, reached over TLS. Every query is scoped to your account by the server, and the database API is closed to everyone.</p></div>
+      <div class="sec-item"><span class="sk num">blind logs</span><h3>Blind logs</h3><p>Amounts, merchants and notes are never written to server logs. Usage events keep tool names, timings and error codes, never amounts or merchants.</p></div>
       <div class="sec-item"><span class="sk num">oauth 2.0 + pkce</span><h3>Standard authorization</h3><p>OAuth 2.0 with PKCE, encrypted tokens, rate-limited sign-in.</p></div>
       <div class="sec-item"><span class="sk num">mit license</span><h3>Open source</h3><p>Read the code, audit it, or self-host with your own database.</p></div>
       <div class="sec-item"><span class="sk num">gdpr</span><h3>GDPR by construction</h3><p>CSV export (portability) and instant full deletion (erasure) are tools, not support tickets.</p></div>
