@@ -473,6 +473,7 @@ footer.site { padding: 36px 0 52px; font-size: 14px; color: var(--muted); border
 .doc .updated { font-family: var(--mono); font-size: 12.5px; color: var(--muted); margin-bottom: 40px; display: block; }
 .doc h2 { font-size: 1.35rem; margin: 40px 0 10px; }
 .doc p, .doc li { color: var(--muted); font-size: 16px; }
+.doc p + p { margin-top: 12px; }
 .doc ul { padding-left: 22px; margin: 10px 0; display: flex; flex-direction: column; gap: 6px; }
 .doc strong { color: var(--ink); }
 
