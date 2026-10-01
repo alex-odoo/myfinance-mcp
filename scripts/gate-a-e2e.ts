@@ -326,6 +326,17 @@ async function main(): Promise<void> {
     });
   const tokenPost = (params: Record<string, string>) => form(asMeta.token_endpoint, params);
   const oauthError = async (res: Response) => ((await res.json()) as { error?: string }).error;
+  // /authorize binds the sign-in to the browser (mf_bid cookie); the login
+  // POST and the Google leg must send it back, as a browser does.
+  const browserCookie = (res: Response): string =>
+    res.headers.getSetCookie().find((c) => c.startsWith("mf_bid="))?.split(";")[0] ?? "";
+  const loginPost = (requestId: string, password: string, cookie: string) =>
+    fetch(`${BASE}/login`, {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded", ...(cookie ? { cookie } : {}) },
+      body: new URLSearchParams({ request_id: requestId, email: EMAIL, password }),
+      redirect: "manual",
+    });
   const register = async (clientName: string, authMethod: "none" | "client_secret_post") => {
     const res = await fetch(asMeta.registration_endpoint, {
       method: "POST",
@@ -346,6 +357,13 @@ async function main(): Promise<void> {
   // 2. Dynamic client registration
   const { status: regStatus, json: client } = await register("Gate A e2e", "none");
   ok("dynamic registration", regStatus === 201 && !!client.client_id, JSON.stringify(client));
+  // Registration is anonymous and permanent: oversized metadata is refused
+  const { status: bigNameStatus, json: bigName } = await register("x".repeat(5000), "none");
+  ok(
+    "registration with a 5000-char client_name -> 400",
+    bigNameStatus === 400 && bigName.error === "invalid_client_metadata",
+    JSON.stringify({ status: bigNameStatus, error: bigName.error })
+  );
 
   // 2b. Confidential client, registered the way claude.ai does it
   // (client_secret_post). The secret must never expire (the SDK's 30-day
@@ -394,14 +412,11 @@ async function main(): Promise<void> {
     confAuthUrl.searchParams.set("redirect_uri", REDIRECT_URI);
     confAuthUrl.searchParams.set("code_challenge", b64url(createHash("sha256").update(confVerifier).digest()));
     confAuthUrl.searchParams.set("code_challenge_method", "S256");
-    const confHtml = await (await fetch(confAuthUrl)).text();
+    const confAuthRes = await fetch(confAuthUrl);
+    const confCookie = browserCookie(confAuthRes);
+    const confHtml = await confAuthRes.text();
     const confRequestId = confHtml.match(/name="request_id" value="([^"]+)"/)?.[1] ?? "";
-    const confLogin = await fetch(`${BASE}/login`, {
-      method: "POST",
-      headers: { "content-type": "application/x-www-form-urlencoded" },
-      body: new URLSearchParams({ request_id: confRequestId, email: EMAIL, password: PASSWORD }),
-      redirect: "manual",
-    });
+    const confLogin = await loginPost(confRequestId, PASSWORD, confCookie);
     const confCode = new URL(confLogin.headers.get("location") ?? "http://invalid/").searchParams.get("code") ?? "";
     ok("confidential: login redirects with code", confLogin.status === 302 && !!confCode);
     const confTokRes = await tokenPost({
@@ -469,14 +484,50 @@ async function main(): Promise<void> {
   authUrl.searchParams.set("code_challenge_method", "S256");
   authUrl.searchParams.set("state", "e2e-state-123");
   const authRes = await fetch(authUrl);
+  const cookie = browserCookie(authRes);
   const authHtml = await authRes.text();
   const requestId = authHtml.match(/name="request_id" value="([^"]+)"/)?.[1];
   ok("authorize renders login form", authRes.status === 200 && !!requestId);
+  ok("authorize sets the browser-binding cookie", cookie.length > "mf_bid=".length);
+  // The page names where the code goes, not just the self-chosen client_name
+  ok(
+    "login page shows the redirect destination",
+    authHtml.includes("After sign-in you return to <b>an app on this device</b>")
+  );
+
+  // 3a. Malformed or foreign authorization requests get a 400 page, never a
+  // redirect to the (anonymously registered) redirect_uri.
+  const badAuthorize = async (patch: Record<string, string>) => {
+    const url = new URL(authUrl);
+    for (const [k, v] of Object.entries(patch)) url.searchParams.set(k, v);
+    const res = await fetch(url, { redirect: "manual" });
+    return {
+      status: res.status,
+      location: res.headers.get("location") ?? "",
+      type: res.headers.get("content-type") ?? "",
+      html: await res.text(),
+    };
+  };
+  const implicit = await badAuthorize({ response_type: "token" });
+  ok(
+    "authorize response_type=token -> 400 page, no redirect",
+    implicit.status === 400 && !implicit.location && implicit.type.includes("text/html"),
+    JSON.stringify({ status: implicit.status, location: implicit.location })
+  );
+  const foreign = await badAuthorize({ resource: "https://evil.example/mcp" });
+  ok(
+    "authorize with a foreign resource -> invalid_target",
+    (foreign.status === 400 && foreign.html.includes("invalid_target")) ||
+      (foreign.status === 302 && foreign.location.includes("error=invalid_target")),
+    JSON.stringify({ status: foreign.status, location: foreign.location })
+  );
 
   // 3b. Google sign-in wiring
   if (!externalBase) {
     ok("login page offers Google", authHtml.includes(`/auth/google?request_id=`));
-    const gStart = await fetch(`${BASE}/auth/google?request_id=${requestId}`, { redirect: "manual" });
+    const gNoCookie = await fetch(`${BASE}/auth/google?request_id=${requestId}`, { redirect: "manual" });
+    ok("google start without the browser cookie -> 400", gNoCookie.status === 400);
+    const gStart = await fetch(`${BASE}/auth/google?request_id=${requestId}`, { redirect: "manual", headers: { cookie } });
     const gLoc = gStart.headers.get("location") ?? "";
     ok(
       "google start -> 302 to accounts.google.com",
@@ -490,22 +541,17 @@ async function main(): Promise<void> {
   const gBadState = await fetch(`${BASE}/auth/google/callback?state=bogus&code=x`, { redirect: "manual" });
   ok("google callback with bogus state rejected", gBadState.status === 400 || gBadState.status === 404);
 
-  // 4. Wrong password rejected
-  const badLogin = await fetch(`${BASE}/login`, {
-    method: "POST",
-    headers: { "content-type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({ request_id: requestId!, email: EMAIL, password: "wrong" }),
-    redirect: "manual",
-  });
+  // 4. Wrong password rejected; the right one from another browser too
+  const badLogin = await loginPost(requestId!, "wrong", cookie);
   ok("wrong password -> 401", badLogin.status === 401);
+  const otherBrowser = await loginPost(requestId!, PASSWORD, "");
+  ok(
+    "login without the browser cookie -> 400",
+    otherBrowser.status === 400 && (await otherBrowser.text()).includes("different browser")
+  );
 
   // 5. Login -> code
-  const login = await fetch(`${BASE}/login`, {
-    method: "POST",
-    headers: { "content-type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({ request_id: requestId!, email: EMAIL, password: PASSWORD }),
-    redirect: "manual",
-  });
+  const login = await loginPost(requestId!, PASSWORD, cookie);
   const location = login.headers.get("location") ?? "";
   const cbUrl = new URL(location);
   const code = cbUrl.searchParams.get("code");
@@ -522,7 +568,8 @@ async function main(): Promise<void> {
   });
   ok("wrong PKCE verifier rejected", badToken.status === 400);
 
-  // 7. Token exchange
+  // 7. Token exchange, sent twice at once: the code is consumed atomically,
+  // so exactly one of two concurrent redemptions gets tokens
   const codeExchange = {
     grant_type: "authorization_code",
     code: code!,
@@ -530,7 +577,13 @@ async function main(): Promise<void> {
     client_id: client.client_id,
     redirect_uri: REDIRECT_URI,
   };
-  const tokenRes = await tokenPost(codeExchange);
+  const exchanges = await Promise.all([tokenPost(codeExchange), tokenPost(codeExchange)]);
+  ok(
+    "concurrent double redemption: exactly one 200",
+    exchanges.filter((r) => r.status === 200).length === 1,
+    JSON.stringify(exchanges.map((r) => r.status))
+  );
+  const tokenRes = exchanges.find((r) => r.status === 200) ?? exchanges[0]!;
   const tokens: any = await tokenRes.json();
   ok(
     "code -> tokens",
@@ -1562,8 +1615,13 @@ async function main(): Promise<void> {
     ok("get_settings (read-only prod smoke)", !!s.base_currency, JSON.stringify(s));
   }
 
-  // 13. Refresh token rotation
+  // 13. Refresh token rotation. The grant was authorized without a scope: a
+  // refresh may not widen it, and the refused attempt leaves the token usable.
   const refreshGrant = { grant_type: "refresh_token", refresh_token: tokens.refresh_token, client_id: client.client_id };
+  ok(
+    "refresh with a scope not granted -> invalid_scope",
+    (await oauthError(await tokenPost({ ...refreshGrant, scope: "finance" }))) === "invalid_scope"
+  );
   const refreshRes = await tokenPost(refreshGrant);
   const refreshed: any = await refreshRes.json();
   ok("refresh -> new tokens", refreshRes.status === 200 && !!refreshed.access_token);

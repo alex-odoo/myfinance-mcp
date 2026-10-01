@@ -25,10 +25,20 @@ export async function bootstrapUser(): Promise<void> {
   });
 }
 
+/** The verified email belongs to an account already linked to another Google identity. */
+export class GoogleAccountConflictError extends Error {
+  constructor() {
+    super("email is linked to a different Google account");
+  }
+}
+
 /**
- * Google sign-in provisioning. Identity anchor is Google's stable `sub`;
- * a user who signed up by email first gets the sub linked on first Google
- * login (same verified email = same person, Google enforces verification).
+ * Google sign-in provisioning. Identity anchor is Google's stable `sub`. An
+ * account without a Google identity yet (created with a password, like the
+ * bootstrapped operator) is linked on its first Google sign-in with the same
+ * verified email. An account linked to a different sub is refused, never
+ * re-linked: a reassigned Workspace mailbox or a re-registered domain hands
+ * the same address to another person.
  */
 export async function findOrCreateGoogleUser(email: string, sub: string): Promise<SessionUser> {
   const bySub = await db.user.findUnique({ where: { googleSub: sub } });
@@ -37,7 +47,13 @@ export async function findOrCreateGoogleUser(email: string, sub: string): Promis
   const normalized = email.trim().toLowerCase();
   const byEmail = await db.user.findUnique({ where: { email: normalized } });
   if (byEmail) {
-    await db.user.update({ where: { id: byEmail.id }, data: { googleSub: sub } });
+    // Conditional write: links only while no Google identity is set, so two
+    // first sign-ins racing cannot both claim the account.
+    const { count } = await db.user.updateMany({
+      where: { id: byEmail.id, googleSub: null },
+      data: { googleSub: sub },
+    });
+    if (count !== 1) throw new GoogleAccountConflictError();
     return { id: byEmail.id, email: byEmail.email };
   }
 

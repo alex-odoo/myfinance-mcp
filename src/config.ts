@@ -1,6 +1,12 @@
 export const config = {
   port: Number(process.env.PORT ?? 8788),
   baseUrl: (process.env.BASE_URL ?? "http://localhost:8788").replace(/\/$/, ""),
+  // Older public origins served by this same container (existing connectors
+  // still use them), comma-separated. Tokens bound to them stay valid here.
+  legacyBaseUrls: (process.env.LEGACY_BASE_URLS ?? "https://finance.rteam.agency")
+    .split(",")
+    .map((url) => url.trim().replace(/\/$/, ""))
+    .filter(Boolean),
   userEmail: (process.env.MYFINANCE_MCP_EMAIL ?? "").toLowerCase(),
   passwordHash: process.env.MYFINANCE_MCP_PASSWORD_HASH ?? "",
   databaseUrl: process.env.DATABASE_URL ?? "",

@@ -5,11 +5,44 @@ function escapeHtml(value: string): string {
     .replaceAll("&", "&amp;")
     .replaceAll("<", "&lt;")
     .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;");
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
 }
 
-export function loginPage(requestId: string, clientName?: string, error?: string): string {
-  const app = clientName ? escapeHtml(clientName) : "your AI client";
+/** The client a sign-in page is for: its self-chosen name and where the code goes. */
+export interface LoginClient {
+  name?: string;
+  redirectUri?: string;
+}
+
+const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
+// Redirect hosts of the AI clients we know (and their subdomains).
+const KNOWN_CLIENT_HOSTS = ["claude.ai", "claude.com", "chatgpt.com", "chat.openai.com"];
+const THIS_DEVICE = "an app on this device";
+
+/**
+ * client_name is whatever an anonymous registration chose ("Claude" costs
+ * nothing), so the page also names the host that receives the authorization
+ * code, and flags hosts that are not a known AI client.
+ */
+function destination(redirectUri: string): { label: string; unknownHost?: string } {
+  let url: URL;
+  try {
+    url = new URL(redirectUri);
+  } catch {
+    return { label: redirectUri, unknownHost: redirectUri };
+  }
+  // Custom schemes (cursor://, vscode://) and loopback hand the code to a local app.
+  if (url.protocol !== "http:" && url.protocol !== "https:") return { label: THIS_DEVICE };
+  if (LOOPBACK_HOSTS.has(url.hostname)) return { label: THIS_DEVICE };
+  const host = url.hostname;
+  const known = KNOWN_CLIENT_HOSTS.some((k) => host === k || host.endsWith(`.${k}`));
+  return { label: host, unknownHost: known ? undefined : host };
+}
+
+export function loginPage(requestId: string, client?: LoginClient, error?: string): string {
+  const app = client?.name ? escapeHtml(client.name) : "your AI client";
+  const dest = client?.redirectUri ? destination(client.redirectUri) : undefined;
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -31,6 +64,9 @@ export function loginPage(requestId: string, clientName?: string, error?: string
            background: #111; color: #fff; font-size: 15px; cursor: pointer; }
   .error { background: #fdecec; color: #b3261e; border-radius: 8px; padding: 10px;
            font-size: 13px; margin-bottom: 8px; }
+  .dest { margin-top: -14px; }
+  .warn { background: #fff4e5; color: #8a4b00; border-radius: 8px; padding: 10px;
+          font-size: 13px; margin-bottom: 16px; }
   .google { display: flex; align-items: center; justify-content: center; gap: 10px;
             width: 100%; padding: 10px; border: 1px solid #dadce0; border-radius: 8px;
             background: #fff; color: #3c4043; font-size: 15px; font-weight: 500;
@@ -45,6 +81,12 @@ export function loginPage(requestId: string, clientName?: string, error?: string
 <div class="card">
   <h1>MyFinance MCP</h1>
   <p>Sign in to connect ${app} to your finances.</p>
+  ${dest ? `<p class="dest">After sign-in you return to <b>${escapeHtml(dest.label)}</b>.</p>` : ""}
+  ${
+    dest?.unknownHost
+      ? `<div class="warn">${escapeHtml(dest.unknownHost)} is not an AI client we recognise. Continue only if you started this connection yourself.</div>`
+      : ""
+  }
   ${error ? `<div class="error">${escapeHtml(error)}</div>` : ""}
   ${
     requestId && config.googleClientId && config.googleClientSecret

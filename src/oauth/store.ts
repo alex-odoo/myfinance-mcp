@@ -1,4 +1,6 @@
 import type { OAuthClientInformationFull } from "@modelcontextprotocol/sdk/shared/auth.js";
+import { InvalidGrantError } from "@modelcontextprotocol/sdk/server/auth/errors.js";
+import type { Prisma } from "../generated/prisma/client";
 import { db } from "../db";
 
 export interface AuthCodeRecord {
@@ -18,6 +20,23 @@ export interface TokenRecord {
   resource?: string;
   expiresAt: number;
 }
+
+/** A new access + refresh pair: written together with the grant it consumes, or not at all. */
+export interface IssuedTokens {
+  accessToken: string;
+  refreshToken: string;
+  access: TokenRecord;
+  refresh: TokenRecord;
+}
+
+const tokenRow = (token: string, r: TokenRecord) => ({
+  token,
+  clientId: r.clientId,
+  scopes: r.scopes,
+  userId: r.userId,
+  resource: r.resource,
+  expiresAt: new Date(r.expiresAt),
+});
 
 /**
  * Until 2026-09-27 the SDK stamped every DCR secret with a 30-day expiry;
@@ -85,20 +104,34 @@ export class OAuthStore {
     };
   }
 
-  async deleteCode(code: string): Promise<void> {
-    await db.oauthCode.deleteMany({ where: { code } });
+  /**
+   * Single use, enforced by the database: the code row is deleted and the new
+   * pair written in one transaction. Of two concurrent redemptions only one
+   * DELETE matches the row (the other waits on its lock and then finds it
+   * gone), and a failed insert rolls the code back so the client can retry.
+   */
+  async redeemCode(code: string, clientId: string, tokens: IssuedTokens): Promise<void> {
+    await db.$transaction(async (tx) => {
+      const { count } = await tx.oauthCode.deleteMany({
+        where: { code, clientId, expiresAt: { gt: new Date() } },
+      });
+      if (count !== 1) throw new InvalidGrantError("Invalid authorization code");
+      await insertTokens(tx, tokens);
+    });
   }
 
-  async saveToken(token: string, r: TokenRecord): Promise<void> {
-    await db.oauthAccessToken.create({
-      data: {
-        token,
-        clientId: r.clientId,
-        scopes: r.scopes,
-        userId: r.userId,
-        resource: r.resource,
-        expiresAt: new Date(r.expiresAt),
-      },
+  /**
+   * Refresh rotation, same rule: the presented token disappears only in the
+   * commit that writes its successor. A failed write leaves the client's
+   * token usable, and two requests racing with one token rotate it once.
+   */
+  async rotateRefreshToken(oldToken: string, clientId: string, tokens: IssuedTokens): Promise<void> {
+    await db.$transaction(async (tx) => {
+      const { count } = await tx.oauthRefreshToken.deleteMany({
+        where: { token: oldToken, clientId, expiresAt: { gt: new Date() } },
+      });
+      if (count !== 1) throw new InvalidGrantError("Invalid refresh token");
+      await insertTokens(tx, tokens);
     });
   }
 
@@ -116,19 +149,6 @@ export class OAuthStore {
 
   async deleteToken(token: string): Promise<void> {
     await db.oauthAccessToken.deleteMany({ where: { token } });
-  }
-
-  async saveRefreshToken(token: string, r: TokenRecord): Promise<void> {
-    await db.oauthRefreshToken.create({
-      data: {
-        token,
-        clientId: r.clientId,
-        scopes: r.scopes,
-        userId: r.userId,
-        resource: r.resource,
-        expiresAt: new Date(r.expiresAt),
-      },
-    });
   }
 
   async getRefreshToken(token: string): Promise<TokenRecord | undefined> {
@@ -154,4 +174,9 @@ export class OAuthStore {
     await db.oauthAccessToken.deleteMany({ where: { expiresAt: { lt: now } } });
     await db.oauthRefreshToken.deleteMany({ where: { expiresAt: { lt: now } } });
   }
+}
+
+async function insertTokens(tx: Prisma.TransactionClient, t: IssuedTokens): Promise<void> {
+  await tx.oauthAccessToken.create({ data: tokenRow(t.accessToken, t.access) });
+  await tx.oauthRefreshToken.create({ data: tokenRow(t.refreshToken, t.refresh) });
 }
