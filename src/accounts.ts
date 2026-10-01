@@ -111,51 +111,81 @@ export async function setAccountSync(
   return target.name;
 }
 
-async function inAccountCurrency(
-  amount: number,
-  txCurrency: string,
-  accCurrency: string,
-  date: Date
-): Promise<number> {
-  if (txCurrency === accCurrency) return amount;
-  const { converted } = await convert(amount, txCurrency, accCurrency, date);
-  return converted;
-}
-
 /**
  * Balance = latest snapshot (end of its date) + signed flows after it.
  * Without snapshots it is just the tracked-flow sum, which is only as complete
  * as the logging; log_balance snapshots are the honest anchor.
+ *
+ * An account without a currency (the auto-created Manual one) holds whatever
+ * was logged and is shown in the user's base. Foreign-currency flows are
+ * summed per (currency, day) and converted once per group: one FX lookup per
+ * row made get_accounts cost a round trip per transaction.
  */
-export async function computeBalance(account: {
-  id: string;
-  userId: string;
-  currency: string | null;
-}): Promise<{ balance: number; currency: string; anchoredAt?: string }> {
-  const currency = account.currency ?? "EUR";
+export async function computeBalance(
+  account: { id: string; userId: string; currency: string | null },
+  user: { baseCurrency: string; timezone: string }
+): Promise<{ balance: number; currency: string; anchoredAt?: string }> {
+  const currency = account.currency ?? user.baseCurrency;
   const snapshot = await db.balanceSnapshot.findFirst({
     where: { accountId: account.id },
     orderBy: { asOf: "desc" },
   });
-  let balance = snapshot ? Number(snapshot.amount) : 0;
-  const after = snapshot ? snapshot.asOf : undefined;
 
-  const outgoing = await db.transaction.findMany({
-    where: { accountId: account.id, ...(after ? { occurredAt: { gt: after } } : {}) },
-  });
-  for (const t of outgoing) {
-    const value = await inAccountCurrency(Number(t.amount), t.currency, currency, t.occurredAt);
-    if (t.type === "income") balance += value;
-    else balance -= value; // expense and transfer-out both leave the account
+  let balance = 0;
+  const foreign = new Map<string, { currency: string; date: Date; sum: number }>();
+  const add = (amount: number, cur: string, date: Date) => {
+    if (cur === currency) {
+      balance += amount;
+      return;
+    }
+    const key = `${cur}:${date.toISOString().slice(0, 10)}`;
+    const g = foreign.get(key) ?? { currency: cur, date, sum: 0 };
+    g.sum += amount;
+    foreign.set(key, g);
+  };
+
+  // Flows after the anchor. A snapshot logged on its own day ("my balance is
+  // X now") cannot contain cash/receipt rows the user logs later that day, so
+  // those count too; bank rows of that day are assumed already in the bank's
+  // balance (end-of-day semantics) and never counted twice.
+  let after = {};
+  if (snapshot) {
+    add(Number(snapshot.amount), snapshot.currency, snapshot.asOf);
+    const loggedOnAsOf =
+      new Intl.DateTimeFormat("en-CA", { timeZone: user.timezone }).format(snapshot.createdAt) ===
+      snapshot.asOf.toISOString().slice(0, 10);
+    after = {
+      OR: [
+        { occurredAt: { gt: snapshot.asOf } },
+        ...(loggedOnAsOf
+          ? [{ occurredAt: snapshot.asOf, source: { in: ["manual" as const, "receipt" as const] }, createdAt: { gt: snapshot.createdAt } }]
+          : []),
+      ],
+    };
   }
 
+  const outgoing = await db.transaction.findMany({
+    where: { userId: account.userId, accountId: account.id, ...after },
+    select: { type: true, amount: true, currency: true, occurredAt: true },
+  });
+  // Income adds; expense and transfer-out leave the account. A refund is a
+  // negative expense and an incoming one-legged transfer a negative transfer,
+  // so both flip sign here without special cases.
+  for (const t of outgoing) add(t.type === "income" ? Number(t.amount) : -Number(t.amount), t.currency, t.occurredAt);
+
   const incoming = await db.transaction.findMany({
-    where: { counterAccountId: account.id, type: "transfer", ...(after ? { occurredAt: { gt: after } } : {}) },
+    where: { userId: account.userId, counterAccountId: account.id, type: "transfer", ...after },
+    select: { amount: true, currency: true, counterAmount: true, counterCurrency: true, occurredAt: true },
   });
   for (const t of incoming) {
-    const amt = t.counterAmount !== null ? Number(t.counterAmount) : Number(t.amount);
-    const cur = t.counterCurrency ?? t.currency;
-    balance += await inAccountCurrency(amt, cur, currency, t.occurredAt);
+    // counterAmount and counterCurrency only ever travel together; without
+    // them the leg arrived in the sending currency.
+    const received = t.counterAmount !== null && t.counterCurrency;
+    add(received ? Number(t.counterAmount) : Number(t.amount), received ? t.counterCurrency! : t.currency, t.occurredAt);
+  }
+
+  for (const g of foreign.values()) {
+    balance += (await convert(round2(g.sum), g.currency, currency, g.date)).converted;
   }
 
   return {

@@ -123,6 +123,15 @@ export async function convert(
   return { converted: round2(amount * rate), rate };
 }
 
+/**
+ * Refuse a currency no FX source covers BEFORE it is stored on an account or
+ * as the base: every later balance, summary and net worth would fail on it.
+ */
+export async function assertConvertible(currency: string): Promise<void> {
+  if (currency === "EUR") return;
+  await convert(1, currency, "EUR", new Date(`${dateKey(new Date())}T00:00:00.000Z`));
+}
+
 export function round2(n: number): number {
   return Math.round(n * 100) / 100;
 }

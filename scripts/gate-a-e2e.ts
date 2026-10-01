@@ -17,8 +17,11 @@ import type { Subprocess } from "bun";
 const externalBase = process.argv[2];
 const PORT = 8790;
 const BASE = externalBase?.replace(/\/$/, "") ?? `http://localhost:${PORT}`;
-const EMAIL = process.env.E2E_EMAIL ?? "gate-a@test.local";
-const PASSWORD = process.env.E2E_PASSWORD ?? "gate-a-secret";
+// Spawn mode deletes and recreates its test user in the real database, so it
+// never takes an identity from the environment: E2E_EMAIL/E2E_PASSWORD are
+// the prod-smoke credentials of a REAL account.
+const EMAIL = externalBase ? (process.env.E2E_EMAIL ?? "gate-a@test.local") : "gate-a@test.local";
+const PASSWORD = externalBase ? (process.env.E2E_PASSWORD ?? "gate-a-secret") : "gate-a-secret";
 const REDIRECT_URI = "http://localhost:19999/callback";
 
 let passed = 0;
@@ -62,6 +65,8 @@ let ebStub: { stop: (closeActiveConnections?: boolean) => void } | null = null;
 const ZEN_PORT = 8791;
 const ZEN_TOKEN = "zen-e2e-token-0123456789";
 const EB_PORT = 8792;
+/** USD credit of the EB cross-currency pair, derived from the cached real rate (main). */
+let ebFxCredit = "0.00";
 
 /**
  * ZenMoney Diff API stub. Phases keyed by the cursor the server sends:
@@ -206,9 +211,9 @@ function startEbStub() {
       if (url.pathname === "/accounts/eb-acc-3/transactions") {
         return Response.json({
           transactions: [
-            // 100 EUR * 1.105 (seeded rate) = 110.50; 111.99 is within the 2%
-            // pairing tolerance (banks apply their own FX spread).
-            { entry_reference: "ref-fx-2", transaction_amount: { currency: "USD", amount: "111.99" }, credit_debit_indicator: "CRDT", status: "BOOK", booking_date: "2026-07-14", remittance_information: ["Exchanged from EUR"] },
+            // 100 EUR at the day's rate + 1%: within the 2% pairing tolerance
+            // (banks apply their own FX spread).
+            { entry_reference: "ref-fx-2", transaction_amount: { currency: "USD", amount: ebFxCredit }, credit_debit_indicator: "CRDT", status: "BOOK", booking_date: "2026-07-14", remittance_information: ["Exchanged from EUR"] },
           ],
         });
       }
@@ -244,8 +249,16 @@ async function main(): Promise<void> {
     process.env.EB_API_ORIGIN = `http://localhost:${EB_PORT}`;
     process.env.ZENMONEY_API_BASE = `http://localhost:${ZEN_PORT}`;
     // Idempotency: a previously crashed run may have left the test user behind
+    if (!EMAIL.endsWith("@test.local")) throw new Error(`refusing to wipe non-test user ${EMAIL}`);
     const { db } = await import("../src/db");
     await db.user.deleteMany({ where: { email: EMAIL } });
+    // The cross-currency pairing fixture needs the real EUR->USD rate of its
+    // date: fx_rates is the shared production cache, so a fixture rate must
+    // never be written into it. The stub's USD credit is that rate + 1%,
+    // inside the 2% pairing tolerance banks' FX spreads need.
+    const { convert } = await import("../src/fx");
+    const fxEurUsd = await convert(100, "EUR", "USD", new Date("2026-07-14T00:00:00.000Z"));
+    ebFxCredit = (Math.round(fxEurUsd.converted * 1.01 * 100) / 100).toFixed(2);
     const hash = await Bun.password.hash(PASSWORD);
     zenStub = startZenStub();
     ebStub = startEbStub();
@@ -1043,7 +1056,7 @@ async function main(): Promise<void> {
     const csvText: string = csvEnt.json?.result?.content?.[0]?.text ?? "";
     ok(
       "export filters by entity + column",
-      csvText.split("\n")[0]!.endsWith(",entity") && csvText.includes(",business") && !csvText.includes(",personal"),
+      csvText.split("\n")[0]!.includes(",entity,account,counter_account,") && csvText.includes(",business") && !csvText.includes(",personal"),
       csvText.split("\n")[0]
     );
 
@@ -1177,16 +1190,6 @@ async function main(): Promise<void> {
     await odb.account.create({
       data: { userId: testUser.id, name: "Orphan Savings", type: "bank", provider: "enablebanking", externalId: "eb-acc-2", currency: "EUR" },
     });
-    // Deterministic FX for the cross-currency pairing + merge fixtures: a rate
-    // already cached for the date short-circuits the live fetch in ensureRates.
-    await odb.fxRate.createMany({
-      data: [
-        { date: new Date("2026-07-14T00:00:00.000Z"), quote: "USD", rate: 1.105 },
-        { date: new Date("2026-07-10T00:00:00.000Z"), quote: "USD", rate: 1.105 },
-      ],
-      skipDuplicates: true,
-    });
-
     const consent = await fetch(ebStart.authorize_url);
     ok("eb consent callback succeeds", consent.status === 200 && (await consent.text()).includes("Bank connected"));
 
@@ -1198,7 +1201,7 @@ async function main(): Promise<void> {
       fxTr?.type === "transfer" &&
         Number(fxTr.amount) === 100 &&
         fxTr.currency === "EUR" &&
-        Number(fxTr.counterAmount) === 111.99 &&
+        Number(fxTr.counterAmount) === Number(ebFxCredit) &&
         fxTr.counterCurrency === "USD" &&
         !!fxTr.counterExternalId?.endsWith("ref-fx-2"),
       JSON.stringify(fxTr)
@@ -1298,8 +1301,10 @@ async function main(): Promise<void> {
 
     // 12eb4. Daily auto-sync: the server-side scheduler syncs stale connections
     const { db: adb } = await import("../src/db");
+    // The test user's connection only: this is the production database, and
+    // backdating real users' connections made prod re-pull their banks.
     await adb.bankConnection.updateMany({
-      where: { provider: "enablebanking" },
+      where: { userId: testUser.id, provider: "enablebanking" },
       data: { lastSyncAt: new Date(Date.now() - 30 * 3600 * 1000) },
     });
     const { runAutoSync } = await import("../src/autosync");
@@ -1401,6 +1406,149 @@ async function main(): Promise<void> {
     ok("merge moved unique row", mUniq.count === 1 && mUniq.transactions[0].account === "Merge Dst", JSON.stringify(mUniq.transactions));
     const mDst = mAccs.accounts.find((a: any) => a.name === "Merge Dst");
     ok("merge counter rewrite + balance", mDst?.balance === 64, JSON.stringify(mDst));
+    // 12r. Whole-repo review fixes (2026-10-01): each check pins a bug the
+    // review reproduced; ids refer to specs/review-2026-10-01.md.
+    // TR-7: an impossible date is refused, not rolled into the next month
+    ok("impossible date refused", isErr(await call("log_expense", { amount: 1, category: "other", date: "2026-09-31" })));
+    // TR-5: a currency no FX source covers never reaches an account
+    ok("unpriceable account currency refused", isErr(await call("create_account", { name: "Xyz Card", type: "card", currency: "XYZ" })));
+
+    await call("create_account", { name: "Fix Card", type: "card", currency: "EUR" });
+    await call("create_account", { name: "Fix UAH", type: "card", currency: "UAH" });
+    await call("log_balance", { account: "Fix Card", amount: 1000, date: "2026-07-01" });
+    // TW-3: a refund never absorbs the purchase it refunds; TW-5: an explicit
+    // type keeps the statement's sign (positive expense = refund)
+    await call("log_expense", { amount: 50, currency: "EUR", category: "clothing", merchant: "Mango", date: "2026-07-20" });
+    const zara = payload(await call("import_transactions", {
+      account: "Fix Card",
+      transactions: [
+        { date: "2026-07-22", amount: 50, currency: "EUR", type: "expense", merchant: "MANGO refund" },
+        { date: "2026-07-20", amount: -50, currency: "EUR", merchant: "MANGO" },
+      ],
+    }));
+    const zRows = payload(await call("get_transactions", { merchant: "mango" }));
+    ok(
+      "refund kept apart from its purchase",
+      zara.imported === 1 && zara.manual_twins_merged === 1 && zRows.total === 2 &&
+        zRows.transactions.some((t: any) => t.amount === -50) && zRows.transactions.some((t: any) => t.amount === 50),
+      JSON.stringify({ zara, rows: zRows.transactions.map((t: any) => t.amount) })
+    );
+    // TW-6: a statement credit confirms a cross-currency transfer into the account
+    await call("log_transfer", { amount: 100, from_account: "Fix Card", to_account: "Fix UAH", received_amount: 4500, received_currency: "UAH", date: "2026-07-21" });
+    const uahImp = payload(await call("import_transactions", {
+      account: "Fix UAH",
+      transactions: [{ date: "2026-07-21", amount: 4500, currency: "UAH", merchant: "From EUR card" }],
+    }));
+    ok("credit confirms the transfer leg", uahImp.imported === 0 && uahImp.skipped?.[0]?.reason === "transfer_leg_matched", JSON.stringify(uahImp));
+    // TW-5: a positive transfer row is money IN (own top-up), not out
+    await call("import_transactions", {
+      account: "Fix Card",
+      transactions: [{ date: "2026-07-25", amount: 500, currency: "EUR", type: "transfer", merchant: "Top-up from Wise" }],
+    });
+    const fixAccs = payload(await call("get_accounts", {}));
+    const fixCard = fixAccs.accounts.find((a: any) => a.name === "Fix Card");
+    // 1000 - 50 purchase - 100 transfer + 50 refund + 500 top-up
+    ok("incoming transfer and refund add to the balance", fixCard?.balance === 1400, JSON.stringify(fixCard));
+    // TW-1: filler references do not swallow rows; a reused row number is a new
+    // transaction once (date-scoped key), and re-importing it is idempotent
+    const filler = payload(await call("import_transactions", {
+      account: "Fix Card",
+      transactions: [
+        { date: "2026-07-26", amount: -3, currency: "EUR", merchant: "Kiosk A", external_id: "" },
+        { date: "2026-07-26", amount: -4, currency: "EUR", merchant: "Kiosk B", external_id: "N/A" },
+      ],
+    }));
+    ok("filler external_ids do not swallow rows", filler.imported === 2, JSON.stringify(filler));
+    const rowSep = { date: "2026-07-02", amount: -12.5, currency: "EUR", merchant: "Shop X", external_id: "r001" };
+    const rowOct = { date: "2026-08-02", amount: -30, currency: "EUR", merchant: "Shop Y", external_id: "r001" };
+    const sep = payload(await call("import_transactions", { account: "Fix Card", transactions: [rowSep] }));
+    const oct = payload(await call("import_transactions", { account: "Fix Card", transactions: [rowOct] }));
+    const octAgain = payload(await call("import_transactions", { account: "Fix Card", transactions: [rowOct] }));
+    ok(
+      "reused row-number id imports the new transaction once",
+      sep.imported === 1 && oct.imported === 1 && oct.external_id_conflicts === 1 && octAgain.imported === 0,
+      JSON.stringify({ oct, octAgain })
+    );
+    // TW-4: a merged hand-logged row leaves the fuzzy pool for good
+    await call("log_expense", { amount: 8, currency: "EUR", category: "transport", merchant: "Metro", date: "2026-07-27" });
+    const metro1 = payload(await call("import_transactions", {
+      account: "Fix Card",
+      transactions: [
+        { date: "2026-07-27", amount: -8, currency: "EUR", merchant: "METRO" },
+        { date: "2026-07-28", amount: -8, currency: "EUR", merchant: "METRO" },
+      ],
+    }));
+    const metro2 = payload(await call("import_transactions", {
+      account: "Fix Card",
+      transactions: [
+        { date: "2026-07-28", amount: -8, currency: "EUR", merchant: "METRO" },
+        { date: "2026-07-29", amount: -8, currency: "EUR", merchant: "METRO" },
+      ],
+    }));
+    const metro = payload(await call("get_transactions", { merchant: "metro", limit: 2 }));
+    ok(
+      "merged hand-logged row is not merged again",
+      metro1.manual_twins_merged === 1 && metro2.imported === 1 && metro.total === 3,
+      JSON.stringify({ metro1, metro2, total: metro.total })
+    );
+    // TR-11: paging reports the real total and never repeats a row
+    const metroP2 = payload(await call("get_transactions", { merchant: "metro", limit: 2, offset: metro.next_offset }));
+    ok(
+      "get_transactions pages with total/has_more",
+      metro.has_more === true && metroP2.count === 1 && metroP2.has_more === false &&
+        !metroP2.transactions.some((t: any) => metro.transactions.some((u: any) => u.id === t.id)),
+      JSON.stringify({ next: metro.next_offset, p2: metroP2.count })
+    );
+    // TW-7: income converted to a transfer survives a re-import of its statement
+    const fromWise = { date: "2026-07-23", amount: 1000, currency: "UAH", merchant: "Payout 777", external_id: "uah-777" };
+    const w1 = payload(await call("import_transactions", { account: "Fix UAH", transactions: [fromWise] }));
+    const wiseRow = payload(await call("get_transactions", { merchant: "Payout 777" })).transactions[0];
+    await call("update_transaction", { id: wiseRow.id, type: "transfer", counter_account: "Fix Card" });
+    const w2 = payload(await call("import_transactions", { account: "Fix UAH", transactions: [fromWise] }));
+    ok(
+      "converted income is found as its transfer leg",
+      w1.imported === 1 && w2.imported === 0 && w2.skipped?.[0]?.reason === "merged_transfer_leg",
+      JSON.stringify(w2)
+    );
+    // TW-15: a row moves to another account
+    const kioskA = payload(await call("get_transactions", { merchant: "Kiosk A" })).transactions[0];
+    await call("update_transaction", { id: kioskA.id, account: "Cash Stash" });
+    const kioskAfter = payload(await call("get_transactions", { merchant: "Kiosk A" })).transactions[0];
+    ok("update_transaction moves a row", kioskAfter.account === "Cash Stash", JSON.stringify(kioskAfter));
+    // TW-10: a received currency without an amount is priced, never paired raw
+    const tr10 = payload(await call("log_transfer", { amount: 10, from_account: "Fix Card", to_account: "Fix UAH", received_currency: "UAH", date: "2026-07-30" }));
+    ok("received currency alone is priced", tr10.received?.currency === "UAH" && tr10.received.amount > 100, JSON.stringify(tr10));
+    // TR-4: a snapshot logged in another currency is converted, not relabelled
+    await call("create_account", { name: "Fix Wallet", type: "bank", currency: "EUR" });
+    await call("log_balance", { account: "Fix Wallet", amount: 100, currency: "USD", date: "2026-07-14" });
+    const wallet = payload(await call("get_accounts", {})).accounts.find((a: any) => a.name === "Fix Wallet");
+    ok("foreign-currency snapshot converted", wallet?.currency === "EUR" && wallet.balance > 80 && wallet.balance < 95, JSON.stringify(wallet));
+    // TR-9: exported cells cannot run as spreadsheet formulas
+    await call("log_expense", { amount: 1, currency: "EUR", category: "other", merchant: '=HYPERLINK("https://evil.example")', date: "2026-07-31" });
+    const csvInj = (await call("export_transactions", { from: "2026-07-31", to: "2026-07-31" })).json?.result?.content?.[0]?.text ?? "";
+    ok("CSV export neutralises formulas", csvInj.includes(`"'=HYPERLINK(""https://evil.example"")"`), csvInj.split("\n")[1]);
+    // ST-10: a budget alerts once, when an expense pushes it over the cap
+    await call("set_budget", { amount: 10, category: "gifts" });
+    const g1 = payload(await call("log_expense", { amount: 8, currency: "EUR", category: "gifts", merchant: "Flowers" }));
+    const g2 = payload(await call("log_expense", { amount: 5, currency: "EUR", category: "gifts", merchant: "Card" }));
+    const g3 = payload(await call("log_expense", { amount: 1, currency: "EUR", category: "gifts", merchant: "Ribbon" }));
+    const giftAlert = (r: any) => (r.budget_alerts ?? []).some((b: any) => b.budget === "gifts");
+    ok("budget alert fires once on crossing", !giftAlert(g1) && giftAlert(g2) && !giftAlert(g3), JSON.stringify({ g1: g1.budget_alerts, g2: g2.budget_alerts, g3: g3.budget_alerts }));
+    const progress = payload(await call("get_budget_progress", {}));
+    ok("budget progress reports days left", Number.isInteger(progress.days_left) && progress.days_left >= 0 && progress.days_left <= 30, JSON.stringify({ days_left: progress.days_left }));
+    // TR-2/TR-8: a base change is atomic and converts budget caps too
+    const capOf = async () =>
+      Number((await odb.budget.findFirstOrThrow({ where: { userId: testUser.id, categoryKey: "gifts" } })).amount);
+    const capEur = await capOf();
+    const toUsd = payload(await call("update_settings", { base_currency: "USD" }));
+    const capUsd = await capOf();
+    const toEur = payload(await call("update_settings", { base_currency: "EUR" }));
+    const capBack = await capOf();
+    ok(
+      "base change converts budgets and round-trips",
+      toUsd.base_currency === "USD" && capUsd > capEur && toEur.base_currency === "EUR" && Math.abs(capBack - capEur) <= 0.02,
+      JSON.stringify({ capEur, capUsd, capBack })
+    );
     void handLogged;
   } else {
     const settings = await mcpCall(tokens.access_token, {
