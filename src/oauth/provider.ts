@@ -481,8 +481,12 @@ export class FinanceOAuthProvider implements OAuthServerProvider {
     // RFC 6749 section 6: a refresh may narrow the grant, never widen it.
     // Scopes this server does not know grant nothing and are ignored, as at
     // /authorize (a client may repeat the odd scope it asked for there).
+    // A grant stored without scopes predates scope checks and meant all of
+    // this server (prod holds such grants); refusing "finance" on it would
+    // drop those connectors on their next refresh.
     const requested = knownScopes(scopes);
-    if (requested.some((s) => !record.scopes.includes(s))) {
+    const granted = record.scopes.length ? record.scopes : SUPPORTED_SCOPES;
+    if (requested.some((s) => !granted.includes(s))) {
       throw new InvalidScopeError("Requested scope exceeds the original grant");
     }
     // A narrower request applies to the access token; the refresh token keeps
@@ -494,7 +498,7 @@ export class FinanceOAuthProvider implements OAuthServerProvider {
       record.scopes,
       bindResource(record.resource, resource)
     );
-    await this.store.rotateRefreshToken(refreshToken, client.client_id, tokens);
+    await this.store.rotateRefreshToken(refreshToken, client.client_id, tokens, config.refreshReuseGraceMs);
     void this.store.pruneExpired().catch((e: unknown) => {
       console.error("[oauth] prune failed:", e instanceof Error ? e.message : String(e));
     });

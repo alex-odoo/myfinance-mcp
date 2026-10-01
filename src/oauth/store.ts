@@ -121,16 +121,27 @@ export class OAuthStore {
   }
 
   /**
-   * Refresh rotation, same rule: the presented token disappears only in the
-   * commit that writes its successor. A failed write leaves the client's
-   * token usable, and two requests racing with one token rotate it once.
+   * Refresh rotation, same rule: the presented token is retired only in the
+   * commit that writes its successor, so a failed write leaves it usable.
+   * Retired = its expiry cut to `graceMs` from now, not deleted: a client that
+   * refreshes in parallel (the old code tolerated it) gets a pair on every
+   * request instead of invalid_grant on all but one, which drops a connector.
+   * The cut applies once; a reuse inside the window never extends it.
    */
-  async rotateRefreshToken(oldToken: string, clientId: string, tokens: IssuedTokens): Promise<void> {
+  async rotateRefreshToken(oldToken: string, clientId: string, tokens: IssuedTokens, graceMs: number): Promise<void> {
     await db.$transaction(async (tx) => {
-      const { count } = await tx.oauthRefreshToken.deleteMany({
-        where: { token: oldToken, clientId, expiresAt: { gt: new Date() } },
+      const now = new Date();
+      const graceEnd = new Date(now.getTime() + graceMs);
+      const { count: retired } = await tx.oauthRefreshToken.updateMany({
+        where: { token: oldToken, clientId, expiresAt: { gt: graceEnd } },
+        data: { expiresAt: graceEnd },
       });
-      if (count !== 1) throw new InvalidGrantError("Invalid refresh token");
+      if (retired !== 1) {
+        const stillValid = await tx.oauthRefreshToken.count({
+          where: { token: oldToken, clientId, expiresAt: { gt: now } },
+        });
+        if (stillValid !== 1) throw new InvalidGrantError("Invalid refresh token");
+      }
       await insertTokens(tx, tokens);
     });
   }

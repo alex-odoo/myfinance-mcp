@@ -23,6 +23,8 @@ const BASE = externalBase?.replace(/\/$/, "") ?? `http://localhost:${PORT}`;
 const EMAIL = externalBase ? (process.env.E2E_EMAIL ?? "gate-a@test.local") : "gate-a@test.local";
 const PASSWORD = externalBase ? (process.env.E2E_PASSWORD ?? "gate-a-secret") : "gate-a-secret";
 const REDIRECT_URI = "http://localhost:19999/callback";
+/** Short refresh-reuse grace for the spawned server, so expiry is testable. */
+const E2E_REFRESH_GRACE_MS = 1500;
 
 let passed = 0;
 function ok(name: string, cond: boolean, detail?: string): void {
@@ -275,6 +277,7 @@ async function main(): Promise<void> {
         GOOGLE_CLIENT_SECRET: "e2e-google-secret",
         ZENMONEY_API_BASE: `http://localhost:${ZEN_PORT}`,
         TOKEN_ENC_KEY: "ab".repeat(32),
+        REFRESH_REUSE_GRACE_MS: String(E2E_REFRESH_GRACE_MS),
         EB_APP_ID: "e2e-eb-app",
         EB_PRIVATE_KEY_B64: Buffer.from(ebKey).toString("base64"),
         EB_API_ORIGIN: `http://localhost:${EB_PORT}`,
@@ -1615,18 +1618,24 @@ async function main(): Promise<void> {
     ok("get_settings (read-only prod smoke)", !!s.base_currency, JSON.stringify(s));
   }
 
-  // 13. Refresh token rotation. The grant was authorized without a scope: a
-  // refresh may not widen it, and the refused attempt leaves the token usable.
+  // 13. Refresh token rotation. A refresh never widens the grant (unknown
+  // scopes grant nothing). The rotated token survives a short grace window,
+  // so parallel refreshes by one client all succeed, then it dies.
   const refreshGrant = { grant_type: "refresh_token", refresh_token: tokens.refresh_token, client_id: client.client_id };
+  const widenRes = await tokenPost({ ...refreshGrant, scope: "admin finance:write" });
+  const widened = (await widenRes.json()) as { scope?: string };
   ok(
-    "refresh with a scope not granted -> invalid_scope",
-    (await oauthError(await tokenPost({ ...refreshGrant, scope: "finance" }))) === "invalid_scope"
+    "refresh never widens the grant",
+    widenRes.status === 200 && !String(widened.scope ?? "").includes("admin"),
+    JSON.stringify({ status: widenRes.status, scope: widened.scope })
   );
   const refreshRes = await tokenPost(refreshGrant);
   const refreshed: any = await refreshRes.json();
-  ok("refresh -> new tokens", refreshRes.status === 200 && !!refreshed.access_token);
-  const oldRefresh = await tokenPost(refreshGrant);
-  ok("old refresh token invalidated", oldRefresh.status === 400);
+  ok("rotated refresh token works inside the grace window", refreshRes.status === 200 && !!refreshed.access_token);
+  if (!externalBase) {
+    await Bun.sleep(E2E_REFRESH_GRACE_MS + 300);
+    ok("rotated refresh token dies after the grace window", (await tokenPost(refreshGrant)).status === 400);
+  }
   const pingNew = await mcpCall(refreshed.access_token, {
     jsonrpc: "2.0",
     id: 4,

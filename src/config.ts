@@ -35,6 +35,9 @@ export const config = {
   // Bank connections are auto-synced roughly daily; each tick syncs whatever
   // is >20h stale. 0 disables the scheduler (manual sync_bank still works).
   autoSyncIntervalMs: Number(process.env.AUTO_SYNC_INTERVAL_MS ?? 60 * 60 * 1000),
+  // A rotated refresh token keeps working this long: a client that refreshes
+  // in parallel must not lose its connector to the request that came second.
+  refreshReuseGraceMs: Number(process.env.REFRESH_REUSE_GRACE_MS ?? 30_000),
   // Commit baked into the image by deploy.sh (Docker build arg). /health
   // reports it so a deploy can prove the new container is the one serving.
   gitSha: process.env.GIT_SHA ?? "dev",
