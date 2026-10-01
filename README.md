@@ -1,6 +1,6 @@
 # MyFinance MCP
 
-A remote MCP server for personal finance - log expenses by talking, snap receipt photos, import whole bank statements, and get budgets, trends and net worth computed for you, in any currency.
+A remote MCP server for personal finance - log expenses by talking, snap receipt photos, import whole bank statements, and get budgets, trends and net worth computed for you, in 30+ currencies.
 
 **Website:** [myfinance-mcp.com](https://myfinance-mcp.com) · Free while in beta · Built by [Rteam](https://rteam.agency)
 
@@ -22,7 +22,7 @@ On first connect you sign in with Google or register with an email and password.
 
 - **No app, no forms, no spreadsheet.** "Spent 24.50 eur on groceries at Lidl" is the whole workflow.
 - **Every number is computed in SQL.** The server owns the data and the math; the AI reads the results, it never guesses arithmetic.
-- **Any currency.** Transactions keep their original currency; the FX rate to your base currency is frozen at transaction date, so history never rewrites itself.
+- **30+ currencies.** Transactions keep their original currency (the ECB reference currencies plus UAH and AED); the FX rate to your base currency is frozen at transaction date, so history never rewrites itself.
 - **Statements in one message.** Drop a CSV/PDF export; hundreds of rows import in one call with idempotent deduplication, hand-logged twins merged, totals reconciled.
 - **Personal vs business.** Entity tag on accounts and transactions, filterable everywhere, included in CSV export for your accountant.
 - **Dashboards in the chat.** Budgets, trends, summaries and accounts render as interactive panels (MCP Apps) right in the conversation.
@@ -51,16 +51,16 @@ On first connect you sign in with Google or register with an email and password.
 | `merge_accounts`      | Fold one account into another: move rows, de-duplicate both sides, rewrite transfers               |
 | `get_accounts`        | All accounts with balances and net worth, converted to base currency                               |
 | `get_summary`         | Period totals by category, merchant or month; expense or income breakdown, category drill-down and exclusions |
-| `get_transactions`    | List and filter raw transactions                                                                   |
+| `get_transactions`    | List and filter transactions, paged (total, has_more, offset)                                      |
 | `get_trends`          | Month-over-month spending trends and deltas                                                        |
-| `set_budget`          | Monthly cap per category or overall                                                                |
+| `set_budget`          | Monthly cap per category or overall; a log or import that crosses it says so                       |
 | `get_budget_progress` | Live budget progress with days left; renders as a dashboard                                        |
-| `update_transaction`  | Fix any field of an existing transaction, including its type (e.g. turn a cash withdrawal into a transfer); category fixes are remembered per merchant for future syncs |
+| `update_transaction`  | Fix any field of an existing transaction, including its type (e.g. turn a cash withdrawal into a transfer) or its account; category fixes are remembered per merchant for future syncs |
 | `delete_transaction`  | Delete one transaction by id                                                                       |
 | `delete_transactions` | Bulk delete by ids                                                                                 |
 | `get_settings`        | Base currency and timezone                                                                         |
 | `update_settings`     | Change base currency or timezone                                                                   |
-| `export_transactions` | Full CSV export (includes the entity column for accountant handoff)                                |
+| `export_transactions` | CSV export, 2000 rows per page: account, transfer counterpart, entity and receipt items on every row |
 | `connect_bank`        | Link a real bank via open banking (Enable Banking, EU/UK): list banks, start consent, status, per-account sync toggle, disconnect |
 | `sync_bank`           | Pull booked transactions and balances from the connected bank; incremental, transfer pairing, dedup-safe. Healthy connections also auto-sync server-side roughly daily |
 | `connect_zenmoney`    | Link a ZenMoney account (international and .ru backends auto-detected) for read-only sync          |
@@ -80,7 +80,7 @@ Four tools return an interactive dashboard (`ui://myfinancemcp/dashboard`) rende
 - All 27 tools carry MCP annotations (read-only and destructive ops flagged, connector tools marked open-world), so clients can gate confirmations correctly.
 - Bank access is strictly read-only: open banking consent via Enable Banking (the bank authenticates the user; we never see credentials), ZenMoney via the user's own API token. Session ids and tokens are stored AES-256-GCM encrypted.
 - CSV export and instant full deletion are tools, not support tickets.
-- Hosted instance: EU data residency, row-level security keyed to your account.
+- Hosted instance: EU data residency (Supabase, eu-central-1), TLS to the database with a pinned CA. Every query is scoped to your account by the server; the database's own API is closed to everyone (row-level security, deny-all).
 - 179 automated end-to-end checks (full OAuth flow for public and confidential clients, every tool, import dedup semantics, GDPR deletion) run as a hard deploy gate; CI runs lint and typecheck on every push.
 
 See [SECURITY.md](SECURITY.md) for the disclosure policy.
@@ -93,12 +93,15 @@ MIT-licensed; runs anywhere Bun and Postgres run.
 
 Any PostgreSQL 15+ works. [Supabase](https://supabase.com) free tier is a good fit: create a project and copy the **session pooler** connection string (IPv4).
 
-Apply the schema:
+Apply the schema, then close the tables to Supabase's public Data API (Prisma creates tables with row-level security OFF, and Supabase exposes every public table to anyone holding the project's anon key). Re-run the second command after every `db push` that adds a table:
 
 ```bash
 bun install
 bunx prisma db push
+psql "$DATABASE_URL" -f prisma/rls.sql
 ```
+
+Database TLS: Supabase hosts are verified against Supabase's root CA automatically; for any other host, put `sslmode=` in `DATABASE_URL`.
 
 ### 2. Environment variables
 
@@ -114,6 +117,12 @@ bunx prisma db push
 | `RESEND_API_KEY`              | _(optional)_ Resend key for new-signup email notifications         |
 | `NOTIFY_EMAIL`                | _(optional)_ Where signup notifications go                         |
 | `FROM_EMAIL`                  | _(optional)_ Verified sender for notifications                     |
+| `TELEGRAM_BOT_TOKEN`          | _(optional)_ Telegram bot for new-signup notifications             |
+| `TELEGRAM_CHAT_ID`            | _(optional)_ Chat that receives them                               |
+| `TOKEN_ENC_KEY`               | Required for ZenMoney and bank connections: 64 hex chars (`openssl rand -hex 32`), encrypts stored provider tokens |
+| `EB_APP_ID`                   | _(optional)_ Enable Banking application id; bank connections stay off until it and the key are set |
+| `EB_PRIVATE_KEY_B64`          | _(optional)_ Base64 of the Enable Banking application's private key PEM |
+| `EB_API_ORIGIN`               | _(optional)_ Enable Banking API origin, default `https://api.enablebanking.com` |
 | `AUTO_SYNC_INTERVAL_MS`       | _(optional)_ Bank auto-sync tick, default hourly (syncs connections >20h stale); `0` disables |
 
 Generate the password hash:
@@ -125,6 +134,7 @@ bun -e "console.log(await Bun.password.hash(process.argv[1]))" 'your-password'
 ### 3. Run
 
 ```bash
+cp .env.example app.env   # docker compose reads app.env, not .env
 docker compose up -d      # uses the included Dockerfile, port 8788
 ```
 
@@ -136,7 +146,7 @@ Put nginx (or any TLS-terminating proxy) in front and point `BASE_URL` at your d
 bun install
 cp .env.example .env   # fill in your values
 bun run dev            # hot reload on :8788
-bun run e2e            # self-contained end-to-end suite (spawns its own server)
+bun run e2e            # end-to-end suite (spawns its own server; WRITES to the DATABASE_URL database)
 bun run lint
 ```
 
