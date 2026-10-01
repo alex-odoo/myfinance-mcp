@@ -109,6 +109,7 @@ Database TLS: Supabase hosts are verified against Supabase's root CA automatical
 | ----------------------------- | ------------------------------------------------------------------ |
 | `PORT`                        | Server port (default `8788`)                                       |
 | `BASE_URL`                    | Public URL of the server (OAuth issuer)                            |
+| `LEGACY_BASE_URLS`            | _(optional)_ Older public origins served by the same container, comma-separated; tokens bound to them stay valid and their `/authorize` redirects to `BASE_URL` |
 | `DATABASE_URL`                | Postgres connection string                                         |
 | `MYFINANCE_MCP_EMAIL`         | Bootstrap user email                                               |
 | `MYFINANCE_MCP_PASSWORD_HASH` | Bootstrap user password hash (see below)                           |
@@ -123,6 +124,7 @@ Database TLS: Supabase hosts are verified against Supabase's root CA automatical
 | `EB_APP_ID`                   | _(optional)_ Enable Banking application id; bank connections stay off until it and the key are set |
 | `EB_PRIVATE_KEY_B64`          | _(optional)_ Base64 of the Enable Banking application's private key PEM |
 | `EB_API_ORIGIN`               | _(optional)_ Enable Banking API origin, default `https://api.enablebanking.com` |
+| `REFRESH_REUSE_GRACE_MS`      | _(optional)_ How long a rotated refresh token keeps working, default `30000` (parallel refreshes) |
 | `AUTO_SYNC_INTERVAL_MS`       | _(optional)_ Bank auto-sync tick, default hourly (syncs connections >20h stale); `0` disables |
 
 Generate the password hash:
