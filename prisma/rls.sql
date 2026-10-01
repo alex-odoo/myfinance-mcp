@@ -9,10 +9,16 @@
 --
 -- Run after every `prisma db push` that adds a table (idempotent):
 --   psql "$DATABASE_URL" -f prisma/rls.sql
+--
+-- Only tables still without RLS are touched, and a busy table fails fast:
+-- ALTER TABLE takes an ACCESS EXCLUSIVE lock, and the loop used to queue
+-- behind any long query on every deploy while holding the tables it had
+-- already locked, stalling production traffic for a gate that changed nothing.
+SET lock_timeout = '3s';
 DO $$
 DECLARE t record;
 BEGIN
-  FOR t IN SELECT tablename FROM pg_tables WHERE schemaname = 'public' LOOP
+  FOR t IN SELECT tablename FROM pg_tables WHERE schemaname = 'public' AND NOT rowsecurity LOOP
     EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY', t.tablename);
   END LOOP;
 END $$;

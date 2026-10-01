@@ -1,0 +1,17 @@
+# Build context = what the image needs (package files, prisma, src). The image
+# generates its own Prisma client: a local src/generated copied over it ran a
+# client built from whatever schema the Mac last generated. Secrets, deps and
+# the static site never belong in the context.
+.git
+.claude
+node_modules
+src/generated
+.env
+.env.*
+app.env
+state
+state-e2e
+site
+demo
+deploy
+*.log

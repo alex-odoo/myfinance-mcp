@@ -1408,6 +1408,7 @@ async function main(): Promise<void> {
     ok("merge counter rewrite + balance", mDst?.balance === 64, JSON.stringify(mDst));
     // 12r. Whole-repo review fixes (2026-10-01): each check pins a bug the
     // review reproduced; ids refer to specs/review-2026-10-01.md.
+    type Rec = { id: string; amount: number; name: string; account: string; budget: string };
     // TR-7: an impossible date is refused, not rolled into the next month
     ok("impossible date refused", isErr(await call("log_expense", { amount: 1, category: "other", date: "2026-09-31" })));
     // TR-5: a currency no FX source covers never reaches an account
@@ -1430,8 +1431,8 @@ async function main(): Promise<void> {
     ok(
       "refund kept apart from its purchase",
       zara.imported === 1 && zara.manual_twins_merged === 1 && zRows.total === 2 &&
-        zRows.transactions.some((t: any) => t.amount === -50) && zRows.transactions.some((t: any) => t.amount === 50),
-      JSON.stringify({ zara, rows: zRows.transactions.map((t: any) => t.amount) })
+        zRows.transactions.some((t: Rec) => t.amount === -50) && zRows.transactions.some((t: Rec) => t.amount === 50),
+      JSON.stringify({ zara, rows: zRows.transactions.map((t: Rec) => t.amount) })
     );
     // TW-6: a statement credit confirms a cross-currency transfer into the account
     await call("log_transfer", { amount: 100, from_account: "Fix Card", to_account: "Fix UAH", received_amount: 4500, received_currency: "UAH", date: "2026-07-21" });
@@ -1446,7 +1447,7 @@ async function main(): Promise<void> {
       transactions: [{ date: "2026-07-25", amount: 500, currency: "EUR", type: "transfer", merchant: "Top-up from Wise" }],
     });
     const fixAccs = payload(await call("get_accounts", {}));
-    const fixCard = fixAccs.accounts.find((a: any) => a.name === "Fix Card");
+    const fixCard = fixAccs.accounts.find((a: Rec) => a.name === "Fix Card");
     // 1000 - 50 purchase - 100 transfer + 50 refund + 500 top-up
     ok("incoming transfer and refund add to the balance", fixCard?.balance === 1400, JSON.stringify(fixCard));
     // TW-1: filler references do not swallow rows; a reused row number is a new
@@ -1496,7 +1497,7 @@ async function main(): Promise<void> {
     ok(
       "get_transactions pages with total/has_more",
       metro.has_more === true && metroP2.count === 1 && metroP2.has_more === false &&
-        !metroP2.transactions.some((t: any) => metro.transactions.some((u: any) => u.id === t.id)),
+        !metroP2.transactions.some((t: Rec) => metro.transactions.some((u: Rec) => u.id === t.id)),
       JSON.stringify({ next: metro.next_offset, p2: metroP2.count })
     );
     // TW-7: income converted to a transfer survives a re-import of its statement
@@ -1521,7 +1522,7 @@ async function main(): Promise<void> {
     // TR-4: a snapshot logged in another currency is converted, not relabelled
     await call("create_account", { name: "Fix Wallet", type: "bank", currency: "EUR" });
     await call("log_balance", { account: "Fix Wallet", amount: 100, currency: "USD", date: "2026-07-14" });
-    const wallet = payload(await call("get_accounts", {})).accounts.find((a: any) => a.name === "Fix Wallet");
+    const wallet = payload(await call("get_accounts", {})).accounts.find((a: Rec) => a.name === "Fix Wallet");
     ok("foreign-currency snapshot converted", wallet?.currency === "EUR" && wallet.balance > 80 && wallet.balance < 95, JSON.stringify(wallet));
     // TR-9: exported cells cannot run as spreadsheet formulas
     await call("log_expense", { amount: 1, currency: "EUR", category: "other", merchant: '=HYPERLINK("https://evil.example")', date: "2026-07-31" });
@@ -1532,7 +1533,7 @@ async function main(): Promise<void> {
     const g1 = payload(await call("log_expense", { amount: 8, currency: "EUR", category: "gifts", merchant: "Flowers" }));
     const g2 = payload(await call("log_expense", { amount: 5, currency: "EUR", category: "gifts", merchant: "Card" }));
     const g3 = payload(await call("log_expense", { amount: 1, currency: "EUR", category: "gifts", merchant: "Ribbon" }));
-    const giftAlert = (r: any) => (r.budget_alerts ?? []).some((b: any) => b.budget === "gifts");
+    const giftAlert = (r: { budget_alerts?: Rec[] }) => (r.budget_alerts ?? []).some((b: Rec) => b.budget === "gifts");
     ok("budget alert fires once on crossing", !giftAlert(g1) && giftAlert(g2) && !giftAlert(g3), JSON.stringify({ g1: g1.budget_alerts, g2: g2.budget_alerts, g3: g3.budget_alerts }));
     const progress = payload(await call("get_budget_progress", {}));
     ok("budget progress reports days left", Number.isInteger(progress.days_left) && progress.days_left >= 0 && progress.days_left <= 30, JSON.stringify({ days_left: progress.days_left }));
