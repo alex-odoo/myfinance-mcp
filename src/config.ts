@@ -14,10 +14,13 @@ export const config = {
   // only when both values are set.
   googleClientId: process.env.GOOGLE_CLIENT_ID ?? "",
   googleClientSecret: process.env.GOOGLE_CLIENT_SECRET ?? "",
-  // Signup notifications via Resend (off unless key + recipient are set).
+  // Resend: signup notifications (off unless key + recipient are set) and
+  // email sign-in codes (off unless key + sender are set).
   resendApiKey: process.env.RESEND_API_KEY ?? "",
   notifyEmail: process.env.NOTIFY_EMAIL ?? "",
   fromEmail: process.env.FROM_EMAIL ?? "",
+  // Also sends the sign-in codes; the base override lets e2e capture them.
+  resendApiBase: (process.env.RESEND_API_BASE ?? "https://api.resend.com").replace(/\/$/, ""),
   // Signup notifications via Telegram (off unless token + chat are set).
   telegramBotToken: process.env.TELEGRAM_BOT_TOKEN ?? "",
   telegramChatId: process.env.TELEGRAM_CHAT_ID ?? "",

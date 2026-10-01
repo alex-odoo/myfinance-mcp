@@ -1,7 +1,7 @@
 {
   "serverInfo": {
     "name": "myfinancemcp",
-    "version": "0.13.0"
+    "version": "0.14.0"
   },
   "authentication": {
     "required": true,
@@ -1121,6 +1121,20 @@
           }
         },
         "additionalProperties": false,
+        "$schema": "http://json-schema.org/draft-07/schema#"
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "openWorldHint": false
+      }
+    },
+    {
+      "name": "export_profile",
+      "title": "Export profile",
+      "description": "Everything except the transactions, as one JSON (GDPR portability, or a backup before moving): settings, accounts with their balance snapshots, budgets, the per-merchant category rules learned from the user's fixes, and bank/ZenMoney links (status and synced accounts; never tokens). Transactions come from export_transactions.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
         "$schema": "http://json-schema.org/draft-07/schema#"
       },
       "annotations": {

@@ -207,7 +207,9 @@ model Event {
   @@map("events")
 }
 
-// OAuth server state (moved from JSON file in Gate A; container is stateless now)
+// OAuth server state (moved from JSON file in Gate A; container is stateless now).
+// Codes and tokens are stored as the sha256 (hex) of the bearer value, never
+// the value itself: a database dump holds nothing anyone can present.
 
 model OauthClient {
   clientId  String   @id
@@ -237,8 +239,10 @@ model OauthAccessToken {
   userId    String   @db.Uuid
   resource  String?
   expiresAt DateTime
+  grantId   String?  @db.Uuid
 
   @@index([expiresAt])
+  @@index([grantId])
   @@map("oauth_access_tokens")
 }
 
@@ -249,7 +253,14 @@ model OauthRefreshToken {
   userId    String   @db.Uuid
   resource  String?
   expiresAt DateTime
+  // One sign-in = one grant; every rotation inherits it. A rotated token
+  // presented again after the grace window revokes the whole grant (replay),
+  // and grantIssuedAt caps how long a grant can be refreshed at all.
+  grantId       String?   @db.Uuid
+  grantIssuedAt DateTime?
+  rotatedAt     DateTime?
 
   @@index([expiresAt])
+  @@index([grantId])
   @@map("oauth_refresh_tokens")
 }

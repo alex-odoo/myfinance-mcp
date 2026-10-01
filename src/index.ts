@@ -1,3 +1,4 @@
+import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import express from "express";
 import { mcpAuthRouter } from "@modelcontextprotocol/sdk/server/auth/router.js";
 import { requireBearerAuth } from "@modelcontextprotocol/sdk/server/auth/middleware/bearerAuth.js";
@@ -6,7 +7,7 @@ import { config, assertConfig } from "./config";
 import { db, logEvent } from "./db";
 import { OAuthStore } from "./oauth/store";
 import { FinanceOAuthProvider, SUPPORTED_SCOPES, authorizeRequestProblem } from "./oauth/provider";
-import { loginPage } from "./oauth/login";
+import { escapeHtml, loginPage, maskEmail } from "./oauth/login";
 import { bootstrapUser } from "./users";
 import { buildMcpServer, SERVER_NAME, SERVER_VERSION } from "./mcp";
 import { EXPENSE_CATEGORIES, INCOME_CATEGORIES } from "./categories";
@@ -39,6 +40,26 @@ await db.category.createMany({
 await bootstrapUser();
 await pruneOldEvents();
 setInterval(() => void pruneOldEvents(), 24 * 60 * 60 * 1000);
+
+const store = new OAuthStore();
+// Production only: see hashLegacySecrets (the e2e gate shares this database).
+if (process.env.NODE_ENV === "production") {
+  const rekeyed = await store.hashLegacySecrets();
+  if (rekeyed) console.log(`[oauth] re-keyed ${rekeyed} stored code(s)/token(s) to their hash`);
+}
+const pruneOAuth = async () => {
+  await store.pruneExpired();
+  const dropped = await store.pruneIdleClients();
+  if (dropped) console.log(`[oauth] dropped ${dropped} idle client registration(s)`);
+};
+await pruneOAuth();
+setInterval(
+  () =>
+    void pruneOAuth().catch((e: unknown) => {
+      console.error("[oauth] prune failed:", e instanceof Error ? e.message : String(e));
+    }),
+  24 * 60 * 60 * 1000
+);
 if (config.autoSyncIntervalMs > 0) {
   // Tick failures must be visible: a silently swallowed error here once cost a
   // day of missed syncs. Error messages only - never row data (blind-logs rule).
@@ -51,7 +72,7 @@ if (config.autoSyncIntervalMs > 0) {
   );
 }
 
-const provider = new FinanceOAuthProvider(new OAuthStore());
+const provider = new FinanceOAuthProvider(store);
 
 const app = express();
 app.set("trust proxy", 1);
@@ -89,9 +110,26 @@ app.use(
     next();
   },
   express.urlencoded({ extended: false }),
-  (req, res, next) => {
+  async (req, res, next) => {
     if (req.method !== "GET" && req.method !== "POST") return next();
     const params = (req.method === "POST" ? req.body : req.query) as Record<string, unknown> | undefined;
+    // Idle registrations are pruned (OAuthStore.pruneIdleClients). The SDK
+    // answers an unknown client_id with bare JSON in the sign-in window; say
+    // what to do instead. Not a redirect: the client cannot be trusted.
+    if (typeof params?.client_id === "string" && !(await store.getClient(params.client_id))) {
+      res
+        .status(400)
+        .set("Cache-Control", "no-store")
+        .type("html")
+        .send(
+          loginPage(
+            "",
+            undefined,
+            "This connection is no longer registered with MyFinance. Remove MyFinance from your AI client's connectors and add it again."
+          )
+        );
+      return;
+    }
     const problem = authorizeRequestProblem(params ?? {});
     if (!problem) return next();
     // Leave the same trace as the oauth_error middleware below, so a client
@@ -306,32 +344,79 @@ app.get("/api/stats", async (_req, res) => {
 // Bank consent return leg (Enable Banking). The bank redirects the user here
 // after they approve or decline access; ?state ties the visit back to the
 // pending connection created by connect_bank action=start.
+//
+// Nothing is bound on arrival. A consent link can be forwarded: whoever
+// started it (any MyFinance account) would get read access to the bank of
+// whoever completes it. So the page names the MyFinance account that is about
+// to receive the access and binds only on an explicit confirm, which must
+// come from this same browser (a cookie set here), so the link's starter
+// cannot confirm it from elsewhere.
 const BANK_LINK_TTL_MS = 30 * 60 * 1000;
+const BANK_CONFIRM_TTL_MS = 10 * 60 * 1000;
+const BANK_CONFIRM_COOKIE = "mf_bank";
+const BANK_PATH = "/connect/enablebanking";
+const pageShell = (title: string, inner: string) =>
+  `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex"><title>${title}</title><style>body{font-family:-apple-system,system-ui,sans-serif;display:flex;min-height:100vh;align-items:center;justify-content:center;background:#fafaf7;color:#1c1c1a;margin:0}main{max-width:420px;padding:40px;text-align:center}h1{font-size:22px;margin:0 0 12px}p{line-height:1.5;color:#555}.mark{font-size:40px;margin-bottom:16px}form{display:flex;gap:10px;justify-content:center;margin-top:24px}button{padding:11px 20px;border-radius:8px;font-size:15px;cursor:pointer;border:1px solid #1c1c1a}.go{background:#1c1c1a;color:#fff}.stop{background:#fff;color:#1c1c1a}.who{font-size:17px;color:#1c1c1a}</style></head><body><main>${inner}</main></body></html>`;
 const callbackPage = (title: string, body: string, ok: boolean) =>
-  `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex"><title>${title}</title><style>body{font-family:-apple-system,system-ui,sans-serif;display:flex;min-height:100vh;align-items:center;justify-content:center;background:#fafaf7;color:#1c1c1a;margin:0}main{max-width:420px;padding:40px;text-align:center}h1{font-size:22px;margin:0 0 12px}p{line-height:1.5;color:#555}.mark{font-size:40px;margin-bottom:16px}</style></head><body><main><div class="mark">${ok ? "&#10003;" : "&#10007;"}</div><h1>${title}</h1><p>${body}</p></main></body></html>`;
+  pageShell(title, `<div class="mark">${ok ? "&#10003;" : "&#10007;"}</div><h1>${title}</h1><p>${body}</p>`);
+const confirmPage = (state: string, bank: string, account: string) =>
+  pageShell(
+    "Confirm bank connection",
+    `<h1>Connect ${escapeHtml(bank)} to MyFinance?</h1>` +
+      `<p>Read-only access to your ${escapeHtml(bank)} transactions and balances goes to the MyFinance account</p>` +
+      `<p class="who"><b>${escapeHtml(account)}</b></p>` +
+      `<p>Continue only if this is your account. If someone sent you this link, cancel: they would see your transactions.</p>` +
+      `<form method="post" action="${BANK_PATH}/confirm"><input type="hidden" name="state" value="${escapeHtml(state)}">` +
+      `<button class="go" name="decision" value="connect">Connect</button><button class="stop" name="decision" value="cancel">Cancel</button></form>`
+  );
 
-app.get("/connect/enablebanking/callback", async (req, res) => {
+const sha256 = (value: string) => createHash("sha256").update(value).digest();
+
+function readCookie(req: express.Request, name: string): string | undefined {
+  for (const part of (req.headers.cookie ?? "").split(";")) {
+    const eq = part.indexOf("=");
+    if (eq > 0 && part.slice(0, eq).trim() === name) return part.slice(eq + 1).trim();
+  }
+  return undefined;
+}
+
+type BankLinkMeta = Record<string, unknown> & {
+  state?: string;
+  aspsp?: { name?: string };
+  pendingCode?: string;
+  codeAt?: number;
+  confirmHash?: string;
+};
+
+async function pendingBankLink(state: string) {
+  const link = (await db.bankConnection.findMany({ where: { provider: "enablebanking" } })).find(
+    (c) => ((c.meta ?? {}) as BankLinkMeta).state === state
+  );
+  if (!link) return undefined;
+  const meta = (link.meta ?? {}) as BankLinkMeta;
+  // A consent link is good for one attempt: expiry, a decline, a cancel or a
+  // failure drops the state (and any code held for the confirm step), so
+  // whoever still holds the URL cannot complete it later.
+  const { state: _state, pendingCode: _code, codeAt: _codeAt, confirmHash: _confirm, ...rest } = meta;
+  const endAttempt = (lastError: string) =>
+    db.bankConnection.update({
+      where: { id: link.id },
+      data: { status: "error", lastError: lastError.slice(0, 500), meta: rest as object },
+    });
+  return { link, meta, rest, endAttempt };
+}
+
+app.get(`${BANK_PATH}/callback`, async (req, res) => {
   const { code, state, error, error_description: errorDescription } = req.query as Record<string, string | undefined>;
   const fail = (status: number, title: string, body: string) =>
     res.status(status).type("html").send(callbackPage(title, body, false));
   if (!state) return fail(400, "Missing state", "This link is incomplete. Restart the connection from your AI chat.");
-  const pending = (await db.bankConnection.findMany({ where: { provider: "enablebanking" } })).find(
-    (c) => ((c.meta ?? {}) as { state?: string }).state === state
-  );
+  const pending = await pendingBankLink(state);
   if (!pending) {
     return fail(400, "Unknown or expired link", "Restart the connection from your AI chat with connect_bank.");
   }
-  const meta = (pending.meta ?? {}) as Record<string, unknown>;
-  // A consent link is good for one attempt within BANK_LINK_TTL_MS: expiry,
-  // a decline or a failure drops the state, so whoever still holds the URL
-  // cannot complete it later.
-  const { state: _usedState, ...metaWithoutState } = meta;
-  const endAttempt = (lastError: string) =>
-    db.bankConnection.update({
-      where: { id: pending.id },
-      data: { status: "error", lastError: lastError.slice(0, 500), meta: metaWithoutState as object },
-    });
-  if (Date.now() - pending.updatedAt.getTime() > BANK_LINK_TTL_MS) {
+  const { link, meta, endAttempt } = pending;
+  if (Date.now() - link.updatedAt.getTime() > BANK_LINK_TTL_MS) {
     await endAttempt("Bank authorization link expired before consent");
     return fail(400, "Link expired", "Link expired, restart from your AI chat with connect_bank.");
   }
@@ -340,17 +425,63 @@ app.get("/connect/enablebanking/callback", async (req, res) => {
     return fail(400, "Authorization declined", "No access was granted. You can retry from your AI chat at any time.");
   }
   if (!code) return fail(400, "Missing code", "The bank did not return an authorization code. Please retry.");
+  const owner = await db.user.findUnique({ where: { id: link.userId }, select: { email: true } });
+  if (!owner) return fail(400, "Unknown or expired link", "Restart the connection from your AI chat with connect_bank.");
+  // Hold the bank's code until the confirm; this browser gets the key to it.
+  const browserKey = randomBytes(32).toString("base64url");
+  await db.bankConnection.update({
+    where: { id: link.id },
+    data: { meta: { ...meta, pendingCode: code, codeAt: Date.now(), confirmHash: sha256(browserKey).toString("hex") } as object },
+  });
+  res.cookie(BANK_CONFIRM_COOKIE, browserKey, {
+    httpOnly: true,
+    sameSite: "lax",
+    path: BANK_PATH,
+    maxAge: BANK_CONFIRM_TTL_MS,
+    secure: config.baseUrl.startsWith("https"),
+  });
+  res
+    .set("Cache-Control", "no-store")
+    .type("html")
+    .send(confirmPage(state, meta.aspsp?.name ?? "your bank", maskEmail(owner.email)));
+});
+
+app.post(`${BANK_PATH}/confirm`, express.urlencoded({ extended: false }), async (req, res) => {
+  const body = (req.body ?? {}) as Record<string, unknown>;
+  const state = typeof body.state === "string" ? body.state : "";
+  const fail = (status: number, title: string, text: string) =>
+    res.status(status).type("html").send(callbackPage(title, text, false));
+  const pending = state ? await pendingBankLink(state) : undefined;
+  if (!pending?.meta.pendingCode || !pending.meta.confirmHash) {
+    return fail(400, "Unknown or expired link", "Restart the connection from your AI chat with connect_bank.");
+  }
+  const { link, meta, rest, endAttempt } = pending;
+  const browserKey = readCookie(req, BANK_CONFIRM_COOKIE);
+  if (!browserKey || !timingSafeEqual(sha256(browserKey), Buffer.from(meta.confirmHash!, "hex"))) {
+    return fail(400, "Different browser", "Confirm in the browser where you approved access at your bank, or restart from your AI chat.");
+  }
+  res.clearCookie(BANK_CONFIRM_COOKIE, { path: BANK_PATH });
+  if (Date.now() - (meta.codeAt ?? 0) > BANK_CONFIRM_TTL_MS) {
+    await endAttempt("Bank connection was not confirmed in time");
+    return fail(400, "Link expired", "Link expired, restart from your AI chat with connect_bank.");
+  }
+  if (body.decision !== "connect") {
+    await endAttempt("Bank connection cancelled at the confirmation step");
+    return res
+      .type("html")
+      .send(callbackPage("Not connected", "Nothing was connected and no access was granted to anyone.", false));
+  }
   try {
-    const session = await ebCreateSession(code);
+    const session = await ebCreateSession(meta.pendingCode!);
     await db.bankConnection.update({
-      where: { id: pending.id },
+      where: { id: link.id },
       data: {
         tokenEnc: encryptToken(session.session_id),
         status: "active",
         lastError: null,
         meta: JSON.parse(
           JSON.stringify({
-            aspsp: session.aspsp ?? meta.aspsp,
+            aspsp: session.aspsp ?? rest.aspsp,
             validUntil: session.access?.valid_until,
             accountsInfo: session.accounts,
           })

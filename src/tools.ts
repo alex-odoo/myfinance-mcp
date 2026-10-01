@@ -15,6 +15,7 @@ import { syncEnableBanking } from "./enablebanking/sync";
 import { rememberMerchantCategory } from "./merchantMemory";
 import type { EbConnectionMeta } from "./enablebanking/sync";
 import type { TxType } from "./generated/prisma/enums";
+import { Prisma } from "./generated/prisma/client";
 
 const ALL_CATEGORIES = new Set<string>([...EXPENSE_CATEGORIES, ...INCOME_CATEGORIES]);
 
@@ -1841,12 +1842,13 @@ export function registerFinanceTools(server: McpServer, userId: string): void {
         await asBaseSwitch(userId, async () => {
           const current = await getUser(userId); // a switch that ran first may have changed it
           if (current.baseCurrency === newBase) return;
-          // Price every row BEFORE writing anything, then switch rows, budget
-          // caps and the base in one transaction: a failure half-way used to
-          // leave history in two currencies under one base, with no way back.
+          // Price every (currency, day) BEFORE writing anything, then switch
+          // rows, budget caps and the base in one transaction: a failure
+          // half-way used to leave history in two currencies under one base.
           const rates = new Map<string, number>();
+          const dayKey = (cur: string, date: Date) => `${cur}:${date.toISOString().slice(0, 10)}`;
           const rateTo = async (cur: string, date: Date) => {
-            const key = `${cur}:${date.toISOString().slice(0, 10)}`;
+            const key = dayKey(cur, date);
             let rate = rates.get(key);
             if (rate === undefined) {
               rate = (await convert(1, cur, newBase, date)).rate;
@@ -1854,33 +1856,52 @@ export function registerFinanceTools(server: McpServer, userId: string): void {
             }
             return rate;
           };
-          const rows = await db.transaction.findMany({
+          const pairs = await db.transaction.findMany({
             where: { userId },
-            select: { id: true, amount: true, currency: true, occurredAt: true },
+            select: { currency: true, occurredAt: true },
+            distinct: ["currency", "occurredAt"],
           });
-          const repriced: Array<{ id: string; amountBase: number; fxRate: number }> = [];
-          for (const t of rows) {
-            const rate = await rateTo(t.currency, t.occurredAt);
-            repriced.push({ id: t.id, amountBase: round2(Number(t.amount) * rate), fxRate: rate });
-          }
+          for (const p of pairs) await rateTo(p.currency, p.occurredAt);
           // Budget caps are amounts in the base currency too.
-          const budgets = await db.budget.findMany({ where: { userId } });
-          const budgetRate = budgets.length ? await rateTo(current.baseCurrency, parseDate(todayIn(current.timezone))) : 1;
-          // One UPDATE per row: Prisma cannot set a column from another one, and
-          // the rows hold distinct amounts. Large histories take a while; the
-          // gate keeps writers out meanwhile.
-          await db.$transaction(
-            async (px) => {
-              for (const r of repriced) {
-                await px.transaction.update({ where: { id: r.id }, data: { amountBase: r.amountBase, fxRate: r.fxRate } });
-              }
-              for (const b of budgets) {
-                await px.budget.update({ where: { id: b.id }, data: { amount: round2(Number(b.amount) * budgetRate) } });
-              }
-              await px.user.update({ where: { id: userId }, data: { baseCurrency: newBase } });
-            },
-            { timeout: 10 * 60_000, maxWait: 15_000 }
-          );
+          const budgetRate = await rateTo(current.baseCurrency, parseDate(todayIn(current.timezone)));
+          // Every row is rewritten in a few statements: delete and re-insert
+          // with the new base (Prisma cannot set a column from another one,
+          // and one UPDATE per row took minutes on a long history). Columns
+          // are copied as read, updatedAt included, so a switch is no user
+          // edit to the syncs. REPEATABLE READ: an edit by a tool outside the
+          // base gate (category, merge, delete) between this read and the
+          // rewrite aborts the switch instead of being overwritten.
+          const rewrite = () =>
+            db.$transaction(
+              async (px) => {
+                const rows = await px.transaction.findMany({ where: { userId } });
+                const data = rows.map((t) => {
+                  const rate = rates.get(dayKey(t.currency, t.occurredAt));
+                  if (rate === undefined) throw new Error("History changed during the base currency switch. Retry.");
+                  return {
+                    ...t,
+                    items: t.items === null ? Prisma.DbNull : (t.items as Prisma.InputJsonValue),
+                    amountBase: round2(Number(t.amount) * rate),
+                    fxRate: rate,
+                  };
+                });
+                await px.transaction.deleteMany({ where: { userId } });
+                await px.transaction.createMany({ data });
+                const budgets = await px.budget.findMany({ where: { userId } });
+                for (const b of budgets) {
+                  await px.budget.update({ where: { id: b.id }, data: { amount: round2(Number(b.amount) * budgetRate) } });
+                }
+                await px.user.update({ where: { id: userId }, data: { baseCurrency: newBase } });
+              },
+              { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead, timeout: 5 * 60_000, maxWait: 15_000 }
+            );
+          try {
+            await rewrite();
+          } catch (e) {
+            // P2034: a concurrent write conflicted. One retry on fresh rows.
+            if (!(e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2034")) throw e;
+            await rewrite();
+          }
         });
       }
       const updated = await db.user.update({
@@ -1969,6 +1990,73 @@ export function registerFinanceTools(server: McpServer, userId: string): void {
             : []),
         ],
       };
+    }
+  );
+
+  server.registerTool(
+    "export_profile",
+    {
+      title: "Export profile",
+      annotations: { readOnlyHint: true, openWorldHint: false },
+      description:
+        "Everything except the transactions, as one JSON (GDPR portability, or a backup before moving): settings, accounts with their balance snapshots, budgets, the per-merchant category rules learned from the user's fixes, and bank/ZenMoney links (status and synced accounts; never tokens). Transactions come from export_transactions.",
+      inputSchema: {},
+    },
+    async () => {
+      const user = await getUser(userId);
+      const [accounts, budgets, rules, connections, transactions] = await Promise.all([
+        db.account.findMany({
+          where: { userId },
+          orderBy: { name: "asc" },
+          include: { snapshots: { orderBy: { asOf: "asc" } } },
+        }),
+        db.budget.findMany({ where: { userId }, orderBy: { categoryKey: "asc" } }),
+        db.merchantCategory.findMany({ where: { userId }, orderBy: { merchant: "asc" } }),
+        db.bankConnection.findMany({ where: { userId }, orderBy: { provider: "asc" } }),
+        db.transaction.count({ where: { userId } }),
+      ]);
+      return text({
+        format: "myfinance-profile/1",
+        exported_at: new Date().toISOString(),
+        settings: {
+          email: user.email,
+          base_currency: user.baseCurrency,
+          timezone: user.timezone,
+          created_at: user.createdAt.toISOString(),
+        },
+        accounts: accounts.map((a) => ({
+          name: a.name,
+          type: a.type,
+          provider: a.provider,
+          currency: a.currency,
+          entity: a.entity,
+          // Tuples keep a long daily series readable: [as_of, amount, currency]
+          balance_snapshots: a.snapshots.map((b) => [b.asOf.toISOString().slice(0, 10), Number(b.amount), b.currency]),
+        })),
+        budgets: budgets.map((b) => ({
+          category: b.categoryKey,
+          amount: Number(b.amount),
+          currency: user.baseCurrency,
+          period: b.period,
+        })),
+        merchant_rules: rules.map((r) => ({ merchant: r.merchant, category: r.categoryKey })),
+        connections: await Promise.all(
+          connections.map(async (c) => {
+            const meta = (c.meta ?? {}) as EbConnectionMeta;
+            return {
+              provider: c.provider,
+              status: c.status,
+              ...(c.provider === "enablebanking"
+                ? { bank: meta.aspsp?.name, country: meta.aspsp?.country, consent_valid_until: meta.validUntil }
+                : { backend: c.apiBase.replace("https://api.", "") }),
+              connected_at: c.createdAt.toISOString(),
+              last_sync: c.lastSyncAt?.toISOString() ?? null,
+              accounts: (await connectionAccounts(c)).map((a) => ({ account: a.name, enabled: a.enabled })),
+            };
+          })
+        ),
+        transactions: { count: transactions, export: "export_transactions (CSV, paged)" },
+      });
     }
   );
 
@@ -2194,7 +2282,7 @@ export function registerFinanceTools(server: McpServer, userId: string): void {
         authorize_url: url,
         bank: bank.name,
         instructions:
-          "Show authorize_url to the user as a clickable link. They open it, sign in at their bank and approve read-only access, then land on a confirmation page. When they say they are done, run sync_bank.",
+          "Show authorize_url to the user as a clickable link. They open it, sign in at their bank and approve read-only access, then confirm on our page that the MyFinance account shown is theirs. The link works once, within 30 minutes. When they say they are done, run sync_bank.",
       });
     }
   );

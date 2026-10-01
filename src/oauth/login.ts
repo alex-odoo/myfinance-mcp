@@ -1,6 +1,7 @@
 import { config } from "../config";
+import { mailConfigured } from "../mail";
 
-function escapeHtml(value: string): string {
+export function escapeHtml(value: string): string {
   return value
     .replaceAll("&", "&amp;")
     .replaceAll("<", "&lt;")
@@ -40,7 +41,73 @@ function destination(redirectUri: string): { label: string; unknownHost?: string
   return { label: host, unknownHost: known ? undefined : host };
 }
 
+/** "al•••@example.com": enough for the owner to recognise, not a full address on screen. */
+export function maskEmail(email: string): string {
+  const at = email.lastIndexOf("@");
+  if (at < 1) return "•••";
+  const local = email.slice(0, at);
+  return `${local.slice(0, local.length > 3 ? 2 : 1)}•••${email.slice(at)}`;
+}
+
+/** Where the code goes, for the sign-in email: the host, or "an app on this device". */
+export function destinationLabel(client?: LoginClient): string | undefined {
+  return client?.redirectUri ? destination(client.redirectUri).label : undefined;
+}
+
 export function loginPage(requestId: string, client?: LoginClient, error?: string): string {
+  const emailForm = requestId && mailConfigured()
+    ? `<form method="post" action="/login/email">
+    <input type="hidden" name="request_id" value="${escapeHtml(requestId)}">
+    <label for="code-email">Email</label>
+    <input id="code-email" name="email" type="email" autocomplete="email" maxlength="254" required>
+    <button type="submit">Email me a sign-in code</button>
+    <p class="hint">New here? The same code creates your account.</p>
+  </form>`
+    : "";
+  const passwordForm = requestId
+    ? `<form method="post" action="/login">
+    <input type="hidden" name="request_id" value="${escapeHtml(requestId)}">
+    <label for="email">Email</label>
+    <input id="email" name="email" type="email" autocomplete="username" required>
+    <label for="password">Password</label>
+    <input id="password" name="password" type="password" autocomplete="current-password" required>
+    <button type="submit">Sign in</button>
+  </form>`
+    : "";
+  // Only the operator account has a password: with email codes on, its form
+  // stays folded away instead of reading as the way in for everyone.
+  const body = emailForm
+    ? `${emailForm}
+  <details class="pw"><summary>Sign in with a password</summary>${passwordForm}</details>`
+    : passwordForm;
+  return page(requestId, client, error, body);
+}
+
+/** Second step of email sign-in: enter the code, or ask for a new one. */
+export function codePage(requestId: string, client: LoginClient | undefined, email: string, error?: string): string {
+  const id = escapeHtml(requestId);
+  return page(
+    requestId,
+    client,
+    error,
+    `<p>We sent a 6-digit code to <b>${escapeHtml(maskEmail(email))}</b>. It expires in 10 minutes.</p>
+  <form method="post" action="/login/email/verify">
+    <input type="hidden" name="request_id" value="${id}">
+    <label for="code">Sign-in code</label>
+    <input id="code" name="code" type="text" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" required autofocus>
+    <button type="submit">Sign in</button>
+  </form>
+  <form method="post" action="/login/email">
+    <input type="hidden" name="request_id" value="${id}">
+    <input type="hidden" name="email" value="${escapeHtml(email)}">
+    <button type="submit" class="link">Send a new code</button>
+  </form>
+  <p class="hint"><a href="/login?request_id=${id}">Use a different email</a></p>`,
+    false
+  );
+}
+
+function page(requestId: string, client: LoginClient | undefined, error: string | undefined, body: string, withGoogle = true): string {
   const app = client?.name ? escapeHtml(client.name) : "your AI client";
   const dest = client?.redirectUri ? destination(client.redirectUri) : undefined;
   return `<!doctype html>
@@ -75,6 +142,12 @@ export function loginPage(requestId: string, client?: LoginClient, error?: strin
   .divider { display: flex; align-items: center; gap: 10px; margin: 16px 0 4px;
              color: #999; font-size: 12px; }
   .divider::before, .divider::after { content: ""; flex: 1; height: 1px; background: #e5e5e5; }
+  .hint { font-size: 12px; color: #777; margin: 10px 0 0; }
+  .hint a { color: #555; }
+  .pw { margin-top: 18px; font-size: 13px; color: #555; }
+  .pw summary { cursor: pointer; }
+  button.link { background: none; color: #555; padding: 0; margin-top: 14px; width: auto;
+                font-size: 13px; text-decoration: underline; }
 </style>
 </head>
 <body>
@@ -89,7 +162,7 @@ export function loginPage(requestId: string, client?: LoginClient, error?: strin
   }
   ${error ? `<div class="error">${escapeHtml(error)}</div>` : ""}
   ${
-    requestId && config.googleClientId && config.googleClientSecret
+    withGoogle && requestId && config.googleClientId && config.googleClientSecret
       ? `<a class="google" href="/auth/google?request_id=${escapeHtml(requestId)}">
     <svg width="18" height="18" viewBox="0 0 48 48" aria-hidden="true"><path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/><path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/><path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/><path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/></svg>
     Continue with Google
@@ -97,18 +170,7 @@ export function loginPage(requestId: string, client?: LoginClient, error?: strin
   <div class="divider"><span>or</span></div>`
       : ""
   }
-  ${
-    requestId
-      ? `<form method="post" action="/login">
-    <input type="hidden" name="request_id" value="${escapeHtml(requestId)}">
-    <label for="email">Email</label>
-    <input id="email" name="email" type="email" autocomplete="username" required>
-    <label for="password">Password</label>
-    <input id="password" name="password" type="password" autocomplete="current-password" required>
-    <button type="submit">Sign in</button>
-  </form>`
-      : ""
-  }
+  ${body}
 </div>
 </body>
 </html>`;

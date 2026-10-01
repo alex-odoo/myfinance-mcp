@@ -1,4 +1,4 @@
-import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
+import { createHash, randomBytes, randomInt, randomUUID, timingSafeEqual } from "node:crypto";
 import { Router, urlencoded, type Request, type Response } from "express";
 import type {
   AuthorizationParams,
@@ -22,16 +22,41 @@ import {
   UnsupportedResponseTypeError,
 } from "@modelcontextprotocol/sdk/server/auth/errors.js";
 import { OAuthStore, type IssuedTokens } from "./store";
-import { loginPage, type LoginClient } from "./login";
-import { verifyLogin, findOrCreateGoogleUser, GoogleAccountConflictError, type SessionUser } from "../users";
+import { codePage, destinationLabel, loginPage, type LoginClient } from "./login";
+import {
+  verifyLogin,
+  findOrCreateGoogleUser,
+  findOrCreateEmailUser,
+  isGoogleLinked,
+  GoogleAccountConflictError,
+  GoogleLinkedAccountError,
+  type SessionUser,
+} from "../users";
 import { config } from "../config";
+import { mailConfigured, sendMail } from "../mail";
 
 const ACCESS_TOKEN_TTL_MS = 24 * 60 * 60 * 1000;
+// Sliding: each refresh starts a new 60 days, so a connector in use never
+// signs out, one left alone for two months does.
 const REFRESH_TOKEN_TTL_MS = 60 * 24 * 60 * 60 * 1000;
+// Absolute: a grant cannot be refreshed past a year after its sign-in, so a
+// stolen refresh token kept alive quietly dies too. Once a year the user
+// signs in again from the AI client.
+const GRANT_MAX_LIFETIME_MS = 365 * 24 * 60 * 60 * 1000;
 const AUTH_REQUEST_TTL_MS = 10 * 60 * 1000;
 const CODE_TTL_MS = 10 * 60 * 1000;
 const LOGIN_MAX_ATTEMPTS = 5;
 const LOGIN_WINDOW_MS = 15 * 60 * 1000;
+
+// Email sign-in: a 6-digit code, 5 tries, 10 minutes. Sends are capped per
+// address (nobody's inbox becomes a target) and per IP (the Resend quota).
+const EMAIL_CODE_TTL_MS = 10 * 60 * 1000;
+const EMAIL_CODE_MAX_ATTEMPTS = 5;
+const SENDS_PER_ADDRESS = 3;
+const SENDS_PER_ADDRESS_WINDOW_MS = 15 * 60 * 1000;
+const SENDS_PER_IP = 10;
+const SENDS_PER_IP_WINDOW_MS = 60 * 60 * 1000;
+const EMAIL_SHAPE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 export const SUPPORTED_SCOPES = ["finance"];
 
@@ -66,6 +91,8 @@ interface PendingAuthRequest {
   params: AuthorizationParams;
   browserHash: Buffer;
   expiresAt: number;
+  /** The last code emailed for this sign-in; a new send replaces it. */
+  emailCode?: { email: string; hash: Buffer; expiresAt: number; attempts: number };
 }
 
 function newSecret(bytes = 32): string {
@@ -190,15 +217,17 @@ function storableClientMetadata(client: RegisteredClient): RegisteredClient {
 }
 
 /**
- * OAuth 2.1 provider. Sign-in is Google (an account is created on first
- * sign-in) or email + password (only the env-bootstrapped operator account
- * has a password). Pending auth requests and login rate limits are in-memory
+ * OAuth 2.1 provider. Sign-in is Google or a one-time code sent by email (an
+ * account is created on the first sign-in of either), or email + password
+ * (only the env-bootstrapped operator account has a password). Pending auth requests and login rate limits are in-memory
  * (single instance, short TTL); everything durable lives in Supabase via
  * OAuthStore.
  */
 export class FinanceOAuthProvider implements OAuthServerProvider {
   private readonly pending = new Map<string, PendingAuthRequest>();
   private readonly loginAttempts = new Map<string, { count: number; resetAt: number }>();
+  /** Email code sends, keyed "a:<address>" and "i:<ip>". */
+  private readonly codeSends = new Map<string, { count: number; resetAt: number }>();
   /** Google OIDC state -> our pending auth request (CSRF binding). */
   private readonly googleStates = new Map<string, { requestId: string; expiresAt: number }>();
 
@@ -297,6 +326,129 @@ export class FinanceOAuthProvider implements OAuthServerProvider {
         return;
       }
 
+      await this.finishLogin(requestId, pendingReq, user.id, res);
+    });
+
+    // Back to the first sign-in step (the code page's "use a different email").
+    router.get("/login", (req, res) => {
+      const requestId = String(req.query.request_id ?? "");
+      const pendingReq = this.livePending(requestId);
+      if (!pendingReq || !this.sameBrowser(req, pendingReq)) {
+        res.status(400).type("html").send(loginPage("", undefined, EXPIRED));
+        return;
+      }
+      res.status(200).type("html").send(loginPage(requestId, pendingReq.client));
+    });
+
+    router.post("/login/email", urlencoded({ extended: false }), async (req, res) => {
+      if (!mailConfigured()) {
+        res.status(404).send("Email sign-in is not configured");
+        return;
+      }
+      const ip = req.ip ?? "unknown";
+      if (this.isRateLimited(ip)) {
+        res.status(429).type("html").send(loginPage("", undefined, "Too many attempts. Try again later."));
+        return;
+      }
+      const body = (req.body ?? {}) as Record<string, unknown>;
+      const requestId = typeof body.request_id === "string" ? body.request_id : "";
+      const pendingReq = this.livePending(requestId);
+      if (!pendingReq) {
+        res.status(400).type("html").send(loginPage("", undefined, EXPIRED));
+        return;
+      }
+      if (!this.sameBrowser(req, pendingReq)) {
+        res.status(400).type("html").send(loginPage("", undefined, DIFFERENT_BROWSER));
+        return;
+      }
+      const email = (typeof body.email === "string" ? body.email : "").trim().toLowerCase();
+      if (email.length > 254 || !EMAIL_SHAPE.test(email)) {
+        res.status(400).type("html").send(loginPage(requestId, pendingReq.client, "Enter a valid email address."));
+        return;
+      }
+      if (!this.takeSend(`a:${email}`, SENDS_PER_ADDRESS, SENDS_PER_ADDRESS_WINDOW_MS) || !this.takeSend(`i:${ip}`, SENDS_PER_IP, SENDS_PER_IP_WINDOW_MS)) {
+        res
+          .status(429)
+          .type("html")
+          .send(loginPage(requestId, pendingReq.client, "Too many codes requested. Wait a few minutes, or continue with Google."));
+        return;
+      }
+      // An account linked to Google gets a pointer to Google instead of a
+      // code. The page reads the same either way, so it does not tell anyone
+      // which addresses have accounts.
+      const code = String(randomInt(0, 1_000_000)).padStart(6, "0");
+      const sent = (await isGoogleLinked(email))
+        ? await sendMail(
+            email,
+            "Sign in to MyFinance with Google",
+            "Someone asked for a MyFinance MCP sign-in code for this address.\n\n" +
+              "Your account signs in with Google: on the sign-in page, choose Continue with Google. No code was issued.\n\n" +
+              "If this was not you, ignore this email.\n\nMyFinance MCP - https://myfinance-mcp.com\n"
+          )
+        : await sendMail(
+            email,
+            `${code} is your MyFinance sign-in code`,
+            `Your MyFinance MCP sign-in code:\n\n    ${code}\n\n` +
+              `It expires in 10 minutes and connects MyFinance to ${destinationLabel(pendingReq.client) ?? "your AI client"}.\n\n` +
+              "If you did not ask for it, ignore this email: nobody can sign in without the code.\n\n" +
+              "MyFinance MCP - https://myfinance-mcp.com\n"
+          );
+      if (!sent) {
+        res
+          .status(502)
+          .type("html")
+          .send(loginPage(requestId, pendingReq.client, "Could not send the email. Try again in a minute, or continue with Google."));
+        return;
+      }
+      pendingReq.emailCode = { email, hash: sha256(code), expiresAt: Date.now() + EMAIL_CODE_TTL_MS, attempts: 0 };
+      res.status(200).type("html").send(codePage(requestId, pendingReq.client, email));
+    });
+
+    router.post("/login/email/verify", urlencoded({ extended: false }), async (req, res) => {
+      const ip = req.ip ?? "unknown";
+      if (this.isRateLimited(ip)) {
+        res.status(429).type("html").send(loginPage("", undefined, "Too many attempts. Try again later."));
+        return;
+      }
+      const body = (req.body ?? {}) as Record<string, unknown>;
+      const requestId = typeof body.request_id === "string" ? body.request_id : "";
+      const pendingReq = this.livePending(requestId);
+      if (!pendingReq) {
+        res.status(400).type("html").send(loginPage("", undefined, EXPIRED));
+        return;
+      }
+      if (!this.sameBrowser(req, pendingReq)) {
+        res.status(400).type("html").send(loginPage("", undefined, DIFFERENT_BROWSER));
+        return;
+      }
+      const sentCode = pendingReq.emailCode;
+      if (!sentCode || sentCode.expiresAt < Date.now()) {
+        pendingReq.emailCode = undefined;
+        res.status(400).type("html").send(loginPage(requestId, pendingReq.client, "The code expired. Request a new one."));
+        return;
+      }
+      const code = (typeof body.code === "string" ? body.code : "").trim();
+      if (!timingSafeEqual(sha256(code), sentCode.hash)) {
+        this.recordFailedLogin(ip);
+        if (++sentCode.attempts >= EMAIL_CODE_MAX_ATTEMPTS) {
+          pendingReq.emailCode = undefined;
+          res.status(401).type("html").send(loginPage(requestId, pendingReq.client, "Too many wrong codes. Request a new one."));
+          return;
+        }
+        res.status(401).type("html").send(codePage(requestId, pendingReq.client, sentCode.email, "Wrong code. Check the latest email and try again."));
+        return;
+      }
+      // Single use, cleared before the first await: a parallel submit of the
+      // same code finds nothing.
+      pendingReq.emailCode = undefined;
+      let user: SessionUser;
+      try {
+        user = await findOrCreateEmailUser(sentCode.email);
+      } catch (err) {
+        if (!(err instanceof GoogleLinkedAccountError)) throw err;
+        res.status(409).type("html").send(loginPage(requestId, pendingReq.client, "This account signs in with Google. Use Continue with Google."));
+        return;
+      }
       await this.finishLogin(requestId, pendingReq, user.id, res);
     });
 
@@ -462,7 +614,8 @@ export class FinanceOAuthProvider implements OAuthServerProvider {
       record.userId,
       record.scopes,
       record.scopes,
-      bindResource(record.resource, resource)
+      bindResource(record.resource, resource),
+      { id: randomUUID(), issuedAt: Date.now() }
     );
     await this.store.redeemCode(authorizationCode, client.client_id, tokens);
     return tokenResponse(tokens);
@@ -477,6 +630,13 @@ export class FinanceOAuthProvider implements OAuthServerProvider {
     const record = await this.store.getRefreshToken(refreshToken);
     if (!record || record.clientId !== client.client_id) {
       throw new InvalidGrantError("Invalid refresh token");
+    }
+    // A grant from before grants existed starts its lifetime at this refresh.
+    const grant = record.grantId
+      ? { id: record.grantId, issuedAt: record.grantIssuedAt ?? Date.now() }
+      : { id: randomUUID(), issuedAt: Date.now() };
+    if (Date.now() >= grant.issuedAt + GRANT_MAX_LIFETIME_MS) {
+      throw new InvalidGrantError("This sign-in is over a year old. Sign in again from your AI client.");
     }
     // RFC 6749 section 6: a refresh may narrow the grant, never widen it.
     // Scopes this server does not know grant nothing and are ignored, as at
@@ -496,7 +656,8 @@ export class FinanceOAuthProvider implements OAuthServerProvider {
       record.userId,
       requested.length ? requested : record.scopes,
       record.scopes,
-      bindResource(record.resource, resource)
+      bindResource(record.resource, resource),
+      grant
     );
     await this.store.rotateRefreshToken(refreshToken, client.client_id, tokens, config.refreshReuseGraceMs);
     void this.store.pruneExpired().catch((e: unknown) => {
@@ -529,8 +690,10 @@ export class FinanceOAuthProvider implements OAuthServerProvider {
   ): Promise<void> {
     const access = await this.store.getToken(request.token);
     if (access && access.clientId === client.client_id) await this.store.deleteToken(request.token);
+    // RFC 7009 2.1: revoking a refresh token ends the grant, its access
+    // tokens included.
     const refresh = await this.store.getRefreshToken(request.token);
-    if (refresh && refresh.clientId === client.client_id) await this.store.deleteRefreshToken(request.token);
+    if (refresh && refresh.clientId === client.client_id) await this.store.revokeGrant(refresh.grantId, request.token);
   }
 
   private newTokens(
@@ -538,14 +701,25 @@ export class FinanceOAuthProvider implements OAuthServerProvider {
     userId: string,
     scopes: string[],
     refreshScopes: string[],
-    resource?: string
+    resource: string | undefined,
+    grant: { id: string; issuedAt: number }
   ): IssuedTokens {
     const now = Date.now();
+    const grantEnd = grant.issuedAt + GRANT_MAX_LIFETIME_MS;
     return {
       accessToken: newSecret(),
       refreshToken: newSecret(),
-      access: { clientId, scopes, userId, resource, expiresAt: now + ACCESS_TOKEN_TTL_MS },
-      refresh: { clientId, scopes: refreshScopes, userId, resource, expiresAt: now + REFRESH_TOKEN_TTL_MS },
+      access: {
+        clientId, scopes, userId, resource,
+        expiresAt: Math.min(now + ACCESS_TOKEN_TTL_MS, grantEnd),
+        grantId: grant.id,
+      },
+      refresh: {
+        clientId, scopes: refreshScopes, userId, resource,
+        expiresAt: Math.min(now + REFRESH_TOKEN_TTL_MS, grantEnd),
+        grantId: grant.id,
+        grantIssuedAt: grant.issuedAt,
+      },
     };
   }
 
@@ -585,6 +759,22 @@ export class FinanceOAuthProvider implements OAuthServerProvider {
     return entry.count >= LOGIN_MAX_ATTEMPTS;
   }
 
+  /** Counts one code send against `key`; false once its window is used up. */
+  private takeSend(key: string, max: number, windowMs: number): boolean {
+    const now = Date.now();
+    if (this.codeSends.size >= PENDING_MAX) {
+      for (const [k, v] of this.codeSends) if (v.resetAt < now) this.codeSends.delete(k);
+    }
+    const entry = this.codeSends.get(key);
+    if (!entry || entry.resetAt < now) {
+      this.codeSends.set(key, { count: 1, resetAt: now + windowMs });
+      return true;
+    }
+    if (entry.count >= max) return false;
+    entry.count += 1;
+    return true;
+  }
+
   private recordFailedLogin(ip: string): void {
     const entry = this.loginAttempts.get(ip);
     if (!entry || entry.resetAt < Date.now()) {
@@ -613,7 +803,7 @@ function tokenResponse(t: IssuedTokens): OAuthTokens {
   return {
     access_token: t.accessToken,
     token_type: "Bearer",
-    expires_in: Math.floor(ACCESS_TOKEN_TTL_MS / 1000),
+    expires_in: Math.max(0, Math.floor((t.access.expiresAt - Date.now()) / 1000)),
     refresh_token: t.refreshToken,
     scope: t.access.scopes.join(" ") || undefined,
   };

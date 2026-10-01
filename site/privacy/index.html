@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<script async src="https://www.googletagmanager.com/gtag/js?id=G-SFT6JY9Q7W"></script>
 <script src="/consent.js"></script>
+<script async src="https://www.googletagmanager.com/gtag/js?id=G-SFT6JY9Q7W"></script>
 <title>Privacy &amp; Terms - MyFinance MCP</title>
 <meta name="description" content="Privacy policy and terms for MyFinance MCP: what we store, what we never store, and how to export or delete your data.">
 <link rel="canonical" href="https://myfinance-mcp.com/privacy">
@@ -46,11 +46,11 @@
 
   <h2>What we store</h2>
   <ul>
-    <li><strong>Your account:</strong> your email address and, if you sign in with Google, your Google account id. Used for sign-in. When a new account is created, its email address is sent once to the operator as a signup notice (by email via Resend and to a private Telegram chat).</li>
+    <li><strong>Your account:</strong> your email address and, if you sign in with Google, your Google account id. Used for sign-in. If you sign in by email, a one-time 6-digit code is sent to that address via Resend; the code lives only in the server's memory for 10 minutes and is never stored. When a new account is created, its email address is sent once to the operator as a signup notice (by email via Resend and to a private Telegram chat).</li>
     <li><strong>Financial records:</strong> transactions you log, import or sync (amount, currency, category, merchant or counterparty, note, date, optional receipt line items, the bank's transaction reference), your accounts, balance snapshots, budgets, the categories you chose for specific merchants, and settings (base currency, timezone).</li>
-    <li><strong>Bank connections, only if you create one:</strong> through <strong>Enable Banking</strong> (a licensed EU open-banking provider) we store the encrypted session id, the consent expiry, your bank's name and the list of accounts your bank returns (names, account identifiers such as IBAN, currencies). While the consent is valid (at most 90 days) the server pulls booked transactions and balances about once a day, including counterparty names and payment descriptions. Through <strong>ZenMoney</strong> we store your API token, encrypted, and sync your accounts and transactions. Disconnecting revokes the bank session and erases the token; imported transactions stay until you delete them.</li>
-    <li><strong>Sign-in tokens:</strong> access tokens (24 hours) and refresh tokens (60 days, replaced on every use) for the AI clients you connect.</li>
-    <li><strong>Exchange rates:</strong> daily reference rates (ECB and the National Bank of Ukraine), shared by everyone and not tied to you.</li>
+    <li><strong>Bank connections, only if you create one:</strong> through <strong>Enable Banking</strong> (a licensed EU open-banking provider) we store the encrypted session id, the consent expiry, your bank's name and the list of accounts your bank returns (names, account identifiers such as IBAN, currencies). While the consent is valid (at most 90 days) the server pulls booked transactions and balances about once a day, including counterparty names and payment descriptions. Through <strong>ZenMoney</strong> we store your API token, encrypted, and sync your accounts and transactions. A bank link binds only after you confirm, on our page, which MyFinance account receives the access. Disconnecting revokes the bank session and erases the token; imported transactions stay until you delete them.</li>
+    <li><strong>Sign-in tokens:</strong> access tokens (24 hours) and refresh tokens (replaced on every use; they lapse after 60 days without use and a year after you signed in) for the AI clients you connect, stored only as a one-way hash.</li>
+    <li><strong>Exchange rates:</strong> daily reference rates (ECB, the National Bank of Ukraine, and for other currencies the public fawazahmed0 currency snapshot), shared by everyone and not tied to you. Fetching them sends only a date, never anything about you.</li>
     <li><strong>Usage events:</strong> which tool was called, how long it took, which arguments were present, coded values such as a category, currency or period, an error code, and the name of your AI client. They are keyed to your account id, never contain amounts, merchants or notes, and are kept for 90 days (import and deletion counters longer). All of them are deleted with your account.</li>
   </ul>
 
@@ -70,7 +70,7 @@
     <li><strong>Supabase</strong> (database hosting, EU) and <strong>Hetzner</strong> (server hosting, EU): all stored data.</li>
     <li><strong>Enable Banking</strong> and <strong>ZenMoney</strong>: only if you connect them, the access you grant there.</li>
     <li><strong>Google</strong>: sign-in, if you choose "Continue with Google"; Google Analytics on these marketing pages.</li>
-    <li><strong>Resend</strong> and <strong>Telegram</strong>: the one-time signup notice with your email address, sent to the operator.</li>
+    <li><strong>Resend</strong>: the sign-in codes we email you, if you sign in by email; with <strong>Telegram</strong>, the one-time signup notice with your email address, sent to the operator.</li>
   </ul>
 
   <h2 id="cookies">Website analytics and cookies</h2>
@@ -79,7 +79,7 @@
 
   <h2>Your rights (GDPR)</h2>
   <ul>
-    <li><strong>Portability:</strong> say "export my transactions" and you get them as CSV (account, transfer counterpart and receipt items included), in pages of 2,000 rows.</li>
+    <li><strong>Portability:</strong> say "export my transactions" and you get them as CSV (account, transfer counterpart and receipt items included), in pages of 2,000 rows. Say "export my profile" for everything else (accounts with their balance history, budgets, your merchant category rules, bank links and settings) as one JSON file.</li>
     <li><strong>Erasure:</strong> say "delete my account": your profile, every financial record, your bank and ZenMoney connections (the bank session is revoked first), your sign-in tokens and your usage events are removed. This is a built-in tool, not a support ticket.</li>
     <li><strong>Access and correction:</strong> every record can be listed, searched and edited through the same conversation.</li>
     <li>You can also complain to your data protection authority.</li>

@@ -1,6 +1,6 @@
 # MyFinance MCP
 
-A remote MCP server for personal finance - log expenses by talking, snap receipt photos, import whole bank statements, and get budgets, trends and net worth computed for you, in 30+ currencies.
+A remote MCP server for personal finance - log expenses by talking, snap receipt photos, import whole bank statements, and get budgets, trends and net worth computed for you, in 150+ currencies.
 
 **Website:** [myfinance-mcp.com](https://myfinance-mcp.com) · Free while in beta · Built by [Rteam](https://rteam.agency)
 
@@ -16,13 +16,13 @@ https://myfinance-mcp.com/mcp
 
 **On ChatGPT:** Settings → Apps → Create app → paste the URL → choose OAuth → Create.
 
-On first connect you sign in with your Google account; that first sign-in creates your MyFinance account. Your data persists across reconnections.
+On first connect you sign in with Google or with a one-time code sent to your email; that first sign-in creates your MyFinance account. Your data persists across reconnections.
 
 ## Why
 
 - **No app, no forms, no spreadsheet.** "Spent 24.50 eur on groceries at Lidl" is the whole workflow.
 - **Every number is computed in SQL.** The server owns the data and the math; the AI reads the results, it never guesses arithmetic.
-- **30+ currencies.** Transactions keep their original currency (the ECB reference currencies plus UAH and AED); the FX rate to your base currency is frozen at transaction date, so history never rewrites itself.
+- **150+ currencies.** Transactions keep their original currency (ECB and National Bank of Ukraine rates, plus a public daily snapshot for every other ISO currency from March 2024); the FX rate to your base currency is frozen at transaction date, so history never rewrites itself.
 - **Statements in one message.** Drop a CSV/PDF export; hundreds of rows import in one call with idempotent deduplication, hand-logged twins merged, totals reconciled.
 - **Personal vs business.** Entity tag on accounts and transactions, filterable everywhere, included in CSV export for your accountant.
 - **Dashboards in the chat.** Budgets, trends, summaries and accounts render as interactive panels (MCP Apps) right in the conversation.
@@ -32,7 +32,7 @@ On first connect you sign in with your Google account; that first sign-in create
 - **Bun** - runtime and package manager
 - **Express** - HTTP layer
 - **MCP SDK** - Model Context Protocol over Streamable HTTP (stateless)
-- **OAuth 2.1** - PKCE + dynamic client registration, Google sign-in optional
+- **OAuth 2.1** - PKCE + dynamic client registration; sign-in with Google or an emailed one-time code (each optional)
 - **Prisma + PostgreSQL** - all money as `numeric`, all stats as SQL aggregates
 - **Docker** - single container deployment
 
@@ -61,6 +61,7 @@ On first connect you sign in with your Google account; that first sign-in create
 | `get_settings`        | Base currency and timezone                                                                         |
 | `update_settings`     | Change base currency or timezone                                                                   |
 | `export_transactions` | CSV export, 2000 rows per page: account, transfer counterpart, entity and receipt items on every row |
+| `export_profile`      | Everything but the transactions as JSON: settings, accounts with balance history, budgets, merchant rules, bank links |
 | `connect_bank`        | Link a real bank via open banking (Enable Banking, EU/UK): list banks, start consent, status, per-account sync toggle, disconnect |
 | `sync_bank`           | Pull booked transactions and balances from the connected bank; incremental, transfer pairing, dedup-safe. Healthy connections also auto-sync server-side roughly daily |
 | `connect_zenmoney`    | Link a ZenMoney account (international and .ru backends auto-detected) for read-only sync          |
@@ -77,7 +78,7 @@ Four tools return an interactive dashboard (`ui://myfinancemcp/dashboard`) rende
 - Receipt photos are parsed by YOUR AI client; images never reach this server.
 - Amounts, merchants and notes are never written to server logs (blind logs); usage events keep tool names, timings, error classes and coded argument values, keyed to the account and deleted with it.
 - OAuth 2.1 with PKCE, rotating refresh tokens, rate-limited sign-in.
-- All 27 tools carry MCP annotations (read-only and destructive ops flagged, connector tools marked open-world), so clients can gate confirmations correctly.
+- All 28 tools carry MCP annotations (read-only and destructive ops flagged, connector tools marked open-world), so clients can gate confirmations correctly.
 - Bank access is strictly read-only: open banking consent via Enable Banking (the bank authenticates the user; we never see credentials), ZenMoney via the user's own API token. Session ids and tokens are stored AES-256-GCM encrypted.
 - CSV export and instant full deletion are tools, not support tickets.
 - Hosted instance: EU data residency (Supabase, eu-central-1), TLS to the database with a pinned CA. Every query is scoped to your account by the server; the database's own API is closed to everyone (row-level security, deny-all).
@@ -88,6 +89,8 @@ See [SECURITY.md](SECURITY.md) for the disclosure policy.
 ## Self-hosting
 
 MIT-licensed; runs anywhere Bun and Postgres run.
+
+The landing page in `site/` is set in [Switzer](https://www.fontshare.com/fonts/switzer), whose free licence does not allow redistribution, so the font file is not in this repository. For the same look, download it from Fontshare and put `Switzer-Variable.woff2` in `site/fonts/`; without it the pages fall back to the system font. The MCP server does not need it.
 
 ### 1. Postgres
 
@@ -115,9 +118,9 @@ Database TLS: Supabase hosts are verified against Supabase's root CA automatical
 | `MYFINANCE_MCP_PASSWORD_HASH` | Bootstrap user password hash (see below)                           |
 | `GOOGLE_CLIENT_ID`            | _(optional)_ Google OAuth client ID for "Continue with Google"     |
 | `GOOGLE_CLIENT_SECRET`        | _(optional)_ Google OAuth client secret                            |
-| `RESEND_API_KEY`              | _(optional)_ Resend key for new-signup email notifications         |
+| `RESEND_API_KEY`              | _(optional)_ Resend key: email sign-in codes and signup notifications |
 | `NOTIFY_EMAIL`                | _(optional)_ Where signup notifications go                         |
-| `FROM_EMAIL`                  | _(optional)_ Verified sender for notifications                     |
+| `FROM_EMAIL`                  | _(optional)_ Verified sender; with `RESEND_API_KEY` it turns on email sign-in |
 | `TELEGRAM_BOT_TOKEN`          | _(optional)_ Telegram bot for new-signup notifications             |
 | `TELEGRAM_CHAT_ID`            | _(optional)_ Chat that receives them                               |
 | `TOKEN_ENC_KEY`               | Required for ZenMoney and bank connections: 64 hex chars (`openssl rand -hex 32`), encrypts stored provider tokens |
@@ -166,6 +169,8 @@ The e2e suite (206 checks) covers the full OAuth flow (discovery, dynamic regist
 | `GET /authorize`                               | OAuth authorization (sign-in page)       |
 | `POST /token`                                  | Token exchange                           |
 | `GET /auth/google`                             | Google sign-in start (when configured)   |
+| `POST /login/email`, `POST /login/email/verify`| Email sign-in code: send, verify (when configured) |
+| `GET /connect/enablebanking/callback`, `POST /connect/enablebanking/confirm` | Bank consent return and the confirm step |
 | `GET /api/stats`                               | Public aggregate counters (counts only, never amounts) |
 
 ## License

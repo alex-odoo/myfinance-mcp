@@ -6,3 +6,7 @@ app.env
 .DS_Store
 src/generated/
 .claude/
+# Switzer (Fontshare): its licence forbids redistribution, so it stays out of
+# this public repo; deploy.sh ships the local copy to the box.
+site/fonts/Switzer-*.woff2
+site/fonts/FFL.txt

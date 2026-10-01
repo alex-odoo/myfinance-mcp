@@ -43,7 +43,7 @@ function redact(s: string): string {
 /** Email alert via Resend (from the verified sender domain). */
 function sendResendEmail(email: string, method: string): Promise<Response> | null {
   if (!config.resendApiKey || !config.notifyEmail || !config.fromEmail) return null;
-  return fetch("https://api.resend.com/emails", {
+  return fetch(`${config.resendApiBase}/emails`, {
     method: "POST",
     headers: {
       authorization: `Bearer ${config.resendApiKey}`,

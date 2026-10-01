@@ -22,5 +22,5 @@ Please do NOT open a public GitHub issue for security problems, and do not test 
 
 - Amounts, merchants and notes are never written to server logs; usage events store tool names, timings, error classes and coded argument values (never free text), keyed to the account and deleted with it.
 - Receipt images are parsed client-side by the user's AI and never reach the server.
-- OAuth 2.1 with PKCE and dynamic client registration; access and refresh tokens are opaque random 256-bit values stored server-side as issued (not hashed); access tokens expire after 24 hours, refresh tokens rotate on every use; sign-in is rate limited.
+- OAuth 2.1 with PKCE and dynamic client registration; access and refresh tokens (and authorization codes) are opaque random 256-bit values stored only as their SHA-256 hash; access tokens expire after 24 hours; refresh tokens rotate on every use, lapse after 60 days without use and a year after sign-in, and a rotated token presented again after a 30-second grace window revokes the whole sign-in (replay detection); sign-in, including email one-time codes (5 tries, 10 minutes, 3 sends per address per 15 minutes), is rate limited.
 - Data isolation is enforced by `userId` scoping on every query; the database's own API is closed (row-level security, deny-all), and the server reaches the database over TLS with a pinned CA.

@@ -35,7 +35,7 @@ interface AccountMapEntry {
 }
 
 export interface EbConnectionMeta {
-  state?: string; // pending auth nonce, cleared by the callback
+  state?: string; // pending auth nonce, cleared once the link is confirmed, cancelled or expired
   aspsp?: { name: string; country: string };
   validUntil?: string;
   accountsInfo?: EbAccount[];

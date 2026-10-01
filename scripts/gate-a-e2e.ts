@@ -69,6 +69,24 @@ let ebStub: { stop: (closeActiveConnections?: boolean) => void } | null = null;
 const ZEN_PORT = 8791;
 const ZEN_TOKEN = "zen-e2e-token-0123456789";
 const EB_PORT = 8792;
+const MAIL_PORT = 8793;
+/** Every email the spawned server sent (Resend stub): sign-in codes and signup notices. */
+const sentMail: Array<{ to: string; subject: string; text: string }> = [];
+let mailStub: { stop: (closeActiveConnections?: boolean) => void } | null = null;
+/** Users this run created besides the gate-a test user; spawn mode deletes them on exit. */
+const createdUserEmails: string[] = [];
+
+function startMailStub() {
+  return Bun.serve({
+    port: MAIL_PORT,
+    async fetch(req) {
+      if (new URL(req.url).pathname !== "/emails" || req.method !== "POST") return new Response("not found", { status: 404 });
+      const body = (await req.json()) as { to: string[]; subject: string; text: string };
+      sentMail.push({ to: body.to[0] ?? "", subject: body.subject, text: body.text });
+      return Response.json({ id: `e2e-mail-${sentMail.length}` });
+    },
+  });
+}
 /** USD credit of the EB cross-currency pair, derived from the cached real rate (main). */
 let ebFxCredit = "0.00";
 
@@ -266,6 +284,7 @@ async function main(): Promise<void> {
     const hash = await Bun.password.hash(PASSWORD);
     zenStub = startZenStub();
     ebStub = startEbStub();
+    mailStub = startMailStub();
     serverProc = Bun.spawn(["bun", "run", "src/index.ts"], {
       env: {
         ...process.env,
@@ -283,6 +302,14 @@ async function main(): Promise<void> {
         EB_APP_ID: "e2e-eb-app",
         EB_PRIVATE_KEY_B64: Buffer.from(ebKey).toString("base64"),
         EB_API_ORIGIN: `http://localhost:${EB_PORT}`,
+        // Email sign-in on, every mail to the local stub; no real alert leaves
+        // the run (signup notices would reach Telegram).
+        RESEND_API_KEY: "e2e-resend-key",
+        RESEND_API_BASE: `http://localhost:${MAIL_PORT}`,
+        FROM_EMAIL: "noreply@test.local",
+        NOTIFY_EMAIL: "ops@test.local",
+        TELEGRAM_BOT_TOKEN: "",
+        TELEGRAM_CHAT_ID: "",
       },
       stdout: "pipe",
       stderr: "pipe",
@@ -410,50 +437,119 @@ async function main(): Promise<void> {
     ok("client refusals logged as oauth_error events", refusals === 2, `found ${refusals}`);
 
     // Full flow with the secret: code exchange, refresh rotation, revocation
-    const confVerifier = b64url(randomBytes(48));
-    const confAuthUrl = new URL(asMeta.authorization_endpoint);
-    confAuthUrl.searchParams.set("response_type", "code");
-    confAuthUrl.searchParams.set("client_id", conf.client_id);
-    confAuthUrl.searchParams.set("redirect_uri", REDIRECT_URI);
-    confAuthUrl.searchParams.set("code_challenge", b64url(createHash("sha256").update(confVerifier).digest()));
-    confAuthUrl.searchParams.set("code_challenge_method", "S256");
-    const confAuthRes = await fetch(confAuthUrl);
-    const confCookie = browserCookie(confAuthRes);
-    const confHtml = await confAuthRes.text();
-    const confRequestId = confHtml.match(/name="request_id" value="([^"]+)"/)?.[1] ?? "";
-    const confLogin = await loginPost(confRequestId, PASSWORD, confCookie);
-    const confCode = new URL(confLogin.headers.get("location") ?? "http://invalid/").searchParams.get("code") ?? "";
-    ok("confidential: login redirects with code", confLogin.status === 302 && !!confCode);
-    const confTokRes = await tokenPost({
-      grant_type: "authorization_code",
-      code: confCode,
-      code_verifier: confVerifier,
-      redirect_uri: REDIRECT_URI,
-      ...auth,
-    });
-    const confTok: any = await confTokRes.json();
-    ok("confidential: code + secret -> tokens", confTokRes.status === 200 && !!confTok.refresh_token, JSON.stringify(confTok));
-    const confRefRes = await tokenPost({ grant_type: "refresh_token", refresh_token: confTok.refresh_token, ...auth });
+    const signIn = async () => {
+      const verifier = b64url(randomBytes(48));
+      const url = new URL(asMeta.authorization_endpoint);
+      url.searchParams.set("response_type", "code");
+      url.searchParams.set("client_id", conf.client_id);
+      url.searchParams.set("redirect_uri", REDIRECT_URI);
+      url.searchParams.set("code_challenge", b64url(createHash("sha256").update(verifier).digest()));
+      url.searchParams.set("code_challenge_method", "S256");
+      const authRes = await fetch(url);
+      const browser = browserCookie(authRes);
+      const rid = (await authRes.text()).match(/name="request_id" value="([^"]+)"/)?.[1] ?? "";
+      const login = await loginPost(rid, PASSWORD, browser);
+      const code = new URL(login.headers.get("location") ?? "http://invalid/").searchParams.get("code") ?? "";
+      const res = await tokenPost({ grant_type: "authorization_code", code, code_verifier: verifier, redirect_uri: REDIRECT_URI, ...auth });
+      return { login, code, res, tok: (await res.json()) as any };
+    };
+    const refreshWith = (refresh_token: string) => tokenPost({ grant_type: "refresh_token", refresh_token, ...auth });
+    const pingWith = async (token: string) =>
+      (await mcpCall(token, { jsonrpc: "2.0", id: 90, method: "tools/call", params: { name: "ping", arguments: {} } })).status;
+
+    const first = await signIn();
+    ok("confidential: login redirects with code", first.login.status === 302 && !!first.code);
+    const confTok = first.tok;
+    ok("confidential: code + secret -> tokens", first.res.status === 200 && !!confTok.refresh_token, JSON.stringify(confTok));
+    // Tokens are stored as their sha256, never as the bearer value
+    const keyOf = (v: string) => createHash("sha256").update(v).digest("hex");
+    const [rawRows, hashedRows] = await Promise.all([
+      cdb.oauthRefreshToken.count({ where: { token: { in: [confTok.refresh_token, confTok.access_token] } } }),
+      cdb.oauthRefreshToken.count({ where: { token: keyOf(confTok.refresh_token), grantId: { not: null }, grantIssuedAt: { not: null } } }),
+    ]);
+    const rawAccess = await cdb.oauthAccessToken.count({ where: { token: confTok.access_token } });
+    ok(
+      "tokens stored hashed, refresh token carries its grant",
+      rawRows === 0 && rawAccess === 0 && hashedRows === 1,
+      JSON.stringify({ rawRows, rawAccess, hashedRows })
+    );
+    const confRefRes = await refreshWith(confTok.refresh_token);
     const confRef: any = await confRefRes.json();
     ok(
       "confidential: refresh with secret rotates",
       confRefRes.status === 200 && !!confRef.refresh_token && confRef.refresh_token !== confTok.refresh_token,
       JSON.stringify({ status: confRefRes.status, error: confRef.error })
     );
-    const confPing = await mcpCall(confRef.access_token, {
-      jsonrpc: "2.0",
-      id: 90,
-      method: "tools/call",
-      params: { name: "ping", arguments: {} },
+    ok("confidential: refreshed access token works", (await pingWith(confRef.access_token)) === 200);
+    const grantOf = async (refresh: string) =>
+      (await cdb.oauthRefreshToken.findUnique({ where: { token: keyOf(refresh) } }))?.grantId ?? null;
+    ok(
+      "rotation keeps the grant",
+      !!(await grantOf(confRef.refresh_token)) && (await grantOf(confRef.refresh_token)) === (await grantOf(confTok.refresh_token))
+    );
+
+    // A grant cannot be refreshed past a year after its sign-in
+    await cdb.oauthRefreshToken.update({
+      where: { token: keyOf(confRef.refresh_token) },
+      data: { grantIssuedAt: new Date(Date.now() - 366 * 86_400_000) },
     });
-    ok("confidential: refreshed access token works", confPing.status === 200);
+    const tooOld = await refreshWith(confRef.refresh_token);
+    ok("refresh of a year-old grant -> invalid_grant", tooOld.status === 400 && (await oauthError(tooOld)) === "invalid_grant");
+
+    // Revoking the refresh token ends the grant: its access token dies too
     const revRes = await form(asMeta.revocation_endpoint, { token: confRef.refresh_token, ...auth });
     ok("confidential: revoke with secret", revRes.status === 200);
+    ok("revoked refresh token refused", (await oauthError(await refreshWith(confRef.refresh_token))) === "invalid_grant");
+    ok("revoking the refresh token revokes its access token", (await pingWith(confRef.access_token)) === 401);
+
+    // Replay: a rotated token presented after the grace window means a copy
+    // is out there, so the whole grant goes, the thief's successor included
+    const second = await signIn();
+    const victim = second.tok;
+    const rotated: any = await (await refreshWith(victim.refresh_token)).json();
+    ok("second sign-in rotates", !!rotated.refresh_token, JSON.stringify(rotated));
+    await Bun.sleep(E2E_REFRESH_GRACE_MS + 300);
+    const replay = await refreshWith(victim.refresh_token);
+    ok("replayed refresh token -> invalid_grant", replay.status === 400 && (await oauthError(replay)) === "invalid_grant");
+    ok("replay revokes the successor refresh token", (await oauthError(await refreshWith(rotated.refresh_token))) === "invalid_grant");
+    ok("replay revokes the successor access token", (await pingWith(rotated.access_token)) === 401);
+    let replays = 0;
+    for (let i = 0; i < 30 && replays < 1; i++) {
+      await Bun.sleep(100); // logEvent is fire-and-forget
+      replays = await cdb.event.count({
+        where: { type: "oauth_refresh_replay", meta: { path: ["client_id"], equals: conf.client_id } },
+      });
+    }
+    ok("replay logged as an oauth_refresh_replay event", replays === 1, `found ${replays}`);
+
+    // Idle registrations: no live token or code and over 30 days old -> gone;
+    // a client holding a live refresh token is never touched
+    const { OAuthStore } = await import("../src/oauth/store");
+    const { json: idle } = await register("Gate A e2e idle", "none");
+    const third = await signIn();
+    ok("third sign-in for the prune check", third.res.status === 200);
+    const monthAgo = new Date(Date.now() - 31 * 86_400_000);
+    await cdb.oauthClient.updateMany({ where: { clientId: { in: [idle.client_id, conf.client_id] } }, data: { createdAt: monthAgo } });
+    await new OAuthStore().pruneIdleClients();
+    const left = await cdb.oauthClient.findMany({ where: { clientId: { in: [idle.client_id, conf.client_id] } }, select: { clientId: true } });
     ok(
-      "revoked refresh token refused",
-      (await oauthError(await tokenPost({ grant_type: "refresh_token", refresh_token: confRef.refresh_token, ...auth }))) ===
-        "invalid_grant"
+      "idle client pruned, client with a live grant kept",
+      left.length === 1 && left[0]!.clientId === conf.client_id,
+      JSON.stringify(left)
     );
+    const goneUrl = new URL(asMeta.authorization_endpoint);
+    goneUrl.searchParams.set("response_type", "code");
+    goneUrl.searchParams.set("client_id", idle.client_id);
+    goneUrl.searchParams.set("redirect_uri", REDIRECT_URI);
+    goneUrl.searchParams.set("code_challenge", b64url(randomBytes(32)));
+    goneUrl.searchParams.set("code_challenge_method", "S256");
+    const gone = await fetch(goneUrl, { redirect: "manual" });
+    ok(
+      "pruned client at /authorize -> 400 page that says what to do",
+      gone.status === 400 && (await gone.text()).includes("no longer registered"),
+      String(gone.status)
+    );
+    await form(asMeta.revocation_endpoint, { token: third.tok.refresh_token, ...auth });
 
     // A row registered before 2026-09-27 carries the SDK's 30-day default
     // stamp (issued 31 days ago, so expired yesterday): it must keep working.
@@ -540,6 +636,101 @@ async function main(): Promise<void> {
     );
     ok("google start carries state + client_id", /[?&]state=/.test(gLoc) && gLoc.includes("client_id="));
   }
+  // 3c. Email sign-in: a 6-digit code by email, bound to this browser and
+  // this sign-in; the first verified sign-in creates the account. An account
+  // linked to Google gets a pointer to Google instead of a code.
+  if (!externalBase) {
+    ok("login page offers email sign-in", authHtml.includes('action="/login/email"'));
+    const { db: mdb } = await import("../src/db");
+    const startSignIn = async () => {
+      const res = await fetch(authUrl);
+      const browser = browserCookie(res);
+      const rid = (await res.text()).match(/name="request_id" value="([^"]+)"/)?.[1] ?? "";
+      return { rid, browser };
+    };
+    const postForm = (path: string, params: Record<string, string>, cookie: string) =>
+      fetch(`${BASE}${path}`, {
+        method: "POST",
+        headers: { "content-type": "application/x-www-form-urlencoded", ...(cookie ? { cookie } : {}) },
+        body: new URLSearchParams(params),
+        redirect: "manual",
+      });
+    const mailTo = (to: string) => sentMail.filter((m) => m.to === to);
+
+    const newcomer = `gate-a-mail-${randomBytes(4).toString("hex")}@test.local`;
+    createdUserEmails.push(newcomer);
+    const si = await startSignIn();
+    ok("email code without the browser cookie -> 400", (await postForm("/login/email", { request_id: si.rid, email: newcomer }, "")).status === 400);
+    ok("email code for a malformed address -> 400", (await postForm("/login/email", { request_id: si.rid, email: "not-an-email" }, si.browser)).status === 400);
+    const sendRes = await postForm("/login/email", { request_id: si.rid, email: newcomer }, si.browser);
+    const sendHtml = await sendRes.text();
+    const codeMail = mailTo(newcomer).at(-1);
+    const emailCode = codeMail?.subject.match(/^(\d{6}) is your MyFinance sign-in code$/)?.[1] ?? "";
+    ok(
+      "email code sent, page names the masked address",
+      sendRes.status === 200 && sendHtml.includes("ga•••@test.local") && !!emailCode && !!codeMail?.text.includes(emailCode),
+      JSON.stringify({ status: sendRes.status, subject: codeMail?.subject })
+    );
+    ok("code email names where the code connects", !!codeMail?.text.includes("connects MyFinance to an app on this device"));
+    const wrong = await postForm("/login/email/verify", { request_id: si.rid, code: emailCode === "000000" ? "000001" : "000000" }, si.browser);
+    ok("wrong email code -> 401", wrong.status === 401 && (await wrong.text()).includes("Wrong code"));
+    ok(
+      "email code from another browser -> 400",
+      (await postForm("/login/email/verify", { request_id: si.rid, code: emailCode }, "")).status === 400
+    );
+    const verified = await postForm("/login/email/verify", { request_id: si.rid, code: emailCode }, si.browser);
+    const emailCodeGrant = new URL(verified.headers.get("location") ?? "http://invalid/").searchParams.get("code") ?? "";
+    ok("right email code -> redirect with code", verified.status === 302 && !!emailCodeGrant, String(verified.status));
+    ok(
+      "email code is single use",
+      (await postForm("/login/email/verify", { request_id: si.rid, code: emailCode }, si.browser)).status === 400
+    );
+    const emailTok: any = await (
+      await tokenPost({
+        grant_type: "authorization_code",
+        code: emailCodeGrant,
+        code_verifier: verifier,
+        client_id: client.client_id,
+        redirect_uri: REDIRECT_URI,
+      })
+    ).json();
+    const emailPing = await mcpCall(emailTok.access_token ?? "", {
+      jsonrpc: "2.0",
+      id: 95,
+      method: "tools/call",
+      params: { name: "ping", arguments: {} },
+    });
+    ok(
+      "email sign-in creates the account and connects it",
+      JSON.parse(emailPing.json?.result?.content?.[0]?.text ?? "{}").user === newcomer,
+      JSON.stringify(emailPing.json).slice(0, 200)
+    );
+    let notice = false;
+    for (let i = 0; i < 30 && !notice; i++) {
+      await Bun.sleep(100); // notifySignup is fire-and-forget
+      notice = sentMail.some((m) => m.to === "ops@test.local" && m.subject.includes(newcomer));
+    }
+    ok("email signup sends the signup notice", notice);
+    await form(asMeta.revocation_endpoint, { token: emailTok.refresh_token ?? "", client_id: client.client_id });
+
+    // An account that signs in with Google: never a code, same page
+    const googler = `gate-a-google-${randomBytes(4).toString("hex")}@test.local`;
+    createdUserEmails.push(googler);
+    await mdb.user.create({ data: { email: googler, googleSub: `e2e-sub-${randomBytes(4).toString("hex")}` } });
+    const sg = await startSignIn();
+    const gSend = await postForm("/login/email", { request_id: sg.rid, email: googler }, sg.browser);
+    ok(
+      "Google-linked address gets a pointer to Google, not a code",
+      gSend.status === 200 && mailTo(googler).at(-1)?.subject === "Sign in to MyFinance with Google" &&
+        !/\d{6}/.test(mailTo(googler).at(-1)?.text ?? ""),
+      JSON.stringify(mailTo(googler).at(-1))
+    );
+    // Sends per address are capped: two more pass, the fourth is refused
+    await postForm("/login/email", { request_id: sg.rid, email: googler }, sg.browser);
+    await postForm("/login/email", { request_id: sg.rid, email: googler }, sg.browser);
+    ok("fourth code for one address in 15 min -> 429", (await postForm("/login/email", { request_id: sg.rid, email: googler }, sg.browser)).status === 429);
+  }
+
   // Enabled -> 400 (bad request), not configured -> 404; both prove routing works.
   const gBadReq = await fetch(`${BASE}/auth/google?request_id=bogus`, { redirect: "manual" });
   ok("google start with bogus request rejected", gBadReq.status === 400 || gBadReq.status === 404);
@@ -1249,8 +1440,42 @@ async function main(): Promise<void> {
     await odb.account.create({
       data: { userId: testUser.id, name: "Orphan Savings", type: "bank", provider: "enablebanking", externalId: "eb-acc-2", currency: "EUR" },
     });
-    const consent = await fetch(ebStart.authorize_url);
-    ok("eb consent callback succeeds", consent.status === 200 && (await consent.text()).includes("Bank connected"));
+    // The bank's return binds nothing: the page names the MyFinance account
+    // that would get the access, and only a confirm from this browser binds.
+    const bankLink = async (authorizeUrl: string) => {
+      const page = await fetch(authorizeUrl);
+      const html = await page.text();
+      const cookie = page.headers.getSetCookie().find((c) => c.startsWith("mf_bank="))?.split(";")[0] ?? "";
+      const state = new URL(authorizeUrl).searchParams.get("state") ?? "";
+      const confirm = (decision: string, withCookie = cookie) =>
+        fetch(`${BASE}/connect/enablebanking/confirm`, {
+          method: "POST",
+          headers: { "content-type": "application/x-www-form-urlencoded", ...(withCookie ? { cookie: withCookie } : {}) },
+          body: new URLSearchParams({ state, decision }),
+        });
+      return { page, html, cookie, confirm };
+    };
+    const declined = await bankLink(ebStart.authorize_url);
+    ok(
+      "eb callback asks to confirm, naming the masked account",
+      declined.page.status === 200 &&
+        declined.html.includes("Connect Mock Bank to MyFinance?") &&
+        declined.html.includes("ga•••@test.local") &&
+        !!declined.cookie,
+      declined.html.slice(0, 300)
+    );
+    ok("eb confirm from another browser -> 400", (await declined.confirm("connect", "")).status === 400);
+    ok("nothing bound before the confirm", payload(await call("connect_bank", { action: "status" })).status === "pending");
+    const cancelled = await declined.confirm("cancel");
+    ok("eb cancel binds nothing", cancelled.status === 200 && (await cancelled.text()).includes("Not connected"));
+    ok("cancelled link is dead", (await declined.confirm("connect")).status === 400);
+    ok("connection left in error after cancel", payload(await call("connect_bank", { action: "status" })).status === "error");
+
+    const ebStart2 = payload(await call("connect_bank", { action: "start", country: "FI", bank_name: "Mock Bank" }));
+    const accepted = await bankLink(ebStart2.authorize_url);
+    const consent = await accepted.confirm("connect");
+    ok("eb confirm connects", consent.status === 200 && (await consent.text()).includes("Bank connected"));
+    ok("confirmed link cannot be confirmed again", (await accepted.confirm("connect")).status === 400);
 
     const ebs1 = payload(await call("sync_bank", {}));
     ok("eb first sync counts", ebs1.accounts_created === 2 && ebs1.imported === 2 && ebs1.transfers === 2 && ebs1.manual_twins_merged === 1, JSON.stringify(ebs1));
@@ -1596,18 +1821,62 @@ async function main(): Promise<void> {
     ok("budget alert fires once on crossing", !giftAlert(g1) && giftAlert(g2) && !giftAlert(g3), JSON.stringify({ g1: g1.budget_alerts, g2: g2.budget_alerts, g3: g3.budget_alerts }));
     const progress = payload(await call("get_budget_progress", {}));
     ok("budget progress reports days left", Number.isInteger(progress.days_left) && progress.days_left >= 0 && progress.days_left <= 30, JSON.stringify({ days_left: progress.days_left }));
+    // Currencies outside ECB + NBU are priced by the fallback source (from
+    // 2024-03-02); a code that is not ISO 4217 is refused
+    const rub = payload(await call("log_expense", { amount: 1000, currency: "RUB", category: "other", merchant: "Fallback FX", date: "2026-09-30" }));
+    ok("RUB priced by the fallback source", rub.currency === "RUB" && rub.amount_base > 5 && rub.amount_base < 20, JSON.stringify(rub));
+    ok(
+      "RUB before the fallback's first day refused",
+      isErr(await call("log_expense", { amount: 1000, currency: "RUB", category: "other", merchant: "Fallback FX", date: "2023-05-01" }))
+    );
+    ok("non-ISO code refused", isErr(await call("log_expense", { amount: 1, currency: "BTC", category: "other", date: "2026-09-30" })));
+    // Profile export: everything but the transactions, no secrets
+    const profile = payload(await call("export_profile", {}));
+    ok(
+      "export_profile: settings, accounts with snapshots, budgets, rules, links",
+      profile.format === "myfinance-profile/1" &&
+        profile.settings?.email === EMAIL &&
+        profile.accounts?.some((a: any) => Array.isArray(a.balance_snapshots) && a.balance_snapshots[0]?.length === 3) &&
+        profile.budgets?.some((b: any) => b.category === "gifts") &&
+        profile.merchant_rules?.length > 0 &&
+        Array.isArray(profile.connections) &&
+        profile.transactions?.count > 0 &&
+        !/tokenEnc|session_id|e2e-eb-session/.test(JSON.stringify(profile)),
+      JSON.stringify(profile).slice(0, 500)
+    );
     // TR-2/TR-8: a base change is atomic and converts budget caps too
     const capOf = async () =>
       Number((await odb.budget.findFirstOrThrow({ where: { userId: testUser.id, categoryKey: "gifts" } })).amount);
     const capEur = await capOf();
+    const rowsBefore = await odb.transaction.count({ where: { userId: testUser.id } });
+    const synced = await odb.transaction.findFirstOrThrow({ where: { userId: testUser.id, source: "bank", currency: "EUR" } });
     const toUsd = payload(await call("update_settings", { base_currency: "USD" }));
     const capUsd = await capOf();
+    const syncedUsd = await odb.transaction.findUniqueOrThrow({ where: { id: synced.id } });
+    const rowsUsd = await odb.transaction.count({ where: { userId: testUser.id } });
     const toEur = payload(await call("update_settings", { base_currency: "EUR" }));
     const capBack = await capOf();
+    const syncedBack = await odb.transaction.findUniqueOrThrow({ where: { id: synced.id } });
     ok(
       "base change converts budgets and round-trips",
       toUsd.base_currency === "USD" && capUsd > capEur && toEur.base_currency === "EUR" && Math.abs(capBack - capEur) <= 0.02,
       JSON.stringify({ capEur, capUsd, capBack })
+    );
+    ok(
+      "base change reprices every row in place",
+      rowsUsd === rowsBefore &&
+        Number(syncedUsd.amountBase) > Number(synced.amountBase) &&
+        Number(syncedUsd.fxRate) > 1 &&
+        Math.abs(Number(syncedBack.amountBase) - Number(synced.amountBase)) <= 0.01 &&
+        syncedBack.merchant === synced.merchant &&
+        syncedBack.createdAt.getTime() === synced.createdAt.getTime(),
+      JSON.stringify({ rowsBefore, rowsUsd, before: synced.amountBase, usd: syncedUsd.amountBase, back: syncedBack.amountBase })
+    );
+    // A switch is no user edit: syncs keep updating rows it repriced
+    ok(
+      "base change leaves updatedAt alone",
+      syncedUsd.updatedAt.getTime() === synced.updatedAt.getTime() && syncedBack.updatedAt.getTime() === synced.updatedAt.getTime(),
+      JSON.stringify({ before: synced.updatedAt, usd: syncedUsd.updatedAt, back: syncedBack.updatedAt })
     );
     void handLogged;
   } else {
@@ -1623,7 +1892,7 @@ async function main(): Promise<void> {
 
   // 13. Refresh token rotation. A refresh never widens the grant (unknown
   // scopes grant nothing). The rotated token survives a short grace window,
-  // so parallel refreshes by one client all succeed, then it dies.
+  // so parallel refreshes by one client all succeed.
   const refreshGrant = { grant_type: "refresh_token", refresh_token: tokens.refresh_token, client_id: client.client_id };
   const widenRes = await tokenPost({ ...refreshGrant, scope: "admin finance:write" });
   const widened = (await widenRes.json()) as { scope?: string };
@@ -1632,13 +1901,10 @@ async function main(): Promise<void> {
     widenRes.status === 200 && !String(widened.scope ?? "").includes("admin"),
     JSON.stringify({ status: widenRes.status, scope: widened.scope })
   );
+  // (After the grace window a reuse revokes the whole grant: section 2b.)
   const refreshRes = await tokenPost(refreshGrant);
   const refreshed: any = await refreshRes.json();
   ok("rotated refresh token works inside the grace window", refreshRes.status === 200 && !!refreshed.access_token);
-  if (!externalBase) {
-    await Bun.sleep(E2E_REFRESH_GRACE_MS + 300);
-    ok("rotated refresh token dies after the grace window", (await tokenPost(refreshGrant)).status === 400);
-  }
   const pingNew = await mcpCall(refreshed.access_token, {
     jsonrpc: "2.0",
     id: 4,
@@ -1685,6 +1951,21 @@ async function main(): Promise<void> {
 try {
   await main();
 } finally {
+  // Users created by the email sign-in checks (all @test.local).
+  if (!externalBase && createdUserEmails.length) {
+    try {
+      const { db } = await import("../src/db");
+      const users = await db.user.findMany({ where: { email: { in: createdUserEmails.filter((e) => e.endsWith("@test.local")) } } });
+      const ids = users.map((u) => u.id);
+      await db.oauthAccessToken.deleteMany({ where: { userId: { in: ids } } });
+      await db.oauthRefreshToken.deleteMany({ where: { userId: { in: ids } } });
+      await db.oauthCode.deleteMany({ where: { userId: { in: ids } } });
+      await db.event.deleteMany({ where: { userId: { in: ids } } });
+      await db.user.deleteMany({ where: { id: { in: ids } } });
+    } catch (e) {
+      console.error("WARN: e2e user cleanup failed:", e instanceof Error ? e.message : String(e));
+    }
+  }
   // Spawn mode writes to the real database: never leave the run's OAuth
   // clients behind (a confidential one holds a secret that never expires),
   // whether the run passed or failed. External mode has no DB access.
@@ -1697,7 +1978,10 @@ try {
       await db.oauthRefreshToken.deleteMany({ where });
       await db.oauthClient.deleteMany({ where });
       await db.event.deleteMany({
-        where: { type: "oauth_error", OR: createdClients.map((id) => ({ meta: { path: ["client_id"], equals: id } })) },
+        where: {
+          type: { in: ["oauth_error", "oauth_refresh_replay"] },
+          OR: createdClients.map((id) => ({ meta: { path: ["client_id"], equals: id } })),
+        },
       });
       await db.$disconnect();
     } catch (e) {
@@ -1709,4 +1993,5 @@ try {
   // forever after main() returns - the script must exit for the deploy gate.
   (zenStub as { stop: (closeActiveConnections?: boolean) => void } | null)?.stop(true);
   (ebStub as { stop: (closeActiveConnections?: boolean) => void } | null)?.stop(true);
+  (mailStub as { stop: (closeActiveConnections?: boolean) => void } | null)?.stop(true);
 }

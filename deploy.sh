@@ -69,6 +69,15 @@ rsync -az --delete \
   --exclude '.git' --exclude 'state-e2e' --filter=':- .gitignore' \
   ./ "$SERVER:$REMOTE_DIR/"
 
+# The landing font is not in git (Fontshare's licence forbids redistribution),
+# so the .gitignore filter above skips it (and keeps the box's copy); it ships
+# from this Mac's working copy instead.
+if ls site/fonts/Switzer-*.woff2 >/dev/null 2>&1; then
+  rsync -az -e "ssh -i $SSH_KEY" site/fonts/Switzer-*.woff2 "$SERVER:$REMOTE_DIR/site/fonts/"
+else
+  echo "    (no site/fonts/Switzer-*.woff2 here: the box keeps its copy, a fresh box falls back to system fonts)"
+fi
+
 # nginx right after rsync, before the long image build: rsync just rewrote
 # files nginx may still include from the deploy dir, and anything that reloads
 # nginx on this shared box mid-build must find a config that tests clean.
