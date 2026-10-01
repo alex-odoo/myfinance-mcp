@@ -1734,7 +1734,9 @@ export function registerFinanceTools(server: McpServer, userId: string): void {
         category: z.enum(EXPENSE_CATEGORIES).optional().describe("Omit for the overall monthly budget."),
       },
     },
-    async ({ amount, category }) => {
+    // A cap is an amount in the base currency: a base switch must not run
+    // between reading the base and writing the cap.
+    pricing(async ({ amount, category }) => {
       const user = await getUser(userId);
       const key = category ?? "overall";
       await db.budget.upsert({
@@ -1743,7 +1745,7 @@ export function registerFinanceTools(server: McpServer, userId: string): void {
         create: { userId, categoryKey: key, amount },
       });
       return text({ ok: true, budget: key, amount, currency: user.baseCurrency });
-    }
+    })
   );
 
   server.registerTool(
@@ -1863,10 +1865,10 @@ export function registerFinanceTools(server: McpServer, userId: string): void {
           });
           for (const p of pairs) await rateTo(p.currency, p.occurredAt);
           // Budget caps are amounts in the base currency too (today's rate;
-          // no lookup at all without budgets).
-          const budgetRate = (await db.budget.count({ where: { userId } }))
-            ? await rateTo(current.baseCurrency, parseDate(todayIn(current.timezone)))
-            : undefined;
+          // no lookup at all without budgets). set_budget is a base writer,
+          // so the list cannot change until the switch commits.
+          const budgets = await db.budget.findMany({ where: { userId } });
+          const budgetRate = budgets.length ? await rateTo(current.baseCurrency, parseDate(todayIn(current.timezone))) : 1;
           // Every row is rewritten in a few statements: delete and re-insert
           // with the new base (Prisma cannot set a column from another one,
           // and one UPDATE per row took minutes on a long history). Columns
@@ -1890,10 +1892,8 @@ export function registerFinanceTools(server: McpServer, userId: string): void {
                 });
                 await px.transaction.deleteMany({ where: { userId } });
                 await px.transaction.createMany({ data });
-                const budgets = await px.budget.findMany({ where: { userId } });
-                if (budgets.length && budgetRate === undefined) throw new Error("Budgets changed during the base currency switch. Retry.");
                 for (const b of budgets) {
-                  await px.budget.update({ where: { id: b.id }, data: { amount: round2(Number(b.amount) * budgetRate!) } });
+                  await px.budget.update({ where: { id: b.id }, data: { amount: round2(Number(b.amount) * budgetRate) } });
                 }
                 await px.user.update({ where: { id: userId }, data: { baseCurrency: newBase } });
               },

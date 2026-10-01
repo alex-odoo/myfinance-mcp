@@ -50,7 +50,7 @@ if (process.env.NODE_ENV === "production") {
 }
 const pruneOAuth = async () => {
   await store.pruneExpired();
-  const dropped = await store.pruneIdleClients(provider.pendingClientIds());
+  const dropped = await store.pruneIdleClients(() => provider.pendingClientIds());
   if (dropped) console.log(`[oauth] dropped ${dropped} idle client registration(s)`);
 };
 await pruneOAuth();
@@ -109,7 +109,7 @@ app.use(
     next();
   },
   express.urlencoded({ extended: false }),
-  (req, res, next) => {
+  async (req, res, next) => {
     if (req.method !== "GET" && req.method !== "POST") return next();
     const params = (req.method === "POST" ? req.body : req.query) as Record<string, unknown> | undefined;
     // Idle registrations are pruned (OAuthStore.pruneIdleClients). The SDK
@@ -131,6 +131,11 @@ app.use(
     };
     const problem = authorizeRequestProblem(params ?? {});
     if (!problem) return next();
+    // A pruned client whose request is also malformed: retrying cannot help,
+    // re-adding the connector does. Read only on this error path.
+    if (typeof params?.client_id === "string" && !(await store.getClient(params.client_id))) {
+      return res.status(400).json({ error: "invalid_client" }); // rendered by the res.json hook above
+    }
     // Leave the same trace as the oauth_error middleware below, so a client
     // refused here is visible on our side. Requests without a client_id
     // (scanners) are not recorded.
@@ -430,6 +435,15 @@ app.get(`${BANK_PATH}/callback`, async (req, res) => {
   const owner = await db.user.findUnique({ where: { id: link.userId }, select: { email: true } });
   if (!owner) return fail(400, "Unknown or expired link", "Restart the connection from your AI chat with connect_bank.");
   // Hold the bank's code until the confirm; this browser gets the key to it.
+  // A reload of this page keeps the held code as stored (encryption is
+  // randomized, so re-encrypting would void a confirm already on its way)
+  // and its clock; only the browser key is renewed.
+  let held: string | undefined;
+  try {
+    held = meta.pendingCode && decryptToken(meta.pendingCode) === code ? meta.pendingCode : undefined;
+  } catch {
+    held = undefined;
+  }
   const browserKey = randomBytes(32).toString("base64url");
   await db.bankConnection.update({
     where: { id: link.id },
@@ -437,8 +451,8 @@ app.get(`${BANK_PATH}/callback`, async (req, res) => {
       meta: {
         ...meta,
         startedAt: meta.startedAt ?? link.updatedAt.getTime(),
-        pendingCode: encryptToken(code),
-        codeAt: Date.now(),
+        pendingCode: held ?? encryptToken(code),
+        codeAt: held ? meta.codeAt : Date.now(),
         confirmHash: sha256(browserKey).toString("hex"),
       } as object,
     },
@@ -477,20 +491,10 @@ app.post(`${BANK_PATH}/confirm`, express.urlencoded({ extended: false }), async 
     return fail(400, "Different browser", "Confirm in the browser where you approved access at your bank, or restart from your AI chat.");
   }
   res.clearCookie(BANK_CONFIRM_COOKIE, { path: BANK_PATH });
-  if (Date.now() - (meta.codeAt ?? 0) > BANK_CONFIRM_TTL_MS) {
-    await endAttempt("Bank connection was not confirmed in time");
-    return fail(400, "Link expired", "Link expired, restart from your AI chat with connect_bank.");
-  }
-  if (body.decision !== "connect") {
-    await endAttempt("Bank connection cancelled at the confirmation step");
-    return res
-      .type("html")
-      .send(callbackPage("Not connected", "Nothing was connected and no access was granted to anyone.", false));
-  }
-  // Claim the code: of two confirms (a double click) one takes it, the
-  // other finds it gone, so the loser's failed bank call cannot overwrite
-  // the winner's connection. The state goes with it: a reload of the bank's
-  // return page meanwhile cannot re-arm the link.
+  // Claim the code before anything is written: of two confirms (a double
+  // click, or Connect then Cancel) one takes it, the other finds it gone,
+  // so no second request can overwrite what the first one did. The state
+  // goes with it: a reload of the bank's return page cannot re-arm the link.
   const { pendingCode: _taken, state: _state, ...claimed } = meta;
   const { count: won } = await db.bankConnection.updateMany({
     where: { id: link.id, meta: { path: ["pendingCode"], equals: meta.pendingCode! } },
@@ -503,8 +507,26 @@ app.post(`${BANK_PATH}/confirm`, express.urlencoded({ extended: false }), async 
       "If you just confirmed, go back to your AI chat and run sync_bank. Otherwise restart the connection with connect_bank."
     );
   }
+  if (Date.now() - (meta.codeAt ?? 0) > BANK_CONFIRM_TTL_MS) {
+    await endAttempt("Bank connection was not confirmed in time");
+    return fail(400, "Link expired", "Link expired, restart from your AI chat with connect_bank.");
+  }
+  if (body.decision !== "connect") {
+    await endAttempt("Bank connection cancelled at the confirmation step");
+    return res
+      .type("html")
+      .send(callbackPage("Not connected", "Nothing was connected and no access was granted to anyone.", false));
+  }
+  let bankCode: string;
   try {
-    const session = await ebCreateSession(decryptToken(meta.pendingCode!));
+    bankCode = decryptToken(meta.pendingCode!);
+  } catch {
+    // A rotated TOKEN_ENC_KEY or a damaged row; its own text names ZenMoney.
+    await endAttempt("The bank authorization could not be read back. Reconnect with connect_bank.");
+    return fail(502, "Connection failed", "Could not finish the bank connection. Retry from your AI chat.");
+  }
+  try {
+    const session = await ebCreateSession(bankCode);
     await db.bankConnection.update({
       where: { id: link.id },
       data: {

@@ -70,18 +70,20 @@ async function fetchFallback(date: string): Promise<Record<string, number> | nul
   if (date < FALLBACK_FIRST_DAY) return {};
   const known = fallbackDays.get(date);
   if (known) return known;
-  const rates = await downloadFallback(date);
-  if (rates) {
+  const got = await downloadFallback(date);
+  // An earlier day standing in for one not published yet is not cached:
+  // the day's own file replaces it once it appears.
+  if (got?.day === date) {
     if (fallbackDays.size >= FALLBACK_CACHE_DAYS) fallbackDays.delete(fallbackDays.keys().next().value!);
-    fallbackDays.set(date, rates);
+    fallbackDays.set(date, got.rates);
   }
-  return rates;
+  return got?.rates ?? null;
 }
 
-async function downloadFallback(date: string): Promise<Record<string, number> | null> {
+async function downloadFallback(date: string): Promise<{ rates: Record<string, number>; day: string } | null> {
   for (let back = 0; back <= FALLBACK_DAYS_BACK; back++) {
     const day = dateKey(new Date(Date.parse(`${date}T00:00:00Z`) - back * 86_400_000));
-    if (day < FALLBACK_FIRST_DAY) return {};
+    if (day < FALLBACK_FIRST_DAY) return { rates: {}, day: date };
     let missingDay = false;
     for (const url of fallbackUrls(day)) {
       try {
@@ -98,7 +100,7 @@ async function downloadFallback(date: string): Promise<Record<string, number> | 
           const quote = code.toUpperCase();
           if (ISO_CURRENCIES.has(quote) && quote !== "EUR" && typeof rate === "number" && rate > 0) rates[quote] = rate;
         }
-        return rates;
+        return { rates, day };
       } catch {
         /* try the mirror */
       }

@@ -671,14 +671,14 @@ async function main(): Promise<void> {
     const sendRes = await postForm("/login/email", { request_id: si.rid, email: newcomer }, si.browser);
     const sendHtml = await sendRes.text();
     const codeMail = mailTo(newcomer).at(-1);
-    const emailCode = codeMail?.subject.match(/^(\d{6}) is your MyFinance sign-in code$/)?.[1] ?? "";
+    const emailCode = codeMail?.subject.match(/^(\d{8}) is your MyFinance sign-in code$/)?.[1] ?? "";
     ok(
       "email code sent, page names the masked address",
       sendRes.status === 200 && sendHtml.includes("ga•••@test.local") && !!emailCode && !!codeMail?.text.includes(emailCode),
       JSON.stringify({ status: sendRes.status, subject: codeMail?.subject })
     );
     ok("code email names where the code connects", !!codeMail?.text.includes("connects MyFinance to an app on this device"));
-    const wrong = await postForm("/login/email/verify", { request_id: si.rid, code: emailCode === "000000" ? "000001" : "000000" }, si.browser);
+    const wrong = await postForm("/login/email/verify", { request_id: si.rid, code: emailCode === "00000000" ? "00000001" : "00000000" }, si.browser);
     ok("wrong email code -> 401", wrong.status === 401 && (await wrong.text()).includes("Wrong code"));
     ok(
       "email code from another browser -> 400",
@@ -756,8 +756,8 @@ async function main(): Promise<void> {
     let lastWrong = "";
     for (let i = 0; i < 10; i++) {
       if (i % 5 === 0) await fromIp(100 + i, "/login/email", { email: grind }); // a fresh code every 5 tries
-      const real = mailTo(grind).at(-1)?.subject.slice(0, 6) ?? "";
-      lastWrong = await (await fromIp(i + 1, "/login/email/verify", { code: real === "000000" ? "000001" : "000000" })).text();
+      const real = mailTo(grind).at(-1)?.subject.slice(0, 8) ?? "";
+      lastWrong = await (await fromIp(i + 1, "/login/email/verify", { code: real === "00000000" ? "00000001" : "00000000" })).text();
     }
     ok("10th wrong code for one address locks it, across resends and IPs", lastWrong.includes("Too many wrong codes for this address"));
     ok(
@@ -1531,9 +1531,18 @@ async function main(): Promise<void> {
       typeof heldMeta.pendingCode === "string" && !!heldCode && !String(heldMeta.pendingCode).includes(heldCode),
       JSON.stringify({ held: String(heldMeta.pendingCode).slice(0, 12) })
     );
+    // A reload of the bank's return page keeps the held code (a confirm
+    // already on its way still matches) and hands out a new browser key
+    const reloaded = await bankLink(ebStart2.authorize_url);
+    const reloadMeta = (await odb.bankConnection.findFirstOrThrow({ where: { userId: testUser.id, provider: "enablebanking" } })).meta as Rec2;
+    ok(
+      "reload keeps the held bank code and its clock",
+      reloadMeta.pendingCode === heldMeta.pendingCode && reloadMeta.codeAt === heldMeta.codeAt && reloaded.cookie !== accepted.cookie
+    );
+    ok("old browser key refused after a reload", (await accepted.confirm("connect")).status === 400);
     // Double click: one confirm binds, the other finds the code taken and
     // cannot undo the connection with its failed bank call
-    const [c1, c2] = await Promise.all([accepted.confirm("connect"), accepted.confirm("connect")]);
+    const [c1, c2] = await Promise.all([reloaded.confirm("connect"), reloaded.confirm("connect")]);
     const bodies = [await c1.text(), await c2.text()];
     ok(
       "double-clicked confirm connects exactly once",
@@ -1541,7 +1550,7 @@ async function main(): Promise<void> {
       JSON.stringify([c1.status, c2.status])
     );
     ok("connection active after the double click", payload(await call("connect_bank", { action: "status" })).status === "active");
-    ok("confirmed link cannot be confirmed again", (await accepted.confirm("connect")).status === 400);
+    ok("confirmed link cannot be confirmed again", (await reloaded.confirm("connect")).status === 400);
 
     const ebs1 = payload(await call("sync_bank", {}));
     ok("eb first sync counts", ebs1.accounts_created === 2 && ebs1.imported === 2 && ebs1.transfers === 2 && ebs1.manual_twins_merged === 1, JSON.stringify(ebs1));

@@ -90,11 +90,11 @@ export function codePage(requestId: string, client: LoginClient | undefined, ema
     requestId,
     client,
     error,
-    `<p>We sent a 6-digit code to <b>${escapeHtml(maskEmail(email))}</b>. It expires in 10 minutes.</p>
+    `<p>We sent an 8-digit code to <b>${escapeHtml(maskEmail(email))}</b>. It expires in 10 minutes.</p>
   <form method="post" action="/login/email/verify">
     <input type="hidden" name="request_id" value="${id}">
     <label for="code">Sign-in code</label>
-    <input id="code" name="code" type="text" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" required autofocus>
+    <input id="code" name="code" type="text" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{8}" maxlength="8" required autofocus>
     <button type="submit">Sign in</button>
   </form>
   <form method="post" action="/login/email">

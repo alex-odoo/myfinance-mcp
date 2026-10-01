@@ -48,15 +48,19 @@ const CODE_TTL_MS = 10 * 60 * 1000;
 const LOGIN_MAX_ATTEMPTS = 5;
 const LOGIN_WINDOW_MS = 15 * 60 * 1000;
 
-// Email sign-in: a 6-digit code, 5 tries, 10 minutes. Sends are capped per
+// Email sign-in: an 8-digit code, 5 tries, 10 minutes. Sends are capped per
 // address (nobody's inbox becomes a target) and per IP (the Resend quota).
-// Wrong codes are also budgeted per address across codes and sign-ins: a
-// resend must not buy fresh guesses, or attackers on many IPs could grind
-// one address (10 a day = 1 in 100,000 per day at 6 digits).
+// Wrong codes are also budgeted per address across codes and sign-ins, so a
+// resend buys no fresh guesses for attackers on many IPs: 10 an hour is
+// 1 in 400,000 a day at 8 digits. The window is short on purpose: anyone who
+// knows an address can spend its budget, and that locks the owner out of
+// email sign-in for at most an hour.
+const EMAIL_CODE_DIGITS = 8;
 const EMAIL_CODE_TTL_MS = 10 * 60 * 1000;
 const EMAIL_CODE_MAX_ATTEMPTS = 5;
 const WRONG_CODES_PER_ADDRESS = 10;
-const WRONG_CODES_WINDOW_MS = 24 * 60 * 60 * 1000;
+const WRONG_CODES_WINDOW_MS = 60 * 60 * 1000;
+const ADDRESS_LOCKED = "Too many wrong codes for this address. Try again in an hour, or continue with Google.";
 const SENDS_PER_ADDRESS = 3;
 const SENDS_PER_ADDRESS_WINDOW_MS = 15 * 60 * 1000;
 const SENDS_PER_IP = 10;
@@ -372,10 +376,7 @@ export class FinanceOAuthProvider implements OAuthServerProvider {
         return;
       }
       if (this.spent(`w:${email}`, WRONG_CODES_PER_ADDRESS)) {
-        res
-          .status(429)
-          .type("html")
-          .send(loginPage(requestId, pendingReq.client, "Too many wrong codes for this address. Try again tomorrow, or continue with Google."));
+        res.status(429).type("html").send(loginPage(requestId, pendingReq.client, ADDRESS_LOCKED));
         return;
       }
       // The IP is charged first: a request its own cap refuses must not use
@@ -398,7 +399,7 @@ export class FinanceOAuthProvider implements OAuthServerProvider {
       // An account that signs in another way gets a pointer to it instead
       // of a code. The page reads the same either way, so it does not tell
       // anyone which addresses have accounts.
-      const code = String(randomInt(0, 1_000_000)).padStart(6, "0");
+      const code = String(randomInt(0, 10 ** EMAIL_CODE_DIGITS)).padStart(EMAIL_CODE_DIGITS, "0");
       const other = await emailSignInBlocked(email);
       const sent = other
         ? await sendMail(
@@ -455,16 +456,20 @@ export class FinanceOAuthProvider implements OAuthServerProvider {
         res.status(400).type("html").send(loginPage(requestId, pendingReq.client, "The code expired. Request a new one."));
         return;
       }
+      // A spent address budget voids every outstanding code for it, the
+      // right one included: checked before the compare.
+      if (this.spent(`w:${sentCode.email}`, WRONG_CODES_PER_ADDRESS)) {
+        pendingReq.emailCode = undefined;
+        res.status(429).type("html").send(loginPage(requestId, pendingReq.client, ADDRESS_LOCKED));
+        return;
+      }
       const code = (typeof body.code === "string" ? body.code : "").trim();
       if (!timingSafeEqual(sha256(code), sentCode.hash)) {
         this.recordFailedLogin(ip);
         this.takeSend(`w:${sentCode.email}`, WRONG_CODES_PER_ADDRESS, WRONG_CODES_WINDOW_MS);
         if (this.spent(`w:${sentCode.email}`, WRONG_CODES_PER_ADDRESS)) {
           pendingReq.emailCode = undefined;
-          res
-            .status(401)
-            .type("html")
-            .send(loginPage(requestId, pendingReq.client, "Too many wrong codes for this address. Try again tomorrow, or continue with Google."));
+          res.status(401).type("html").send(loginPage(requestId, pendingReq.client, ADDRESS_LOCKED));
           return;
         }
         if (++sentCode.attempts >= EMAIL_CODE_MAX_ATTEMPTS) {

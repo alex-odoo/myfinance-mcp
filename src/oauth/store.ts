@@ -239,7 +239,7 @@ export class OAuthStore {
    * client with a live refresh token is never touched: that is the one
    * claude.ai keeps for good.
    */
-  async pruneIdleClients(signingIn: ReadonlySet<string> = new Set()): Promise<number> {
+  async pruneIdleClients(signingIn: () => ReadonlySet<string> = () => new Set()): Promise<number> {
     const now = new Date();
     const old = await db.oauthClient.findMany({
       where: { createdAt: { lt: new Date(now.getTime() - IDLE_CLIENT_TTL_MS) } },
@@ -256,8 +256,10 @@ export class OAuthStore {
         db.oauthRefreshToken.findMany(live),
       ]);
       const inUse = new Set([...codes, ...access, ...refresh].map((r) => r.clientId));
-      // A sign-in in progress holds no code yet, only a pending request.
-      const idle = chunk.filter((id) => !inUse.has(id) && !signingIn.has(id));
+      // A sign-in in progress holds no code yet, only a pending request;
+      // read right before the delete, not once for the whole prune.
+      const pending = signingIn();
+      const idle = chunk.filter((id) => !inUse.has(id) && !pending.has(id));
       if (idle.length) dropped += (await db.oauthClient.deleteMany({ where: { clientId: { in: idle } } })).count;
     }
     return dropped;
@@ -280,12 +282,16 @@ export class OAuthStore {
     // Legacy rows carry no link between an access token and its refresh
     // token; the client + user pair is the sign-in they came from, so an
     // access token joins the grant of the one refresh token of its pair.
+    // Rows the old code retired (expiry cut to its 30 s grace) are no sign-in
+    // of their own: they would make every pair that ever refreshed look
+    // ambiguous.
     const grantOfPair = new Map<string, string | null>();
-    const legacyRefresh = await db.oauthRefreshToken.findMany({ select: { token: true, clientId: true, userId: true } });
+    const liveAfter = now.getTime() + 5 * 60_000;
+    const legacyRefresh = await db.oauthRefreshToken.findMany({ select: { token: true, clientId: true, userId: true, expiresAt: true } });
     for (const r of legacyRefresh.filter((r) => !HASHED_KEY.test(r.token))) {
       const grantId = crypto.randomUUID();
       const pair = `${r.clientId}|${r.userId}`;
-      grantOfPair.set(pair, grantOfPair.has(pair) ? null : grantId); // two refresh tokens: ambiguous
+      if (r.expiresAt.getTime() > liveAfter) grantOfPair.set(pair, grantOfPair.has(pair) ? null : grantId); // two live ones: ambiguous
       rekeyed += (
         await db.oauthRefreshToken.updateMany({
           where: { token: r.token },
