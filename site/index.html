@@ -65,9 +65,10 @@
     { "@type": "Question", "name": "What is the Model Context Protocol (MCP)?", "acceptedAnswer": { "@type": "Answer", "text": "An open standard that lets AI assistants connect to external tools. An MCP server provides specific capabilities, here personal finance tracking, that the AI can use during a conversation. Think of it as a plugin system for AI assistants." } },
     { "@type": "Question", "name": "Does it work with ChatGPT?", "acceptedAnswer": { "@type": "Answer", "text": "Yes. Settings, then Apps, then create a custom app with the server URL using OAuth. Works on every ChatGPT plan." } },
     { "@type": "Question", "name": "Which clients are supported?", "acceptedAnswer": { "@type": "Answer", "text": "Any MCP client with OAuth 2.0 + PKCE: Claude.ai, Claude desktop and mobile, Claude Code, Cursor, Windsurf, VS Code." } },
+    { "@type": "Question", "name": "Do I need a Google account?", "acceptedAnswer": { "@type": "Answer", "text": "No. When you connect, sign in with Google or with a one-time code sent to any email address; the first sign-in creates your account." } },
     { "@type": "Question", "name": "Is it free?", "acceptedAnswer": { "@type": "Answer", "text": "Yes, free while in beta. No ads, no card." } },
-    { "@type": "Question", "name": "Is my data private?", "acceptedAnswer": { "@type": "Answer", "text": "Your data is linked to your account and only you can access it. EU hosting, no third-party sharing, no amounts in logs, and you can export or delete everything at any time." } },
-    { "@type": "Question", "name": "Can it read my bank account?", "acceptedAnswer": { "@type": "Answer", "text": "Yes, optionally and read-only. In the EU and UK you can connect your bank through licensed open banking (PSD2): you approve access on your bank's own page and new transactions sync in daily. Your bank credentials never touch our server, and you can revoke access at any time. Bank connections are in beta and enabled gradually; voice, receipts and statement import work without any bank link." } },
+    { "@type": "Question", "name": "Is my data private?", "acceptedAnswer": { "@type": "Answer", "text": "Your data is linked to your account and only you can access it. EU hosting, no third-party sharing, no amounts in logs, sign-in tokens stored only as a one-way hash, and you can export (transactions as CSV, the rest of your profile as one file) or delete everything at any time." } },
+    { "@type": "Question", "name": "Can it read my bank account?", "acceptedAnswer": { "@type": "Answer", "text": "Yes, optionally and read-only. In the EU and UK you can connect your bank through licensed open banking (PSD2): you approve access on your bank's own page, confirm which MyFinance account receives it, and new transactions sync in daily. Your bank credentials never touch our server, and you can revoke access at any time. Bank connections are in beta and enabled gradually; voice, receipts and statement import work without any bank link." } },
     { "@type": "Question", "name": "What about duplicates when I import a statement?", "acceptedAnswer": { "@type": "Answer", "text": "The importer detects rows you already logged by hand and merges them instead of duplicating, and re-importing the same statement is safe: already-imported rows are skipped and reported." } },
     { "@type": "Question", "name": "Can I split personal and business?", "acceptedAnswer": { "@type": "Answer", "text": "Yes. Accounts and individual transactions carry a personal/business tag; every report can be filtered by it, and the CSV export includes it for your accountant." } },
     { "@type": "Question", "name": "Can I self-host it?", "acceptedAnswer": { "@type": "Answer", "text": "Yes. MIT-licensed, runs from a Dockerfile with your own Postgres (Supabase works). The GitHub repository includes a self-hosting guide." } }
@@ -201,7 +202,7 @@
     <p class="sec-sub">Say "connect my bank" in the chat, approve read-only access on your bank's own page, and new transactions arrive daily on their own. No CSV, no retyping, no separate app.</p>
     <div class="feat-grid cols3 reveal">
       <div class="feat"><span class="fi num">eu &amp; uk</span><h3>2,700+ banks, including Revolut</h3><p>Open banking coverage across 30 European countries through a licensed provider (Enable Banking). ZenMoney sync covers more; statement import works everywhere.</p></div>
-      <div class="feat"><span class="fi num">read-only</span><h3>Your credentials never touch us</h3><p>You sign in on the bank's own page and grant read-only consent under PSD2. We store no bank passwords, and you can revoke access at any time, at the bank or in chat.</p></div>
+      <div class="feat"><span class="fi num">read-only</span><h3>Your credentials never touch us</h3><p>You sign in on the bank's own page and grant read-only consent under PSD2; we store no bank passwords. Before anything connects, you see which MyFinance account gets the access, and you can revoke it any time, at the bank or in chat.</p></div>
       <div class="feat"><span class="fi num">clean data</span><h3>Arrives already tidy</h3><p>Duplicates skipped, hand-logged rows merged instead of doubled, currency exchanges recognized as transfers between your own accounts, balances anchored to what your bank reports.</p></div>
     </div>
     <p class="soften">Bank connections are in beta and enabled gradually. Statement import and ZenMoney sync are open to everyone today.</p>
@@ -315,11 +316,11 @@
       <div class="feat"><span class="fi num">log</span><h3>Plain-language logging</h3><p>Say what you spent or earned; category, currency and date are extracted for you.</p></div>
       <div class="feat"><span class="fi num">scan</span><h3>Receipt photos</h3><p>Snap a receipt; your AI parses it in the chat. Images never reach our server.</p></div>
       <div class="feat"><span class="fi num">import</span><h3>Bank statement import</h3><p>Drop a CSV or PDF export; hundreds of rows in one call, duplicates detected, totals reconciled.</p></div>
-      <div class="feat"><span class="fi num">fx</span><h3>150+ currencies</h3><p>Log in the currency you paid in (ECB and National Bank of Ukraine rates, plus a daily snapshot for every other ISO currency since March 2024); summaries answer in your base currency, rate frozen at transaction date.</p></div>
+      <div class="feat"><span class="fi num">fx</span><h3>150+ currencies</h3><p>Log in the currency you paid in, from EUR and USD to RUB, KZT, GEL or TRY (ECB and National Bank of Ukraine rates, plus a daily snapshot for every other ISO currency since March 2024); summaries answer in your base currency, rate frozen at transaction date.</p></div>
       <div class="feat"><span class="fi num">cap</span><h3>Budgets</h3><p>Monthly caps per category or overall, with live progress. Alerts only when you actually exceed one.</p></div>
       <div class="feat"><span class="fi num">trend</span><h3>Summaries and trends</h3><p>By category, merchant or month; month-over-month deltas computed server-side.</p></div>
       <div class="feat"><span class="fi num">split</span><h3>Personal vs business</h3><p>Tag accounts and transactions; a founder's combined view with a clean business cut for your accountant.</p></div>
-      <div class="feat"><span class="fi num">own</span><h3>Export and own your data</h3><p>Full CSV export anytime; delete your account and everything with it, instantly.</p></div>
+      <div class="feat"><span class="fi num">own</span><h3>Export and own your data</h3><p>Every transaction as CSV and the rest of your profile (accounts with balance history, budgets, category rules) as one file, anytime; delete your account and everything with it, instantly.</p></div>
     </div>
   </div>
 </section>
@@ -364,9 +365,9 @@
       <div class="sec-item"><span class="sk num">no image storage</span><h3>Receipts never leave the chat</h3><p>Your AI parses photos client-side; the server receives structured numbers only. There is no image storage to breach.</p></div>
       <div class="sec-item"><span class="sk num">eu residency</span><h3>EU data residency</h3><p>Postgres in Frankfurt, reached over TLS. Every query is scoped to your account by the server, and the database API is closed to everyone.</p></div>
       <div class="sec-item"><span class="sk num">blind logs</span><h3>Blind logs</h3><p>Amounts, merchants and notes are never written to server logs. Usage events keep tool names, timings and error codes, never amounts or merchants.</p></div>
-      <div class="sec-item"><span class="sk num">oauth 2.0 + pkce</span><h3>Standard authorization</h3><p>OAuth 2.0 with PKCE, encrypted tokens, rate-limited sign-in.</p></div>
+      <div class="sec-item"><span class="sk num">oauth 2.0 + pkce</span><h3>Standard authorization</h3><p>OAuth 2.0 with PKCE and rate-limited sign-in. Tokens are stored only as a one-way hash, and a stolen one is caught on reuse: the whole sign-in is revoked.</p></div>
       <div class="sec-item"><span class="sk num">mit license</span><h3>Open source</h3><p>Read the code, audit it, or self-host with your own database.</p></div>
-      <div class="sec-item"><span class="sk num">gdpr</span><h3>GDPR by construction</h3><p>CSV export (portability) and instant full deletion (erasure) are tools, not support tickets.</p></div>
+      <div class="sec-item"><span class="sk num">gdpr</span><h3>GDPR by construction</h3><p>Transaction CSV plus a full profile export (portability) and instant full deletion (erasure) are tools, not support tickets.</p></div>
     </div>
   </div>
 </section>
@@ -414,16 +415,20 @@
         <p class="fa">Any MCP client with OAuth 2.0 + PKCE: Claude.ai, Claude desktop and mobile, Claude Code, Cursor, Windsurf, VS Code.</p>
       </details>
       <details>
+        <summary>Do I need a Google account?</summary>
+        <p class="fa">No. When you connect, sign in with Google or with a one-time code sent to any email address; the first sign-in creates your account.</p>
+      </details>
+      <details>
         <summary>Is it free?</summary>
         <p class="fa">Yes, free while in beta. No ads, no card.</p>
       </details>
       <details>
         <summary>Is my data private?</summary>
-        <p class="fa">Your data is linked to your account and only you can access it. EU hosting, no third-party sharing, no amounts in logs, and you can export or delete everything at any time.</p>
+        <p class="fa">Your data is linked to your account and only you can access it. EU hosting, no third-party sharing, no amounts in logs, sign-in tokens stored only as a one-way hash, and you can export (transactions as CSV, the rest of your profile as one file) or delete everything at any time.</p>
       </details>
       <details>
         <summary>Can it read my bank account?</summary>
-        <p class="fa">Yes, optionally and read-only. In the EU and UK you can connect your bank through licensed open banking (PSD2): you approve access on your bank's own page and new transactions sync in daily. Your bank credentials never touch our server, and you can revoke access at any time. Bank connections are in beta and enabled gradually; voice, receipts and statement import work without any bank link.</p>
+        <p class="fa">Yes, optionally and read-only. In the EU and UK you can connect your bank through licensed open banking (PSD2): you approve access on your bank's own page, confirm which MyFinance account receives it, and new transactions sync in daily. Your bank credentials never touch our server, and you can revoke access at any time. Bank connections are in beta and enabled gradually; voice, receipts and statement import work without any bank link.</p>
       </details>
       <details>
         <summary>What about duplicates when I import a statement?</summary>
