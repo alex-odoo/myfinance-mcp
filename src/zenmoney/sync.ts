@@ -1,5 +1,5 @@
 import { db, logEvent } from "../db";
-import { convert, round2 } from "../fx";
+import { RowPricer, round2 } from "../fx";
 import { pickFreeName, crossProviderOverlaps, OVERLAP_HINT } from "../accounts";
 import type { OverlapWarning } from "../accounts";
 import { EXPENSE_CATEGORIES, INCOME_CATEGORIES } from "../categories";
@@ -22,70 +22,6 @@ const EXT_PREFIX = "zenmoney:";
 const TOUCH_GRACE_MS = 2_000;
 const userTouched = (tx: { createdAt: Date; updatedAt: Date }) =>
   tx.updatedAt.getTime() - tx.createdAt.getTime() > TOUCH_GRACE_MS;
-
-/**
- * Per-row FX for bank syncs, shared by all connectors. A row in a currency no
- * rate source publishes (RUB, KZT, GEL, ...) is skipped and counted instead of
- * aborting the sync. An FX OUTAGE is different: it rethrows, the sync fails
- * without moving its cursor and the next run retries. Telling them apart: UAH
- * failing means NBU is down; any other currency failing while USD prices on
- * the same date means the ECB set is there and simply lacks it.
- *
- * Cursors move past skipped rows. Holding a cursor at the oldest skipped row
- * would re-pull and re-skip it on every run, forever for a currency no source
- * will ever price, and a RUB account would pin the whole history behind it. A
- * currency gets priced only when fx.ts gains a source; a full re-sync then
- * imports the skipped rows, and external-id dedup keeps that idempotent.
- */
-export class RowPricer {
-  readonly unpriced = new Map<string, number>(); // currency -> rows skipped
-  private readonly dead = new Map<string, string>(); // "FROM>TO|date" -> currency without a rate
-  private readonly ecbDay = new Map<string, boolean>();
-
-  constructor(private readonly base: string) {}
-
-  async price(amount: number, currency: string, date: Date): Promise<{ converted: number; rate: number } | null> {
-    const day = date.toISOString().slice(0, 10);
-    const pairKey = `${currency}>${this.base}|${day}`;
-    const known = this.dead.get(pairKey);
-    if (known) return this.skip(known);
-    try {
-      return await convert(amount, currency, this.base, date);
-    } catch (e) {
-      const code = e instanceof Error ? /^Unknown currency "([A-Za-z]{3})"/.exec(e.message)?.[1]?.toUpperCase() : undefined;
-      if (!code || code === "UAH" || !(await this.ecbPublished(date, day))) throw e;
-      // The probe may have just refilled the day after a blip: one more try.
-      const retry = await convert(amount, currency, this.base, date).catch(() => null);
-      if (retry) return retry;
-      this.dead.set(pairKey, code);
-      return this.skip(code);
-    }
-  }
-
-  /** Short lastError for a sync that skipped rows: currency codes only. */
-  lastError(): string | null {
-    if (this.unpriced.size === 0) return null;
-    const rows = [...this.unpriced.values()].reduce((s, n) => s + n, 0);
-    return `Skipped ${rows} row(s) with no exchange rate: ${[...this.unpriced.keys()].join(", ")}.`;
-  }
-
-  private skip(code: string): null {
-    this.unpriced.set(code, (this.unpriced.get(code) ?? 0) + 1);
-    return null;
-  }
-
-  private async ecbPublished(date: Date, day: string): Promise<boolean> {
-    let ok = this.ecbDay.get(day);
-    if (ok === undefined) {
-      ok = await convert(1, "USD", "EUR", date).then(
-        () => true,
-        () => false
-      );
-      this.ecbDay.set(day, ok);
-    }
-    return ok;
-  }
-}
 
 interface AccountMapEntry {
   accountId: string;

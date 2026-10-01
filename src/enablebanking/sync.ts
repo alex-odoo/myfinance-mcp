@@ -6,7 +6,7 @@ import { EXPENSE_CATEGORIES, INCOME_CATEGORIES } from "../categories";
 import { merchantCategoryMap, normMerchant } from "../merchantMemory";
 import type { BankConnection, User } from "../generated/prisma/client";
 import { mccCategory } from "../zenmoney/mapping";
-import { RowPricer } from "../zenmoney/sync";
+import { RowPricer } from "../fx";
 import { ebTransactions, ebBalances, ebDerivedId, EbAuthError } from "./client";
 import type { EbTransaction, EbAccount } from "./client";
 
@@ -120,9 +120,16 @@ async function runSync(connection: BankConnection, user: User, meta: EbConnectio
   const dryRun = opts.dryRun === true;
   const accountsInfo = (meta.accountsInfo ?? []).filter((a): a is EbAccount & { uid: string } => !!a.uid);
   const sessionUids = new Set(accountsInfo.map((a) => a.uid));
+  // A consent whose bank returned no usable account (all closed or blocked)
+  // cannot be synced: fetching the previous session's uids only fails on
+  // every tick. The user has to reconnect.
+  if (meta.accountsInfo && sessionUids.size === 0) {
+    throw new EbAuthError("The bank returned no accounts for this consent. Reconnect with connect_bank.");
+  }
   // Entries from an older session stay in the map (re-keyed if their account
   // comes back) but are never fetched: their uids died with that session.
-  const live = (uid: string) => sessionUids.size === 0 || sessionUids.has(uid);
+  // Links made before accountsInfo was stored know no session: fetch them all.
+  const live = (uid: string) => !meta.accountsInfo || sessionUids.has(uid);
 
   // --- Accounts: one of ours per bank account from the consented session ---
   const accountMap = { ...((connection.accountMap ?? {}) as unknown as Record<string, AccountMapEntry>) };

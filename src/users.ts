@@ -53,7 +53,12 @@ export async function findOrCreateGoogleUser(email: string, sub: string): Promis
       where: { id: byEmail.id, googleSub: null },
       data: { googleSub: sub },
     });
-    if (count !== 1) throw new GoogleAccountConflictError();
+    if (count !== 1) {
+      // A concurrent first sign-in by the same Google identity (double submit,
+      // two tabs) may have linked it a moment ago: same person, no conflict.
+      const linked = await db.user.findUnique({ where: { id: byEmail.id }, select: { googleSub: true } });
+      if (linked?.googleSub !== sub) throw new GoogleAccountConflictError();
+    }
     return { id: byEmail.id, email: byEmail.email };
   }
 

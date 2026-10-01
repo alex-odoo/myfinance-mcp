@@ -1,6 +1,7 @@
 import { db, logEvent } from "./db";
 import { syncEnableBanking } from "./enablebanking/sync";
 import { syncZenMoney } from "./zenmoney/sync";
+import { asBaseWriter } from "./baseGate";
 
 // Server-side daily pull for every healthy bank connection, so transactions
 // arrive without the user asking. The hourly tick picks up whatever became
@@ -37,8 +38,10 @@ export async function runAutoSync(
   let failed = 0;
   for (const c of due) {
     try {
-      if (c.provider === "enablebanking") await syncEnableBanking(c.userId);
-      else if (c.provider === "zenmoney") await syncZenMoney(c.userId);
+      // Through the base-switch gate like the sync tools: a base change waits
+      // for this sync, and a sync never prices rows in a base being replaced.
+      if (c.provider === "enablebanking") await asBaseWriter(c.userId, () => syncEnableBanking(c.userId));
+      else if (c.provider === "zenmoney") await asBaseWriter(c.userId, () => syncZenMoney(c.userId));
       else continue;
       synced++;
     } catch {

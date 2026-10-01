@@ -48,7 +48,11 @@ for pair in "nginx-finance-rteam-agency.conf:finance-rteam-agency" "nginx-myfina
   if [ ! -f "$dest" ]; then
     stage "$dest"
     cp "$src" "$dest"
-    ln -sf "$dest" "$ETC/sites-enabled/${pair##*:}"
+    # The enabling symlink is staged too: a rollback that removed the vhost
+    # but left the link would break every later reload on the box.
+    link="$ETC/sites-enabled/${pair##*:}"
+    if [ ! -e "$link" ] && [ ! -L "$link" ]; then stage "$link"; fi
+    ln -sf "$dest" "$link"
   elif grep -qF "$OLD_INCLUDE" "$dest"; then
     stage "$dest"
     sed -i "s|$OLD_INCLUDE|$NEW_INCLUDE|" "$dest"

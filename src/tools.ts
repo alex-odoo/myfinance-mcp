@@ -1,11 +1,12 @@
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { db, logEvent } from "./db";
-import { assertConvertible, convert, round2 } from "./fx";
+import { assertConvertible, convert, round2, UnknownCurrencyError } from "./fx";
 import { EXPENSE_CATEGORIES, INCOME_CATEGORIES } from "./categories";
 import { resolveAccount, computeBalance, connectionAccounts, setAccountSync, ACCOUNT_TYPES } from "./accounts";
 import { SERVER_VERSION } from "./version";
 import { DASHBOARD_TOOL_META } from "./ui";
+import { asBaseSwitch, asBaseWriter } from "./baseGate";
 import { detectZenHost } from "./zenmoney/client";
 import { encryptToken, decryptToken } from "./zenmoney/crypto";
 import { syncZenMoney } from "./zenmoney/sync";
@@ -132,9 +133,9 @@ async function crossedBudgets(user: { id: string; timezone: string }, added: Map
 /** Base-currency sum of a personal expense dated in the user's current month, by category. */
 function budgetDelta(
   user: { timezone: string },
-  row: { type: TxType; entity: string; occurredAt: Date; categoryKey: string | null; amountBase: number }
+  row: { type: TxType; entity: string; occurredAt: Date; categoryKey: string | null; amountBase: number },
+  range = periodRange(user.timezone)
 ): Map<string, number> {
-  const range = periodRange(user.timezone);
   const counts =
     row.type === "expense" && row.entity === "personal" && row.occurredAt >= range.start && row.occurredAt < range.end;
   return counts ? new Map([[row.categoryKey ?? "other", row.amountBase]]) : new Map();
@@ -180,10 +181,12 @@ async function logTransaction(userId: string, type: TxType, input: LogInput) {
     },
   });
   logEvent("logged", userId, { type, source: tx.source });
+  // Best-effort: the row is committed, and a failed budget lookup must never
+  // report the write as failed (the client would log the expense again).
   const alerts = await crossedBudgets(
     user,
     budgetDelta(user, { type, entity: tx.entity, occurredAt, categoryKey: tx.categoryKey, amountBase: converted })
-  );
+  ).catch(() => []);
   return {
     id: tx.id,
     type,
@@ -225,6 +228,13 @@ function periodRange(timezone: string, period?: string, from?: string, to?: stri
 }
 
 export function registerFinanceTools(server: McpServer, userId: string): void {
+  // Tools that price amounts in the base currency pass the base-switch gate:
+  // a switch waits for them and holds new ones until it has committed.
+  const pricing =
+    <A extends unknown[], R>(handler: (...args: A) => Promise<R>) =>
+    (...args: A): Promise<R> =>
+      asBaseWriter(userId, () => handler(...args));
+
   server.registerTool(
     "ping",
     {
@@ -261,7 +271,7 @@ export function registerFinanceTools(server: McpServer, userId: string): void {
           .describe("Override the account's default scope, e.g. a personal dinner paid with the business card."),
       },
     },
-    async (input) => text(await logTransaction(userId, "expense", input as LogInput))
+    pricing(async (input) => text(await logTransaction(userId, "expense", input as LogInput)))
   );
 
   server.registerTool(
@@ -283,7 +293,7 @@ export function registerFinanceTools(server: McpServer, userId: string): void {
           .describe("Override the account's default scope, e.g. a client payment landing on a personal card."),
       },
     },
-    async (input) => text(await logTransaction(userId, "income", input as LogInput))
+    pricing(async (input) => text(await logTransaction(userId, "income", input as LogInput)))
   );
 
   server.registerTool(
@@ -722,7 +732,7 @@ export function registerFinanceTools(server: McpServer, userId: string): void {
         date: dateSchema.optional(),
       },
     },
-    async ({ amount, currency, from_account, to_account, received_amount, received_currency, note, date }) => {
+    pricing(async ({ amount, currency, from_account, to_account, received_amount, received_currency, note, date }) => {
       const user = await getUser(userId);
       const from = await resolveAccount(userId, from_account);
       const to = await resolveAccount(userId, to_account);
@@ -769,7 +779,7 @@ export function registerFinanceTools(server: McpServer, userId: string): void {
         received: recvAmount !== undefined ? { amount: recvAmount, currency: tx.counterCurrency } : undefined,
         ...(received_amount === undefined && recvAmount !== undefined ? { note: "Received amount estimated at the day's rate." } : {}),
       });
-    }
+    })
   );
 
   server.registerTool(
@@ -850,7 +860,7 @@ export function registerFinanceTools(server: McpServer, userId: string): void {
           .max(500),
       },
     },
-    async ({ account, statement_total, dry_run, transactions }) => {
+    pricing(async ({ account, statement_total, dry_run, transactions }) => {
       const user = await getUser(userId);
       const acc = await resolveAccount(userId, account);
       const dryRun = dry_run === true;
@@ -890,13 +900,40 @@ export function registerFinanceTools(server: McpServer, userId: string): void {
       const accountEntity = new Map(
         (await db.account.findMany({ where: { userId }, select: { id: true, entity: true } })).map((a) => [a.id, a.entity])
       );
-      // A currency no FX source prices is skipped per row and reported instead
-      // of aborting the statement half-way with the earlier rows written.
+      // A currency no FX source publishes is skipped per row and reported
+      // instead of aborting the statement half-way with the earlier rows
+      // written. An outage is not "unsupported": those rows fail per row as
+      // fx_unavailable and the hint says to re-run later.
       const unsupported = new Set<string>();
       for (const c of new Set(transactions.map((r) => (r.currency ?? acc.currency ?? user.baseCurrency).toUpperCase()))) {
         if (c === user.baseCurrency) continue;
-        await assertConvertible(c).catch(() => unsupported.add(c));
+        await assertConvertible(c).catch((e: unknown) => {
+          if (e instanceof UnknownCurrencyError) unsupported.add(c);
+          else throw e;
+        });
       }
+
+      // Dedup candidates for the whole statement in two queries (its span +-2
+      // days), filtered per row in memory: one query per row each made a 500-row
+      // statement cost ~2,000 round trips. Rows this call touches are excluded
+      // through createdIds/usedCandidates, so the snapshot stays valid.
+      const times = transactions.map((r) => parseDate(r.date).getTime());
+      const span = { gte: new Date(Math.min(...times) - 2 * DAY_MS), lte: new Date(Math.max(...times) + 2 * DAY_MS) };
+      const pool = await db.transaction.findMany({
+        where: {
+          userId,
+          currency: { in: [...new Set(transactions.map((r) => (r.currency ?? acc.currency ?? user.baseCurrency).toUpperCase()))] },
+          occurredAt: span,
+          OR: [
+            { source: { in: ["manual", "receipt"] }, externalId: null },
+            { accountId: acc.id, externalId: { not: null } },
+          ],
+        },
+      });
+      const legPool = await db.transaction.findMany({
+        where: { userId, type: "transfer", counterAccountId: acc.id, counterExternalId: null, accountId: { not: acc.id }, occurredAt: span },
+      });
+      const monthRange = periodRange(user.timezone);
 
       for (const [idx, row] of transactions.entries()) {
         rowsSum += row.amount;
@@ -960,41 +997,9 @@ export function registerFinanceTools(server: McpServer, userId: string): void {
           continue;
         }
 
-        const windowStart = new Date(occurredAt.getTime() - 2 * DAY_MS);
-        const windowEnd = new Date(occurredAt.getTime() + 2 * DAY_MS);
+        const inWindow = (c: { occurredAt: Date }) => Math.abs(c.occurredAt.getTime() - occurredAt.getTime()) <= 2 * DAY_MS;
         const byNearest = <T extends { occurredAt: Date }>(a: T, b: T) =>
           Math.abs(a.occurredAt.getTime() - occurredAt.getTime()) - Math.abs(b.occurredAt.getTime() - occurredAt.getTime());
-
-        // A credit can be the RECEIVING leg of a transfer already on record
-        // (hand-logged, or paired by a bank sync, in any sending currency): it
-        // confirms that transfer instead of becoming a new income.
-        if (direction === "in" && !row.force) {
-          const legs = (
-            await db.transaction.findMany({
-              where: {
-                userId,
-                type: "transfer",
-                counterAccountId: acc.id,
-                counterExternalId: null,
-                occurredAt: { gte: windowStart, lte: windowEnd },
-              },
-            })
-          ).filter((c) => {
-            if (usedCandidates.has(c.id) || c.accountId === acc.id) return false;
-            const received = c.counterAmount !== null && c.counterCurrency;
-            const legCur = received ? c.counterCurrency : c.currency;
-            const legAmount = Number(received ? c.counterAmount : c.amount);
-            return legCur === cur && Math.abs(legAmount - amountAbs) <= 0.009;
-          });
-          const leg = legs.sort(byNearest)[0];
-          if (leg) {
-            usedCandidates.add(leg.id);
-            if (!dryRun) await db.transaction.update({ where: { id: leg.id }, data: { counterExternalId: externalId } });
-            merged++;
-            skipped.push({ row: idx + 1, reason: "transfer_leg_matched", existing_id: leg.id });
-            continue;
-          }
-        }
 
         // Candidates: hand-logged rows not yet confirmed by any statement or
         // feed (any account: manual entries default to the Manual account), and
@@ -1004,20 +1009,10 @@ export function registerFinanceTools(server: McpServer, userId: string): void {
         // is new, so only the exact-key checks above apply.
         const candidates = row.force
           ? []
-          : (
-              await db.transaction.findMany({
-                where: {
-                  userId,
-                  currency: cur,
-                  occurredAt: { gte: windowStart, lte: windowEnd },
-                  OR: [
-                    { source: { in: ["manual", "receipt"] }, externalId: null },
-                    { accountId: acc.id, externalId: { not: null } },
-                  ],
-                },
-              })
-            ).filter(
+          : pool.filter(
               (c) =>
+                c.currency === cur &&
+                inWindow(c) &&
                 !createdIds.has(c.id) &&
                 !usedCandidates.has(c.id) &&
                 Math.abs(Math.abs(Number(c.amount)) - amountAbs) <= 0.009 &&
@@ -1025,11 +1020,13 @@ export function registerFinanceTools(server: McpServer, userId: string): void {
             );
         const rm = normalize(row.merchant);
 
-        // Already-confirmed rows of this account (checked first: exact evidence
-        // beats fuzzy): same day only. Two REAL bank references that differ mean
-        // distinct transactions no matter how similar the rows look. Same-merchant
-        // candidates are preferred, but merchant wording drifts between exports,
-        // so any remaining same-day same-amount row still counts as the twin.
+        // Already-confirmed rows of this account first (exact evidence beats
+        // fuzzy, and a row already booked here wins over a transfer leg of
+        // another account): same day only. Two REAL bank references that
+        // differ mean distinct transactions no matter how similar the rows
+        // look. Same-merchant candidates are preferred, but merchant wording
+        // drifts between exports, so any remaining same-day same-amount row
+        // still counts as the twin.
         const bankPool = candidates.filter(
           (c) =>
             c.externalId !== null &&
@@ -1047,6 +1044,28 @@ export function registerFinanceTools(server: McpServer, userId: string): void {
           if (!ref) noIdSkips++;
           skipped.push({ row: idx + 1, reason: "already_imported", existing_id: bankTwin.id });
           continue;
+        }
+
+        // A credit can be the RECEIVING leg of a transfer already on record
+        // (hand-logged, or paired by a bank sync, in any sending currency): it
+        // confirms that transfer instead of becoming a new income.
+        if (direction === "in" && !row.force) {
+          const leg = legPool
+            .filter((c) => {
+              if (!inWindow(c) || usedCandidates.has(c.id)) return false;
+              const received = c.counterAmount !== null && c.counterCurrency;
+              const legCur = received ? c.counterCurrency : c.currency;
+              const legAmount = Number(received ? c.counterAmount : c.amount);
+              return legCur === cur && Math.abs(legAmount - amountAbs) <= 0.009;
+            })
+            .sort(byNearest)[0];
+          if (leg) {
+            usedCandidates.add(leg.id);
+            if (!dryRun) await db.transaction.update({ where: { id: leg.id }, data: { counterExternalId: externalId } });
+            merged++;
+            skipped.push({ row: idx + 1, reason: "transfer_leg_matched", existing_id: leg.id });
+            continue;
+          }
         }
 
         // Hand-logged twin (fuzzy merchant, +-2 days): merge instead of skip - the
@@ -1123,13 +1142,11 @@ export function registerFinanceTools(server: McpServer, userId: string): void {
             },
           });
           createdIds.add(created.id);
-          for (const [k, v] of budgetDelta(user, {
-            type,
-            entity: created.entity,
-            occurredAt,
-            categoryKey: created.categoryKey,
-            amountBase: fx.converted,
-          })) {
+          for (const [k, v] of budgetDelta(
+            user,
+            { type, entity: created.entity, occurredAt, categoryKey: created.categoryKey, amountBase: fx.converted },
+            monthRange
+          )) {
             budgetAdded.set(k, (budgetAdded.get(k) ?? 0) + v);
           }
         }
@@ -1140,7 +1157,8 @@ export function registerFinanceTools(server: McpServer, userId: string): void {
       const diff = statement_total !== undefined ? round2(statement_total - rowsSum) : undefined;
       logEvent("bank_imported", userId, { imported, duplicates: skipped.length, merged, dry_run: dryRun });
       const SKIP_REPORT_CAP = 100;
-      const unpriced = skipped.filter((s) => s.reason === "unsupported_currency" || s.reason === "fx_unavailable");
+      const unpriced = skipped.filter((s) => s.reason === "unsupported_currency");
+      const fxDown = skipped.filter((s) => s.reason === "fx_unavailable");
       const hints = [
         ...(noIdSkips > 0
           ? [
@@ -1154,20 +1172,25 @@ export function registerFinanceTools(server: McpServer, userId: string): void {
           : []),
         ...(unpriced.length > 0
           ? [
-              `${unpriced.length} row(s) were NOT imported: no exchange rate for ${[...new Set(unpriced.map((s) => s.currency))].join(", ")}. Supported: the ECB reference currencies plus UAH and AED.`,
+              `${unpriced.length} row(s) were NOT imported: no exchange rate source publishes ${[...new Set(unpriced.map((s) => s.currency))].join(", ")}. Supported: the ECB reference currencies plus UAH and AED.`,
+            ]
+          : []),
+        ...(fxDown.length > 0
+          ? [
+              `${fxDown.length} row(s) were NOT imported: exchange rates are temporarily unavailable. Re-run the same import later; rows already imported are skipped.`,
             ]
           : []),
       ];
-      const alerts = await crossedBudgets(user, budgetAdded);
+      const alerts = await crossedBudgets(user, budgetAdded).catch(() => []); // best-effort, rows are written
       return text({
         account: acc.name,
         ...(dryRun ? { dry_run: true } : {}),
         imported,
         ...(alerts.length ? { budget_alerts: alerts } : {}),
-        duplicates_skipped: skipped.length - unpriced.length,
+        duplicates_skipped: skipped.length - unpriced.length - fxDown.length,
         manual_twins_merged: merged,
         unknown_categories_coerced_to_other: coerced,
-        ...(unpriced.length > 0 ? { not_imported_no_fx_rate: unpriced.length } : {}),
+        ...(unpriced.length + fxDown.length > 0 ? { not_imported_no_fx_rate: unpriced.length + fxDown.length } : {}),
         ...(idConflicts > 0 ? { external_id_conflicts: idConflicts } : {}),
         rows_sum: rowsSum,
         statement_total,
@@ -1177,7 +1200,7 @@ export function registerFinanceTools(server: McpServer, userId: string): void {
         ...(skipped.length > SKIP_REPORT_CAP ? { skipped_not_listed: skipped.length - SKIP_REPORT_CAP } : {}),
         ...(hints.length > 0 ? { hint: hints.join(" ") } : {}),
       });
-    }
+    })
   );
 
   server.registerTool(
@@ -1384,7 +1407,7 @@ export function registerFinanceTools(server: McpServer, userId: string): void {
         account: z.string().optional().describe("Move the row to this own account (see get_accounts)."),
       },
     },
-    async ({ id, amount, currency, category, merchant, note, date, entity, type, counter_account, counter_transaction_id, account }) => {
+    pricing(async ({ id, amount, currency, category, merchant, note, date, entity, type, counter_account, counter_transaction_id, account }) => {
       const user = await getUser(userId);
       const existing = await db.transaction.findFirst({ where: { id, userId } });
       if (!existing) throw new Error("Transaction not found.");
@@ -1611,7 +1634,7 @@ export function registerFinanceTools(server: McpServer, userId: string): void {
         entity: tx.entity,
         ...(tx.type === "transfer" && tx.counterAccountId ? { transfer: true } : {}),
       });
-    }
+    })
   );
 
   server.registerTool(
@@ -1812,54 +1835,53 @@ export function registerFinanceTools(server: McpServer, userId: string): void {
       const newBase = base_currency?.toUpperCase();
       if (newBase && newBase !== user.baseCurrency) {
         await assertConvertible(newBase);
-        // Price every row BEFORE writing anything, then switch rows, budgets
-        // and the base in one transaction: a failure half-way used to leave
-        // history in two currencies under one base, with no way back.
-        const snapshotAt = new Date();
-        const rates = new Map<string, number>();
-        const rateTo = async (base: string, cur: string, date: Date) => {
-          const key = `${base}:${cur}:${date.toISOString().slice(0, 10)}`;
-          let rate = rates.get(key);
-          if (rate === undefined) {
-            rate = (await convert(1, cur, base, date)).rate;
-            rates.set(key, rate);
-          }
-          return rate;
-        };
-        const reprice = async (rows: Array<{ id: string; amount: unknown; currency: string; occurredAt: Date }>) => {
-          const out = [];
+        // Exclusive against every tool and sync that prices amounts: running
+        // ones finish first, new ones wait for the commit, so nothing is
+        // written in the old base after the switch.
+        await asBaseSwitch(userId, async () => {
+          const current = await getUser(userId); // a switch that ran first may have changed it
+          if (current.baseCurrency === newBase) return;
+          // Price every row BEFORE writing anything, then switch rows, budget
+          // caps and the base in one transaction: a failure half-way used to
+          // leave history in two currencies under one base, with no way back.
+          const rates = new Map<string, number>();
+          const rateTo = async (cur: string, date: Date) => {
+            const key = `${cur}:${date.toISOString().slice(0, 10)}`;
+            let rate = rates.get(key);
+            if (rate === undefined) {
+              rate = (await convert(1, cur, newBase, date)).rate;
+              rates.set(key, rate);
+            }
+            return rate;
+          };
+          const rows = await db.transaction.findMany({
+            where: { userId },
+            select: { id: true, amount: true, currency: true, occurredAt: true },
+          });
+          const repriced: Array<{ id: string; amountBase: number; fxRate: number }> = [];
           for (const t of rows) {
-            const rate = await rateTo(newBase, t.currency, t.occurredAt);
-            out.push({ id: t.id, amountBase: round2(Number(t.amount) * rate), fxRate: rate });
+            const rate = await rateTo(t.currency, t.occurredAt);
+            repriced.push({ id: t.id, amountBase: round2(Number(t.amount) * rate), fxRate: rate });
           }
-          return out;
-        };
-        const txSelect = { id: true, amount: true, currency: true, occurredAt: true } as const;
-        const repriced = await reprice(await db.transaction.findMany({ where: { userId }, select: txSelect }));
-        // Budget caps are amounts in the base currency too.
-        const budgets = await db.budget.findMany({ where: { userId } });
-        const budgetRate = budgets.length
-          ? await rateTo(newBase, user.baseCurrency, parseDate(todayIn(user.timezone)))
-          : 1;
-        await db.$transaction(
-          async (px) => {
-            for (const r of repriced) {
-              await px.transaction.update({ where: { id: r.id }, data: { amountBase: r.amountBase, fxRate: r.fxRate } });
-            }
-            for (const b of budgets) {
-              await px.budget.update({ where: { id: b.id }, data: { amount: round2(Number(b.amount) * budgetRate) } });
-            }
-            await px.user.update({ where: { id: userId }, data: { baseCurrency: newBase } });
-          },
-          { timeout: 10 * 60_000, maxWait: 15_000 }
-        );
-        // Rows logged or synced while the history was being priced were
-        // written in the old base: reprice them now (idempotent for the rest).
-        for (const r of await reprice(
-          await db.transaction.findMany({ where: { userId, createdAt: { gte: snapshotAt } }, select: txSelect })
-        )) {
-          await db.transaction.update({ where: { id: r.id }, data: { amountBase: r.amountBase, fxRate: r.fxRate } });
-        }
+          // Budget caps are amounts in the base currency too.
+          const budgets = await db.budget.findMany({ where: { userId } });
+          const budgetRate = budgets.length ? await rateTo(current.baseCurrency, parseDate(todayIn(current.timezone))) : 1;
+          // One UPDATE per row: Prisma cannot set a column from another one, and
+          // the rows hold distinct amounts. Large histories take a while; the
+          // gate keeps writers out meanwhile.
+          await db.$transaction(
+            async (px) => {
+              for (const r of repriced) {
+                await px.transaction.update({ where: { id: r.id }, data: { amountBase: r.amountBase, fxRate: r.fxRate } });
+              }
+              for (const b of budgets) {
+                await px.budget.update({ where: { id: b.id }, data: { amount: round2(Number(b.amount) * budgetRate) } });
+              }
+              await px.user.update({ where: { id: userId }, data: { baseCurrency: newBase } });
+            },
+            { timeout: 10 * 60_000, maxWait: 15_000 }
+          );
+        });
       }
       const updated = await db.user.update({
         where: { id: userId },
@@ -2042,10 +2064,10 @@ export function registerFinanceTools(server: McpServer, userId: string): void {
           .describe("First sync only: import history no older than this many months. Default: everything."),
       },
     },
-    async ({ dry_run, months_back }) => {
+    pricing(async ({ dry_run, months_back }) => {
       const report = await syncZenMoney(userId, { dryRun: dry_run, monthsBack: months_back });
       return text(report);
-    }
+    })
   );
 
   server.registerTool(
@@ -2195,11 +2217,11 @@ export function registerFinanceTools(server: McpServer, userId: string): void {
           .describe("First sync only: how many months of history to request. Default 3."),
       },
     },
-    async ({ dry_run, months_back }) => {
+    pricing(async ({ dry_run, months_back }) => {
       await getUser(userId);
       const report = await syncEnableBanking(userId, { dryRun: dry_run, monthsBack: months_back });
       return text(report);
-    }
+    })
   );
 
   server.registerTool(
