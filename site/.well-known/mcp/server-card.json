@@ -432,7 +432,7 @@
           },
           "received_currency": {
             "$ref": "#/properties/currency",
-            "description": "3-letter ISO currency code (EUR, USD, UAH, AED, ...). Omit to use the user's base currency."
+            "description": "Currency arriving, for cross-currency transfers. Default: the destination account's currency."
           },
           "note": {
             "type": "string"
@@ -501,7 +501,7 @@
     {
       "name": "import_transactions",
       "title": "Bulk import",
-      "description": "Import bank-statement / statement-screenshot rows in bulk. ALWAYS send the ENTIRE statement as ONE call with the full transactions array (up to 500 rows) - never split into chunks, never log rows one-by-one via log_expense. If one statement truly cannot fit in a single call, EVERY row of EVERY chunk must carry external_id (bank reference; or the statement row number, e.g. 'r017') - rows without external_id are keyed by amount+date+occurrence WITHIN one call, so identical rows arriving in different calls are indistinguishable from re-imports. Safe to re-run: keyed rows are skipped, a hand-logged twin is merged into the bank row instead of duplicating, and repeated purchases (same merchant and amount on different days, or twice the same day) import normally. Unknown categories become 'other'. Pass statement_total to get a reconciliation check. Sign convention: negative amount = money out, positive = money in.",
+      "description": "Import bank-statement / statement-screenshot rows in bulk. ALWAYS send the ENTIRE statement as ONE call with the full transactions array (up to 500 rows) - never split into chunks, never log rows one-by-one via log_expense. If one statement truly cannot fit in a single call, EVERY row of EVERY chunk must carry external_id (bank reference; or a statement-scoped row id such as '2026-09:r017' - bare row numbers repeat in every statement) - rows without external_id are keyed by amount+date+occurrence WITHIN one call, so identical rows arriving in different calls are indistinguishable from re-imports. Safe to re-run: keyed rows are skipped, a hand-logged twin is merged into the bank row instead of duplicating, and repeated purchases (same merchant and amount on different days, or twice the same day) import normally. Unknown categories become 'other'. Pass statement_total to get a reconciliation check. Sign convention: negative amount = money out, positive = money in.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -557,7 +557,7 @@
                 },
                 "external_id": {
                   "type": "string",
-                  "description": "Bank transaction reference - the strongest dedup key. If absent, the server derives a stable key from amount + date + position."
+                  "description": "Bank transaction reference - the strongest dedup key. Without one, a statement-scoped row id ('2026-09:r017'). If absent, the server derives a stable key from amount + date + position."
                 },
                 "force": {
                   "type": "boolean",
@@ -590,7 +590,7 @@
       },
       "annotations": {
         "readOnlyHint": false,
-        "destructiveHint": false,
+        "destructiveHint": true,
         "idempotentHint": true,
         "openWorldHint": false
       }
@@ -689,7 +689,7 @@
     {
       "name": "get_transactions",
       "title": "List transactions",
-      "description": "Find records: 'what was that 40 eur charge', recent spending, by category or merchant.",
+      "description": "Find records: 'what was that 40 eur charge', recent spending, by category or merchant. Newest first. total = all matches; when has_more is true, call again with offset=next_offset to page (never treat count as the total).",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -703,7 +703,33 @@
             "description": "Date as YYYY-MM-DD. Omit for today."
           },
           "category": {
-            "type": "string"
+            "type": "string",
+            "enum": [
+              "groceries",
+              "restaurants",
+              "transport",
+              "fuel",
+              "housing",
+              "utilities",
+              "health",
+              "pharmacy",
+              "clothing",
+              "electronics",
+              "entertainment",
+              "subscriptions",
+              "education",
+              "travel",
+              "gifts",
+              "family",
+              "personal_care",
+              "business",
+              "fees",
+              "other",
+              "salary",
+              "freelance",
+              "investments",
+              "refunds"
+            ]
           },
           "merchant": {
             "type": "string",
@@ -726,6 +752,12 @@
             "minimum": 1,
             "maximum": 100,
             "description": "Default 20."
+          },
+          "offset": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 100000,
+            "description": "Skip this many matches (paging). Default 0."
           }
         },
         "additionalProperties": false,
@@ -739,7 +771,7 @@
     {
       "name": "update_transaction",
       "title": "Update transaction",
-      "description": "Fix a logged record: wrong category, amount, merchant, date, personal/business scope, or type. type=transfer + counter_account converts a mislogged row into a transfer between own accounts (e.g. a cash withdrawal into a transfer to Cash). counter_transaction_id instead GLUES TWO EXISTING rows (one expense + one income on different own accounts) into ONE transfer - use it when a currency exchange, own-account top-up, or cash withdrawal produced two separate rows. Category fixes on rows with a merchant are remembered: future bank syncs of that merchant reuse your category.",
+      "description": "Fix a logged record: wrong category, amount, merchant, date, account, personal/business scope, or type. type=transfer + counter_account converts a mislogged row into a transfer between own accounts (e.g. a cash withdrawal into a transfer to Cash). counter_transaction_id instead GLUES TWO EXISTING rows (one expense + one income on different own accounts) into ONE transfer - use it when a currency exchange, own-account top-up, or cash withdrawal produced two separate rows. Category fixes on rows with a merchant are remembered: future bank syncs of that merchant reuse your category.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -817,12 +849,16 @@
           },
           "counter_account": {
             "type": "string",
-            "description": "type=transfer only: the OTHER own account of the transfer (for an expense row: where the money went, e.g. Cash)."
+            "description": "The OTHER own account of a transfer (for an expense row: where the money went, e.g. Cash). With type=transfer it converts the row; on an existing transfer it re-points the destination."
           },
           "counter_transaction_id": {
             "type": "string",
             "format": "uuid",
             "description": "Merge ANOTHER existing row into this one as the second leg of a transfer between own accounts. One row must be an expense, the other an income, on different accounts (any currencies). The other row is absorbed: its account/amount/currency become the counter leg and its bank reference is preserved, so re-syncs and re-imports do not duplicate it."
+          },
+          "account": {
+            "type": "string",
+            "description": "Move the row to this own account (see get_accounts)."
           }
         },
         "required": [
@@ -1002,7 +1038,7 @@
     {
       "name": "get_budget_progress",
       "title": "Budget progress",
-      "description": "Current month: spent vs cap for every budget. Budgets track PERSONAL spending only; business-scope transactions never count against them.",
+      "description": "Current month (user's timezone): spent vs cap for every budget, plus days left in the month. Budgets track PERSONAL spending only; business-scope transactions never count against them. log_expense and import_transactions return budget_alerts when they push a budget over its cap.",
       "inputSchema": {
         "type": "object",
         "properties": {},
@@ -1058,7 +1094,7 @@
     {
       "name": "export_transactions",
       "title": "Export CSV",
-      "description": "All transactions as CSV (GDPR portability). Optionally one scope only, e.g. business rows for the accountant.",
+      "description": "All transactions as CSV (GDPR portability), oldest first, including the account and the other side of transfers. Up to 2000 rows per call: when a second text block reports has_more, call again with offset=next_offset and the same filters. Optionally one scope only, e.g. business rows for the accountant.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -1077,6 +1113,11 @@
               "personal",
               "business"
             ]
+          },
+          "offset": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Skip this many rows (paging). Default 0."
           }
         },
         "additionalProperties": false,
