@@ -164,7 +164,14 @@ app.use(
     // registers once per connector and never re-registers, so day 31 its
     // refresh gets invalid_client and the connector dies (2026-09-24).
     // 0 = never expires (RFC 7591); older rows: see OAuthStore.getClient.
-    clientRegistrationOptions: { clientSecretExpirySeconds: 0 },
+    // Rate limits: the SDK counts per IP, and claude.ai / ChatGPT register
+    // and refresh from a few backend egress IPs, so its defaults (20
+    // registrations an hour, 50 token calls per 15 min) are effectively a
+    // global cap that one busy hour of new connectors would hit. nginx still
+    // limits every IP to 5 requests a second on these paths.
+    clientRegistrationOptions: { clientSecretExpirySeconds: 0, rateLimit: { windowMs: 60 * 60 * 1000, max: 300 } },
+    tokenOptions: { rateLimit: { windowMs: 15 * 60 * 1000, max: 1000 } },
+    revocationOptions: { rateLimit: { windowMs: 15 * 60 * 1000, max: 1000 } },
   })
 );
 app.use(provider.loginRouter());
@@ -249,12 +256,14 @@ async function computeStats(): Promise<StatsBody> {
   // "Files processed" = statement files + receipt photos. LLM clients chunk
   // one statement into several import calls, so raw call counts overstate
   // files ~7x; calls from the same user within 10 minutes are one file.
+  // Bank and ZenMoney syncs log the same event type with a provider: they
+  // are no file anyone uploaded, and the daily auto-sync inflated the count.
   const FILE_GAP_MS = 10 * 60 * 1000;
   const lastCall = new Map<string, number>();
   let statementFiles = 0;
   for (const e of importEvents) {
-    const m = e.meta as { dry_run?: boolean; imported?: number } | null;
-    if (!m || m.dry_run || !m.imported) continue;
+    const m = e.meta as { dry_run?: boolean; imported?: number; provider?: string } | null;
+    if (!m || m.dry_run || !m.imported || m.provider) continue;
     const key = e.userId ?? "";
     if (e.createdAt.getTime() - (lastCall.get(key) ?? 0) > FILE_GAP_MS) statementFiles++;
     lastCall.set(key, e.createdAt.getTime());
