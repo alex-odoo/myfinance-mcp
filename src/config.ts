@@ -1,3 +1,9 @@
+/** A duration setting: anything but a non-negative number falls back to the default. */
+function milliseconds(value: string | undefined, fallback: number): number {
+  const n = value === undefined || value.trim() === "" ? fallback : Number(value);
+  return Number.isFinite(n) && n >= 0 ? n : fallback;
+}
+
 export const config = {
   port: Number(process.env.PORT ?? 8788),
   baseUrl: (process.env.BASE_URL ?? "http://localhost:8788").replace(/\/$/, ""),
@@ -41,6 +47,9 @@ export const config = {
   // A rotated refresh token keeps working this long: a client that refreshes
   // in parallel must not lose its connector to the request that came second.
   refreshReuseGraceMs: Number(process.env.REFRESH_REUSE_GRACE_MS ?? 30_000),
+  // A repeated sign-in form waits this long after the code was issued for the
+  // client to redeem it, so a double click can be answered "Connected".
+  signInRepeatWaitMs: milliseconds(process.env.SIGN_IN_REPEAT_WAIT_MS, 4000),
   // Commit baked into the image by deploy.sh (Docker build arg). /health
   // reports it so a deploy can prove the new container is the one serving.
   gitSha: process.env.GIT_SHA ?? "dev",

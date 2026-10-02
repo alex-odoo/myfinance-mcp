@@ -25,6 +25,8 @@ const PASSWORD = externalBase ? (process.env.E2E_PASSWORD ?? "gate-a-secret") : 
 const REDIRECT_URI = "http://localhost:19999/callback";
 /** Short refresh-reuse grace for the spawned server, so expiry is testable. */
 const E2E_REFRESH_GRACE_MS = 1500;
+/** How long a repeated sign-in form waits for the client to redeem the first one's code. */
+const E2E_SIGN_IN_REPEAT_WAIT_MS = 2000;
 
 let passed = 0;
 function ok(name: string, cond: boolean, detail?: string): void {
@@ -305,6 +307,7 @@ async function main(): Promise<void> {
         ZENMONEY_API_BASE: `http://localhost:${ZEN_PORT}`,
         TOKEN_ENC_KEY: "ab".repeat(32),
         REFRESH_REUSE_GRACE_MS: String(E2E_REFRESH_GRACE_MS),
+        SIGN_IN_REPEAT_WAIT_MS: String(E2E_SIGN_IN_REPEAT_WAIT_MS),
         EB_APP_ID: "e2e-eb-app",
         EB_PRIVATE_KEY_B64: Buffer.from(ebKey).toString("base64"),
         EB_API_ORIGIN: `http://localhost:${EB_PORT}`,
@@ -641,6 +644,20 @@ async function main(): Promise<void> {
       gStart.status === 302 && gLoc.startsWith("https://accounts.google.com/o/oauth2/v2/auth")
     );
     ok("google start carries state + client_id", /[?&]state=/.test(gLoc) && gLoc.includes("client_id="));
+    const gState = new URL(gLoc || "http://invalid/").searchParams.get("state") ?? "";
+    const googleCallback = (withCookie: string) =>
+      fetch(`${BASE}/auth/google/callback?state=${gState}&code=e2e-google-code`, {
+        redirect: "manual",
+        headers: withCookie ? { cookie: withCookie } : {},
+      });
+    const gOther = await googleCallback("");
+    ok("google callback from another browser -> 400, the state is spent", gOther.status === 400 && (await gOther.text()).includes("different browser"));
+    const gAgain = await googleCallback(cookie);
+    const gAgainHtml = await gAgain.text();
+    ok(
+      "a spent google state is never exchanged again: the sign-in form comes back",
+      gAgain.status === 400 && gAgainHtml.includes("did not complete") && gAgainHtml.includes(`value="${requestId}"`)
+    );
   }
   // 3c. Email sign-in: a 6-digit code by email, bound to this browser and
   // this sign-in; the first verified sign-in creates the account. An account
@@ -687,19 +704,36 @@ async function main(): Promise<void> {
     const verified = await postForm("/login/email/verify", { request_id: si.rid, code: emailCode }, si.browser);
     const emailCodeGrant = new URL(verified.headers.get("location") ?? "http://invalid/").searchParams.get("code") ?? "";
     ok("right email code -> redirect with code", verified.status === 302 && !!emailCodeGrant, String(verified.status));
+    // A second tap while the redirect is loading: the repeat waits, the client
+    // redeems meanwhile, and the repeat is told so. It never gets a code.
+    const [verifiedAgain, emailTokRes] = await Promise.all([
+      postForm("/login/email/verify", { request_id: si.rid, code: emailCode }, si.browser),
+      Bun.sleep(150).then(() =>
+        tokenPost({
+          grant_type: "authorization_code",
+          code: emailCodeGrant,
+          code_verifier: verifier,
+          client_id: client.client_id,
+          redirect_uri: REDIRECT_URI,
+        })
+      ),
+    ]);
     ok(
-      "email code is single use",
-      (await postForm("/login/email/verify", { request_id: si.rid, code: emailCode }, si.browser)).status === 400
+      "a repeated code while the client redeems -> connected page, no code",
+      verifiedAgain.status === 200 &&
+        !verifiedAgain.headers.get("location") &&
+        (await verifiedAgain.text()).includes("Connected. You can close this tab")
     );
-    const emailTok: any = await (
-      await tokenPost({
-        grant_type: "authorization_code",
-        code: emailCodeGrant,
-        code_verifier: verifier,
-        client_id: client.client_id,
-        redirect_uri: REDIRECT_URI,
-      })
-    ).json();
+    const otherCode = await postForm(
+      "/login/email/verify",
+      { request_id: si.rid, code: emailCode === "00000000" ? "00000001" : "00000000" },
+      si.browser
+    );
+    ok(
+      "another code on a finished sign-in -> refused, no code",
+      otherCode.status === 400 && !otherCode.headers.get("location") && (await otherCode.text()).includes("Wrong code")
+    );
+    const emailTok: any = await emailTokRes.json();
     const emailPing = await mcpCall(emailTok.access_token ?? "", {
       jsonrpc: "2.0",
       id: 95,
@@ -794,6 +828,28 @@ async function main(): Promise<void> {
   const code = cbUrl.searchParams.get("code");
   ok("login redirects with code", login.status === 302 && !!code);
   ok("state round-trip", cbUrl.searchParams.get("state") === "e2e-state-123");
+  // The form can arrive twice: a second tap while the redirect is loading, or
+  // a reload. A repeat is told how the first one ended and never gets a code.
+  const repeated = await loginPost(requestId!, PASSWORD, cookie);
+  ok(
+    "a repeat before the client redeemed -> already sent, no code",
+    repeated.status === 200 && !repeated.headers.get("location") && (await repeated.text()).includes("already sent to")
+  );
+  const repeatedElsewhere = await loginPost(requestId!, PASSWORD, "");
+  ok(
+    "the same repeat from another browser -> expired",
+    repeatedElsewhere.status === 400 && (await repeatedElsewhere.text()).includes("expired")
+  );
+  const twiceRes = await fetch(authUrl);
+  const twiceCookie = browserCookie(twiceRes);
+  const twiceRid = (await twiceRes.text()).match(/name="request_id" value="([^"]+)"/)?.[1] ?? "";
+  const overlapping = await Promise.all([loginPost(twiceRid, PASSWORD, twiceCookie), loginPost(twiceRid, PASSWORD, twiceCookie)]);
+  ok(
+    "two overlapping sign-in POSTs -> one code",
+    overlapping.filter((r) => r.status === 302 && !!r.headers.get("location")).length === 1 &&
+      overlapping.filter((r) => r.status === 200).length === 1,
+    JSON.stringify(overlapping.map((r) => r.status))
+  );
 
   // 6. Token exchange with wrong verifier rejected
   const badToken = await tokenPost({
@@ -831,6 +887,25 @@ async function main(): Promise<void> {
   // 8. Code is single-use
   const replay = await tokenPost(codeExchange);
   ok("code replay rejected", replay.status === 400);
+  const repeatedLater = await loginPost(requestId!, PASSWORD, cookie);
+  const repeatedLaterHtml = await repeatedLater.text();
+  ok(
+    "a repeat after the client redeemed -> connected page, no form, no code",
+    repeatedLater.status === 200 &&
+      !repeatedLater.headers.get("location") &&
+      repeatedLaterHtml.includes("Connected. You can close this tab") &&
+      !repeatedLaterHtml.includes("<form")
+  );
+  if (!externalBase) {
+    // Counts as a failed sign-in, so it stays off the production smoke run.
+    const repeatedOtherPassword = await loginPost(requestId!, "not-the-password", cookie);
+    ok(
+      "a repeat with a wrong password -> says so, no code",
+      repeatedOtherPassword.status === 400 &&
+        !repeatedOtherPassword.headers.get("location") &&
+        (await repeatedOtherPassword.text()).includes("Wrong email or password")
+    );
+  }
 
   // 9. MCP without token -> 401 + WWW-Authenticate
   const noAuth = await fetch(`${BASE}/mcp`, {

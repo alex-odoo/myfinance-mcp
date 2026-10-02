@@ -54,7 +54,13 @@ export function destinationLabel(client?: LoginClient): string | undefined {
   return client?.redirectUri ? destination(client.redirectUri).label : undefined;
 }
 
-export function loginPage(requestId: string, client?: LoginClient, error?: string): string {
+/** A message that is not an error: "ok" (green) or "info" (amber). */
+export interface Notice {
+  text: string;
+  tone: "ok" | "info";
+}
+
+export function loginPage(requestId: string, client?: LoginClient, error?: string, notice?: Notice): string {
   const emailForm = requestId && mailConfigured()
     ? `<form method="post" action="/login/email">
     <input type="hidden" name="request_id" value="${escapeHtml(requestId)}">
@@ -80,7 +86,7 @@ export function loginPage(requestId: string, client?: LoginClient, error?: strin
     ? `${emailForm}
   <details class="pw"><summary>Sign in with a password</summary>${passwordForm}</details>`
     : passwordForm;
-  return page(requestId, client, error, body);
+  return page(requestId, client, error, body, true, notice);
 }
 
 /** Second step of email sign-in: enter the code, or ask for a new one. */
@@ -107,7 +113,14 @@ export function codePage(requestId: string, client: LoginClient | undefined, ema
   );
 }
 
-function page(requestId: string, client: LoginClient | undefined, error: string | undefined, body: string, withGoogle = true): string {
+function page(
+  requestId: string,
+  client: LoginClient | undefined,
+  error: string | undefined,
+  body: string,
+  withGoogle = true,
+  notice?: Notice
+): string {
   const app = client?.name ? escapeHtml(client.name) : "your AI client";
   const dest = client?.redirectUri ? destination(client.redirectUri) : undefined;
   return `<!doctype html>
@@ -131,6 +144,8 @@ function page(requestId: string, client: LoginClient | undefined, error: string 
            background: #111; color: #fff; font-size: 15px; cursor: pointer; }
   .error { background: #fdecec; color: #b3261e; border-radius: 8px; padding: 10px;
            font-size: 13px; margin-bottom: 8px; }
+  .ok { background: #e8f5ec; color: #1e6b34; border-radius: 8px; padding: 10px;
+        font-size: 13px; margin-bottom: 8px; }
   .dest { margin-top: -14px; }
   .warn { background: #fff4e5; color: #8a4b00; border-radius: 8px; padding: 10px;
           font-size: 13px; margin-bottom: 16px; }
@@ -153,7 +168,7 @@ function page(requestId: string, client: LoginClient | undefined, error: string 
 <body>
 <div class="card">
   <h1>MyFinance MCP</h1>
-  <p>Sign in to connect ${app} to your finances.</p>
+  ${requestId ? `<p>Sign in to connect ${app} to your finances.</p>` : ""}
   ${dest ? `<p class="dest">After sign-in you return to <b>${escapeHtml(dest.label)}</b>.</p>` : ""}
   ${
     dest?.unknownHost
@@ -161,6 +176,7 @@ function page(requestId: string, client: LoginClient | undefined, error: string 
       : ""
   }
   ${error ? `<div class="error">${escapeHtml(error)}</div>` : ""}
+  ${notice ? `<div class="${notice.tone === "ok" ? "ok" : "warn"}">${escapeHtml(notice.text)}</div>` : ""}
   ${
     withGoogle && requestId && config.googleClientId && config.googleClientSecret
       ? `<a class="google" href="/auth/google?request_id=${escapeHtml(requestId)}">
