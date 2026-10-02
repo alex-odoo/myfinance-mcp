@@ -712,7 +712,12 @@ async function main(): Promise<void> {
       JSON.stringify({ status: sendRes.status, subject: codeMail?.subject })
     );
     ok("code email names where the code connects", !!codeMail?.text.includes("connects MyFinance to an app on this device"));
-    const wrong = await postForm("/login/email/verify", { request_id: si.rid, code: emailCode === "00000000" ? "00000001" : "00000000" }, si.browser);
+    const wrong = await postForm(
+      "/login/email/verify",
+      { request_id: si.rid, code: emailCode === "00000000" ? "00000001" : "00000000" },
+      si.browser,
+      "10.78.0.3"
+    );
     ok("wrong email code -> 401", wrong.status === 401 && (await wrong.text()).includes("Wrong code"));
     ok(
       "email code from another browser -> 400",
@@ -820,19 +825,39 @@ async function main(): Promise<void> {
 
     // A second tap on "Email me a sign-in code": one email, and both pages
     // ask for that email's code (a second send would void it).
+    // (Sends here come from addresses of their own: the run's default one
+    // carries 10 code sends an hour.)
+    const sendIp = "10.78.1.1";
     const twiceMail = `gate-a-twice-${randomBytes(4).toString("hex")}@test.local`;
     const st = await startSignIn();
-    const twoSends = await Promise.all([
-      postForm("/login/email", { request_id: st.rid, email: twiceMail }, st.browser),
-      postForm("/login/email", { request_id: st.rid, email: twiceMail }, st.browser),
-    ]);
-    const twoSendPages = await Promise.all(twoSends.map((r) => r.text()));
+    const doubleTap = async (s: { rid: string; browser: string }, address: string) => {
+      const both = await Promise.all([
+        postForm("/login/email", { request_id: s.rid, email: address }, s.browser, sendIp),
+        postForm("/login/email", { request_id: s.rid, email: address }, s.browser, sendIp),
+      ]);
+      const pages = await Promise.all(both.map((r) => r.text()));
+      return { statuses: both.map((r) => r.status), codePages: pages.every((t) => t.includes('action="/login/email/verify"')) };
+    };
+    const twoSends = await doubleTap(st, twiceMail);
     ok(
       "two overlapping code requests -> one email, both pages ask for its code",
-      mailTo(twiceMail).length === 1 &&
-        twoSends.every((r) => r.status === 200) &&
-        twoSendPages.every((t) => t.includes('action="/login/email/verify"')),
-      JSON.stringify({ mails: mailTo(twiceMail).length, statuses: twoSends.map((r) => r.status) })
+      mailTo(twiceMail).length === 1 && twoSends.statuses.every((s) => s === 200) && twoSends.codePages,
+      JSON.stringify({ mails: mailTo(twiceMail).length, ...twoSends })
+    );
+    const correctedMail = `gate-a-corrected-${randomBytes(4).toString("hex")}@test.local`;
+    const corrected = await postForm("/login/email", { request_id: st.rid, email: correctedMail }, st.browser, sendIp);
+    ok("a corrected address right after a send -> mailed", corrected.status === 200 && mailTo(correctedMail).length === 1);
+    // At the address's last send, a double tap still ends on the code page
+    const capMail = `gate-a-cap-${randomBytes(4).toString("hex")}@test.local`;
+    for (let i = 0; i < 2; i++) {
+      const s = await startSignIn();
+      await postForm("/login/email", { request_id: s.rid, email: capMail }, s.browser, sendIp);
+    }
+    const atCap = await doubleTap(await startSignIn(), capMail);
+    ok(
+      "a double tap on the address's last send -> both pages ask for its code",
+      mailTo(capMail).length === 3 && atCap.statuses.every((s) => s === 200) && atCap.codePages,
+      JSON.stringify({ mails: mailTo(capMail).length, ...atCap })
     );
 
     // Sends per address are capped across sign-ins: two more pass, the fourth
@@ -893,6 +918,9 @@ async function main(): Promise<void> {
   ).json();
   const overlapping = await Promise.all(overlappingSent);
   const queuedPage = await (overlapping.find((r) => r.status === 200) ?? overlapping[1]!).text();
+  // Revoked before the check: a failed check must not leave a live grant
+  // behind for the real account of a production smoke run.
+  await form(asMeta.revocation_endpoint, { token: twiceTok.refresh_token ?? "", client_id: client.client_id });
   ok(
     "two overlapping sign-in POSTs -> one code, the queued one says connected",
     overlapping.filter((r) => r.status === 302 && !!r.headers.get("location")).length === 1 &&
@@ -901,7 +929,6 @@ async function main(): Promise<void> {
       !!twiceTok.access_token,
     JSON.stringify(overlapping.map((r) => r.status))
   );
-  await form(asMeta.revocation_endpoint, { token: twiceTok.refresh_token ?? "", client_id: client.client_id });
 
   // 6. Token exchange with wrong verifier rejected
   const badToken = await tokenPost({
@@ -948,10 +975,23 @@ async function main(): Promise<void> {
       repeatedLaterHtml.includes("Connected. You can close this tab") &&
       !repeatedLaterHtml.includes("<form")
   );
-  const finishedBack = await fetch(`${BASE}/login?request_id=${requestId}`, { headers: { cookie } });
+  // Other buttons left on a finished sign-in's page: "Use a different email",
+  // "Send a new code", "Continue with Google".
+  const finishedPages = await Promise.all([
+    fetch(`${BASE}/login?request_id=${requestId}`, { headers: { cookie } }),
+    fetch(`${BASE}/login/email`, {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded", cookie },
+      body: new URLSearchParams({ request_id: requestId!, email: EMAIL }),
+      redirect: "manual",
+    }),
+    fetch(`${BASE}/auth/google?request_id=${requestId}`, { headers: { cookie }, redirect: "manual" }),
+  ]);
+  const finishedHtml = await Promise.all(finishedPages.map((r) => r.text()));
   ok(
-    "another button on a finished sign-in's page -> already finished, not expired",
-    finishedBack.status === 200 && (await finishedBack.text()).includes("already finished")
+    "other buttons on a finished sign-in's page -> already finished, no form",
+    finishedPages.every((r) => r.status === 200) && finishedHtml.every((t) => t.includes("already finished") && !t.includes("<form")),
+    JSON.stringify(finishedPages.map((r) => r.status))
   );
   if (!externalBase) {
     // Counts as a failed sign-in, so it stays off the production smoke run.

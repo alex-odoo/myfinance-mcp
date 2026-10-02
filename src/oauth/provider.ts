@@ -105,7 +105,7 @@ interface PendingAuthRequest {
   browserHash: Buffer;
   expiresAt: number;
   /** The last code emailed for this sign-in; a new send replaces it. */
-  emailCode?: { email: string; hash: Buffer; expiresAt: number; attempts: number };
+  emailCode?: { email: string; hash: Buffer; sentAt: number; expiresAt: number; attempts: number };
 }
 
 /** The step that finished a sign-in. A repeat must come through the same one. */
@@ -119,7 +119,7 @@ type SignInMethod = "password" | "email" | "google";
  */
 interface FinishedAuthRequest {
   browserHash: Buffer;
-  /** The code's own expiry, so "no longer stored" can only mean redeemed. */
+  /** The code's own expiry: before it, a code row that is gone was redeemed (or erased with its account). */
   expiresAt: number;
   userId: string;
   method: SignInMethod;
@@ -159,6 +159,13 @@ function readCookie(req: Request, name: string): string | undefined {
     if (eq > 0 && part.slice(0, eq).trim() === name) return part.slice(eq + 1).trim();
   }
   return undefined;
+}
+
+/** An error for the log: its class and code, never its message (a query error can quote an address). */
+function errorLabel(err: unknown): string {
+  if (!(err instanceof Error)) return "error";
+  const code = (err as { code?: unknown }).code;
+  return typeof code === "string" ? `${err.name} ${code}` : err.name;
 }
 
 /** Drops expired entries, then the oldest past the cap (Map order is insertion order). */
@@ -410,7 +417,7 @@ export class FinanceOAuthProvider implements OAuthServerProvider {
         return;
       }
       if (!this.sameBrowser(req, pendingReq)) {
-        res.status(400).type("html").send(loginPage("", undefined, EXPIRED));
+        res.status(400).type("html").send(loginPage("", undefined, DIFFERENT_BROWSER));
         return;
       }
       res.status(200).type("html").send(loginPage(requestId, pendingReq.client));
@@ -430,7 +437,7 @@ export class FinanceOAuthProvider implements OAuthServerProvider {
       const requestId = typeof body.request_id === "string" ? body.request_id : "";
       // In line with the other steps: of two quick sends, the code page shown
       // is the one whose code is stored. After the sign-in, a send has nothing
-      // to repeat and is told it expired.
+      // to repeat: its browser hears that the sign-in finished.
       await this.signInStep(req, res, requestId, async (pendingReq) => {
         const email = (typeof body.email === "string" ? body.email : "").trim().toLowerCase();
         if (email.length > 254 || !EMAIL_SHAPE.test(email)) {
@@ -441,65 +448,84 @@ export class FinanceOAuthProvider implements OAuthServerProvider {
           res.status(429).type("html").send(loginPage(requestId, pendingReq.client, ADDRESS_LOCKED));
           return;
         }
+        const last = pendingReq.emailCode;
+        const liveCode = !!last && last.email === email && last.expiresAt >= Date.now();
         // A second tap or a resubmit right after a send: the code just sent is
         // the one to type, so its page comes back without another email (which
-        // would void that code and use up the address's sends).
-        const last = pendingReq.emailCode;
-        if (last && last.email === email && Date.now() - (last.expiresAt - EMAIL_CODE_TTL_MS) < SEND_REPEAT_MS) {
+        // would void that code and use up the address's sends). A clock, not a
+        // form token: later, a resend is what the button asks for.
+        if (liveCode && Date.now() - last.sentAt < SEND_REPEAT_MS) {
           res.status(200).type("html").send(codePage(requestId, pendingReq.client, email));
           return;
         }
+        // No new code. While the last one for this address still works, its
+        // page stays, so there is somewhere to type it.
+        const noNewCode = (status: number, withoutCode: string, withCode: string) => {
+          res
+            .status(status)
+            .type("html")
+            .send(liveCode ? codePage(requestId, pendingReq.client, email, withCode) : loginPage(requestId, pendingReq.client, withoutCode));
+        };
+        const capped = () =>
+          noNewCode(
+            429,
+            "Too many codes requested. Wait a few minutes, or continue with Google.",
+            "No new code: too many were requested. The last code we sent still works."
+          );
         // The IP is charged first: a request its own cap refuses must not use
         // up the address's quota (that would lock the owner out for free).
         if (!this.takeSend(`i:${ip}`, SENDS_PER_IP, SENDS_PER_IP_WINDOW_MS)) {
-          res
-            .status(429)
-            .type("html")
-            .send(loginPage(requestId, pendingReq.client, "Too many codes requested. Wait a few minutes, or continue with Google."));
+          capped();
           return;
         }
         if (!this.takeSend(`a:${email}`, SENDS_PER_ADDRESS, SENDS_PER_ADDRESS_WINDOW_MS)) {
           this.refundSend(`i:${ip}`);
-          res
-            .status(429)
-            .type("html")
-            .send(loginPage(requestId, pendingReq.client, "Too many codes requested. Wait a few minutes, or continue with Google."));
+          capped();
           return;
         }
         // An account that signs in another way gets a pointer to it instead
         // of a code. The page reads the same either way, so it does not tell
         // anyone which addresses have accounts.
         const code = String(randomInt(0, 10 ** EMAIL_CODE_DIGITS)).padStart(EMAIL_CODE_DIGITS, "0");
-        const other = await emailSignInBlocked(email);
-        const sent = other
-          ? await sendMail(
-              email,
-              other === "google" ? "Sign in to MyFinance with Google" : "Sign in to MyFinance with your password",
-              "Someone asked for a MyFinance MCP sign-in code for this address.\n\n" +
-                (other === "google"
-                  ? "Your account signs in with Google: on the sign-in page, choose Continue with Google."
-                  : "Your account signs in with its password: on the sign-in page, open Sign in with a password.") +
-                " No code was issued.\n\nIf this was not you, ignore this email.\n\nMyFinance MCP - https://myfinance-mcp.com\n"
-            )
-          : await sendMail(
-              email,
-              `${code} is your MyFinance sign-in code`,
-              `Your MyFinance MCP sign-in code:\n\n    ${code}\n\n` +
-                `It expires in 10 minutes and connects MyFinance to ${destinationLabel(pendingReq.client) ?? "your AI client"}.\n\n` +
-                "If you did not ask for it, ignore this email: nobody can sign in without the code.\n\n" +
-                "MyFinance MCP - https://myfinance-mcp.com\n"
-            );
+        let sent: boolean;
+        try {
+          const other = await emailSignInBlocked(email);
+          sent = other
+            ? await sendMail(
+                email,
+                other === "google" ? "Sign in to MyFinance with Google" : "Sign in to MyFinance with your password",
+                "Someone asked for a MyFinance MCP sign-in code for this address.\n\n" +
+                  (other === "google"
+                    ? "Your account signs in with Google: on the sign-in page, choose Continue with Google."
+                    : "Your account signs in with its password: on the sign-in page, open Sign in with a password.") +
+                  " No code was issued.\n\nIf this was not you, ignore this email.\n\nMyFinance MCP - https://myfinance-mcp.com\n"
+              )
+            : await sendMail(
+                email,
+                `${code} is your MyFinance sign-in code`,
+                `Your MyFinance MCP sign-in code:\n\n    ${code}\n\n` +
+                  `It expires in 10 minutes and connects MyFinance to ${destinationLabel(pendingReq.client) ?? "your AI client"}.\n\n` +
+                  "If you did not ask for it, ignore this email: nobody can sign in without the code.\n\n" +
+                  "MyFinance MCP - https://myfinance-mcp.com\n"
+              );
+        } catch (err) {
+          this.refundSend(`i:${ip}`);
+          this.refundSend(`a:${email}`);
+          throw err;
+        }
         if (!sent) {
           // Nothing reached the inbox: the attempt costs neither quota.
           this.refundSend(`i:${ip}`);
           this.refundSend(`a:${email}`);
-          res
-            .status(502)
-            .type("html")
-            .send(loginPage(requestId, pendingReq.client, "Could not send the email. Try again in a minute, or continue with Google."));
+          noNewCode(
+            502,
+            "Could not send the email. Try again in a minute, or continue with Google.",
+            "Could not send a new code. The last code we sent still works."
+          );
           return;
         }
-        pendingReq.emailCode = { email, hash: sha256(code), expiresAt: Date.now() + EMAIL_CODE_TTL_MS, attempts: 0 };
+        const now = Date.now();
+        pendingReq.emailCode = { email, hash: sha256(code), sentAt: now, expiresAt: now + EMAIL_CODE_TTL_MS, attempts: 0 };
         res.status(200).type("html").send(codePage(requestId, pendingReq.client, email));
       });
     });
@@ -551,19 +577,26 @@ export class FinanceOAuthProvider implements OAuthServerProvider {
             return;
           }
           // The code stays valid until the sign-in is stored, so a failed write
-          // can be retried with it; a second tap meanwhile waits in line, and
-          // finishLogin then consumes the request with its code.
-          let user: SessionUser;
+          // can be retried with it, and the page asks for it again; a second
+          // tap meanwhile waits in line, and finishLogin consumes the request
+          // with its code.
           try {
-            user = await findOrCreateEmailUser(sentCode.email);
+            const user = await findOrCreateEmailUser(sentCode.email);
+            await this.finishLogin(requestId, pendingReq, user.id, res, { method: "email", emailCodeHash: sentCode.hash });
           } catch (err) {
-            if (!(err instanceof NoEmailSignInError)) throw err;
-            pendingReq.emailCode = undefined;
-            const how = err.method === "google" ? "Google. Use Continue with Google." : "its password. Use Sign in with a password.";
-            res.status(409).type("html").send(loginPage(requestId, pendingReq.client, `This account signs in with ${how}`));
-            return;
+            if (err instanceof NoEmailSignInError) {
+              pendingReq.emailCode = undefined;
+              const how = err.method === "google" ? "Google. Use Continue with Google." : "its password. Use Sign in with a password.";
+              res.status(409).type("html").send(loginPage(requestId, pendingReq.client, `This account signs in with ${how}`));
+              return;
+            }
+            if (res.headersSent) throw err;
+            console.error("[oauth] email sign-in could not finish:", errorLabel(err));
+            res
+              .status(503)
+              .type("html")
+              .send(codePage(requestId, pendingReq.client, sentCode.email, "Could not finish the sign-in. Enter the code again."));
           }
-          await this.finishLogin(requestId, pendingReq, user.id, res, { method: "email", emailCodeHash: sentCode.hash });
         },
         { step: "email", codeHash: sha256(code) }
       );
@@ -938,18 +971,28 @@ export class FinanceOAuthProvider implements OAuthServerProvider {
     const page = (status: number, error?: string, notice?: Notice) =>
       res.status(status).type("html").send(loginPage("", undefined, error, notice));
     const done = requestId ? this.finished.get(requestId) : undefined;
-    if (
-      !done ||
-      done.expiresAt < Date.now() ||
-      !this.sameBrowser(req, done) ||
-      repeat.step !== done.method ||
-      (repeat.step === "google" && repeat.state !== done.googleState)
-    ) {
+    if (!done || done.expiresAt < Date.now() || !this.sameBrowser(req, done)) {
       page(400, EXPIRED);
       return;
     }
+    const finished = () => page(200, undefined, { tone: "info", text: ALREADY_FINISHED });
+    // Another step of a finished sign-in (a code typed after Google finished
+    // it, a second Google tab): it is told the sign-in finished, as GET /login
+    // tells that browser, but not how, since this step did not finish it.
+    if (repeat.step !== done.method || (repeat.step === "google" && repeat.state !== done.googleState)) {
+      finished();
+      return;
+    }
     if (repeat.step === "password") {
-      const refusal = await repeat.sameAccount(done.userId);
+      let refusal: string | undefined;
+      try {
+        refusal = await repeat.sameAccount(done.userId);
+      } catch (err) {
+        // The account could not be checked: no outcome, only that it finished.
+        console.error("[oauth] sign-in repeat check failed:", errorLabel(err));
+        finished();
+        return;
+      }
       if (refusal) {
         page(400, refusal);
         return;
@@ -965,7 +1008,7 @@ export class FinanceOAuthProvider implements OAuthServerProvider {
       redeemed = await this.untilRedeemed(done);
     } catch (err) {
       // The sign-in itself went through; only this check failed.
-      console.error("[oauth] sign-in repeat check failed:", err instanceof Error ? err.message : String(err));
+      console.error("[oauth] sign-in repeat check failed:", errorLabel(err));
     }
     if (redeemed) {
       page(200, undefined, { tone: "ok", text: "Connected. You can close this tab and return to your AI client." });

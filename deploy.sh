@@ -116,27 +116,33 @@ for d in "$DOMAIN" "$LEGACY_DOMAIN"; do
   if curl -sf --max-time 10 "https://$d/health" >/dev/null 2>&1; then
     echo "    https://$d healthy"
     reachable="$reachable $d"
+  elif [ "$d" = "$DOMAIN" ]; then
+    echo "FATAL: https://$d/health does not answer through nginx, though the container does" >&2
+    exit 1
   else
     echo "    (https://$d not reachable yet: DNS or certbot pending)"
   fi
 done
 
-# The sign-in steps through nginx, as a browser posts them: each must reach the
-# app (its 400 page for an empty request), never a 301 or 404 at the edge. The
-# e2e talks to the app port, so twice a release went live with one of them
-# broken (/login/email 404, /login 301). An empty request_id costs no sign-in budget.
-probe=$(mktemp)
+# The sign-in steps through nginx, as a browser sends them: each must reach the
+# app, whose answers carry X-Powered-By (nginx's own 301, 404 and 5xx pages do
+# not). The e2e talks to the app port, so twice a release went live with one of
+# them broken (/login/email 404, /login 301). Empty ids cost no sign-in budget.
 for d in $reachable; do
-  for p in /login /login/email /login/email/verify; do
-    code=$(curl -s -o "$probe" -w "%{http_code}" --max-time 10 -X POST -d "request_id=" "https://$d$p" || true)
-    if [ "$code" != 400 ] || ! grep -q "Sign-in request expired" "$probe"; then
-      rm -f "$probe"
-      echo "FATAL: POST https://$d$p answered $code, not the app's sign-in page: check the nginx locations" >&2
+  for step in "POST /login" "POST /login/email" "POST /login/email/verify" "GET /auth/google?request_id=" "GET /auth/google/callback?state="; do
+    method=${step%% *}
+    route=${step#* }
+    if [ "$method" = POST ]; then
+      hdr=$(curl -s -o /dev/null -D - --max-time 10 -X POST -d "request_id=" "https://$d$route" || true)
+    else
+      hdr=$(curl -s -o /dev/null -D - --max-time 10 "https://$d$route" || true)
+    fi
+    if ! grep -qi "^x-powered-by: express" <<<"$hdr"; then
+      echo "FATAL: $method https://$d$route did not reach the app ($(head -1 <<<"$hdr" | tr -d '\r')): check the nginx locations" >&2
       exit 1
     fi
   done
 done
-rm -f "$probe"
 echo "    sign-in steps reach the app through nginx"
 
 echo "==> Done: $MSG"
