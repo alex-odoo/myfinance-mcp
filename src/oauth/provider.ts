@@ -66,6 +66,8 @@ const SENDS_PER_ADDRESS = 3;
 const SENDS_PER_ADDRESS_WINDOW_MS = 15 * 60 * 1000;
 const SENDS_PER_IP = 10;
 const SENDS_PER_IP_WINDOW_MS = 60 * 60 * 1000;
+/** A send for the same address this soon after the last one is a repeat of it. */
+const SEND_REPEAT_MS = 5000;
 const EMAIL_SHAPE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 export const SUPPORTED_SCOPES = ["finance"];
@@ -94,6 +96,7 @@ const BROWSER_ID = /^[A-Za-z0-9_-]{43}$/;
 
 const EXPIRED = "Sign-in request expired. Retry from your AI client.";
 const DIFFERENT_BROWSER = "This sign-in was started in a different browser. Retry from your AI client.";
+const ALREADY_FINISHED = "This sign-in has already finished. Return to your AI client; if it is not connected there, retry from it.";
 
 interface PendingAuthRequest {
   clientId: string;
@@ -402,7 +405,11 @@ export class FinanceOAuthProvider implements OAuthServerProvider {
     router.get("/login", (req, res) => {
       const requestId = String(req.query.request_id ?? "");
       const pendingReq = this.livePending(requestId);
-      if (!pendingReq || !this.sameBrowser(req, pendingReq)) {
+      if (!pendingReq) {
+        this.expiredOrFinished(req, requestId, res);
+        return;
+      }
+      if (!this.sameBrowser(req, pendingReq)) {
         res.status(400).type("html").send(loginPage("", undefined, EXPIRED));
         return;
       }
@@ -432,6 +439,14 @@ export class FinanceOAuthProvider implements OAuthServerProvider {
         }
         if (this.spent(`w:${email}`, WRONG_CODES_PER_ADDRESS)) {
           res.status(429).type("html").send(loginPage(requestId, pendingReq.client, ADDRESS_LOCKED));
+          return;
+        }
+        // A second tap or a resubmit right after a send: the code just sent is
+        // the one to type, so its page comes back without another email (which
+        // would void that code and use up the address's sends).
+        const last = pendingReq.emailCode;
+        if (last && last.email === email && Date.now() - (last.expiresAt - EMAIL_CODE_TTL_MS) < SEND_REPEAT_MS) {
+          res.status(200).type("html").send(codePage(requestId, pendingReq.client, email));
           return;
         }
         // The IP is charged first: a request its own cap refuses must not use
@@ -535,13 +550,15 @@ export class FinanceOAuthProvider implements OAuthServerProvider {
               .send(codePage(requestId, pendingReq.client, sentCode.email, "Wrong code. Check the latest email and try again."));
             return;
           }
-          // Single use, cleared before the first await.
-          pendingReq.emailCode = undefined;
+          // The code stays valid until the sign-in is stored, so a failed write
+          // can be retried with it; a second tap meanwhile waits in line, and
+          // finishLogin then consumes the request with its code.
           let user: SessionUser;
           try {
             user = await findOrCreateEmailUser(sentCode.email);
           } catch (err) {
             if (!(err instanceof NoEmailSignInError)) throw err;
+            pendingReq.emailCode = undefined;
             const how = err.method === "google" ? "Google. Use Continue with Google." : "its password. Use Sign in with a password.";
             res.status(409).type("html").send(loginPage(requestId, pendingReq.client, `This account signs in with ${how}`));
             return;
@@ -560,7 +577,7 @@ export class FinanceOAuthProvider implements OAuthServerProvider {
       const requestId = String(req.query.request_id ?? "");
       const pendingReq = this.livePending(requestId);
       if (!pendingReq) {
-        res.status(400).type("html").send(loginPage("", undefined, EXPIRED));
+        this.expiredOrFinished(req, requestId, res);
         return;
       }
       if (!this.sameBrowser(req, pendingReq)) {
@@ -606,7 +623,7 @@ export class FinanceOAuthProvider implements OAuthServerProvider {
         requestId,
         async (pendingReq) => {
           if (reload) {
-            // Google's code was spent by the first hit, which did not finish the sign-in.
+            // The state is single use, and its first hit did not finish the sign-in.
             res.status(400).type("html").send(loginPage(requestId, pendingReq.client, "This Google sign-in did not complete. Try again."));
             return;
           }
@@ -870,7 +887,7 @@ export class FinanceOAuthProvider implements OAuthServerProvider {
    * time per pending request and only from the browser that started it. A
    * step whose request already finished is a repeat (a second tap, a reload)
    * and is told how the first one ended; a step with nothing to repeat (no
-   * `repeat`) is told the request expired.
+   * `repeat`) is told that the sign-in finished, or that it expired.
    */
   private async signInStep(
     req: Request,
@@ -892,7 +909,21 @@ export class FinanceOAuthProvider implements OAuthServerProvider {
     if (handled) return;
     // Outside the queue: a repeat may wait for the client.
     if (repeat) await this.answerRepeat(req, requestId, res, repeat);
-    else res.status(400).type("html").send(loginPage("", undefined, EXPIRED));
+    else this.expiredOrFinished(req, requestId, res);
+  }
+
+  /**
+   * The page for a step that finds no pending request and has nothing to
+   * repeat (another button on a page left open): a sign-in that finished says
+   * so to its own browser, without a code or a wait; anything else expired.
+   */
+  private expiredOrFinished(req: Request, requestId: string, res: Response): void {
+    const done = requestId ? this.finished.get(requestId) : undefined;
+    if (done && done.expiresAt >= Date.now() && this.sameBrowser(req, done)) {
+      res.status(200).type("html").send(loginPage("", undefined, undefined, { tone: "info", text: ALREADY_FINISHED }));
+      return;
+    }
+    res.status(400).type("html").send(loginPage("", undefined, EXPIRED));
   }
 
   /**
@@ -929,7 +960,14 @@ export class FinanceOAuthProvider implements OAuthServerProvider {
       page(400, "Wrong code, and this sign-in has already finished. Retry from your AI client.");
       return;
     }
-    if (await this.untilRedeemed(done)) {
+    let redeemed = false;
+    try {
+      redeemed = await this.untilRedeemed(done);
+    } catch (err) {
+      // The sign-in itself went through; only this check failed.
+      console.error("[oauth] sign-in repeat check failed:", err instanceof Error ? err.message : String(err));
+    }
+    if (redeemed) {
       page(200, undefined, { tone: "ok", text: "Connected. You can close this tab and return to your AI client." });
     } else {
       page(200, undefined, {
@@ -948,7 +986,8 @@ export class FinanceOAuthProvider implements OAuthServerProvider {
     // Concurrent repeats of one sign-in share one poll.
     done.verdict ??= (async () => {
       for (;;) {
-        if (!(await this.store.codeOutstanding(done.codeKey))) return true;
+        // Past the code's expiry a missing row proves nothing.
+        if (!(await this.store.codeOutstanding(done.codeKey))) return Date.now() <= done.expiresAt;
         const left = done.issuedAt + config.signInRepeatWaitMs - Date.now();
         if (left <= 0) return false;
         await sleep(Math.min(left, REDEMPTION_POLL_MS));
@@ -959,7 +998,12 @@ export class FinanceOAuthProvider implements OAuthServerProvider {
     return done.verdict;
   }
 
-  /** Runs the steps of one sign-in request one after another, so a double tap sees the first one's outcome. */
+  /**
+   * Runs the steps of one sign-in request one after another, so a double tap
+   * sees the first one's outcome. A step that never returns holds only the
+   * later steps of its own request; their pages time out, and a retry from
+   * the AI client opens a new request.
+   */
   private async oneAtATime<T>(requestId: string, handle: () => Promise<T>): Promise<T> {
     const known = this.pending.has(requestId) || this.inFlight.has(requestId);
     if (!requestId || !known) return handle();

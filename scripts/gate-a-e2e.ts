@@ -21,12 +21,19 @@ const BASE = externalBase?.replace(/\/$/, "") ?? `http://localhost:${PORT}`;
 // never takes an identity from the environment: E2E_EMAIL/E2E_PASSWORD are
 // the prod-smoke credentials of a REAL account.
 const EMAIL = externalBase ? (process.env.E2E_EMAIL ?? "gate-a@test.local") : "gate-a@test.local";
-const PASSWORD = externalBase ? (process.env.E2E_PASSWORD ?? "gate-a-secret") : "gate-a-secret";
+// Spawn mode writes this account into the production database for the run,
+// where the live server accepts it too: a password from this public repo
+// would open it to anyone meanwhile (or after a run that died before cleanup).
+const PASSWORD = externalBase ? (process.env.E2E_PASSWORD ?? "gate-a-secret") : randomBytes(18).toString("base64url");
 const REDIRECT_URI = "http://localhost:19999/callback";
 /** Short refresh-reuse grace for the spawned server, so expiry is testable. */
 const E2E_REFRESH_GRACE_MS = 1500;
-/** How long a repeated sign-in form waits for the client to redeem the first one's code. */
-const E2E_SIGN_IN_REPEAT_WAIT_MS = 2000;
+/**
+ * How long a repeated sign-in form waits for the client to redeem the first
+ * one's code. The production default: a redemption here is several round
+ * trips to the remote database and must land inside it.
+ */
+const E2E_SIGN_IN_REPEAT_WAIT_MS = 4000;
 
 let passed = 0;
 function ok(name: string, cond: boolean, detail?: string): void {
@@ -371,10 +378,16 @@ async function main(): Promise<void> {
   // POST and the Google leg must send it back, as a browser does.
   const browserCookie = (res: Response): string =>
     res.headers.getSetCookie().find((c) => c.startsWith("mf_bid="))?.split(";")[0] ?? "";
-  const loginPost = (requestId: string, password: string, cookie: string) =>
+  // `ip`: a failure check of its own address, so the failed sign-ins it
+  // counts never lock the run's real sign-ins out (5 per 15 minutes per IP).
+  const loginPost = (requestId: string, password: string, cookie: string, ip?: string) =>
     fetch(`${BASE}/login`, {
       method: "POST",
-      headers: { "content-type": "application/x-www-form-urlencoded", ...(cookie ? { cookie } : {}) },
+      headers: {
+        "content-type": "application/x-www-form-urlencoded",
+        ...(cookie ? { cookie } : {}),
+        ...(ip ? { "x-forwarded-for": ip } : {}),
+      },
       body: new URLSearchParams({ request_id: requestId, email: EMAIL, password }),
       redirect: "manual",
     });
@@ -671,10 +684,14 @@ async function main(): Promise<void> {
       const rid = (await res.text()).match(/name="request_id" value="([^"]+)"/)?.[1] ?? "";
       return { rid, browser };
     };
-    const postForm = (path: string, params: Record<string, string>, cookie: string) =>
+    const postForm = (path: string, params: Record<string, string>, cookie: string, ip?: string) =>
       fetch(`${BASE}${path}`, {
         method: "POST",
-        headers: { "content-type": "application/x-www-form-urlencoded", ...(cookie ? { cookie } : {}) },
+        headers: {
+          "content-type": "application/x-www-form-urlencoded",
+          ...(cookie ? { cookie } : {}),
+          ...(ip ? { "x-forwarded-for": ip } : {}),
+        },
         body: new URLSearchParams(params),
         redirect: "manual",
       });
@@ -727,7 +744,8 @@ async function main(): Promise<void> {
     const otherCode = await postForm(
       "/login/email/verify",
       { request_id: si.rid, code: emailCode === "00000000" ? "00000001" : "00000000" },
-      si.browser
+      si.browser,
+      "10.78.0.1"
     );
     ok(
       "another code on a finished sign-in -> refused, no code",
@@ -800,10 +818,32 @@ async function main(): Promise<void> {
       String(mailTo(grind).length)
     );
 
-    // Sends per address are capped: two more pass, the fourth is refused
-    await postForm("/login/email", { request_id: sg.rid, email: googler }, sg.browser);
-    await postForm("/login/email", { request_id: sg.rid, email: googler }, sg.browser);
-    ok("fourth code for one address in 15 min -> 429", (await postForm("/login/email", { request_id: sg.rid, email: googler }, sg.browser)).status === 429);
+    // A second tap on "Email me a sign-in code": one email, and both pages
+    // ask for that email's code (a second send would void it).
+    const twiceMail = `gate-a-twice-${randomBytes(4).toString("hex")}@test.local`;
+    const st = await startSignIn();
+    const twoSends = await Promise.all([
+      postForm("/login/email", { request_id: st.rid, email: twiceMail }, st.browser),
+      postForm("/login/email", { request_id: st.rid, email: twiceMail }, st.browser),
+    ]);
+    const twoSendPages = await Promise.all(twoSends.map((r) => r.text()));
+    ok(
+      "two overlapping code requests -> one email, both pages ask for its code",
+      mailTo(twiceMail).length === 1 &&
+        twoSends.every((r) => r.status === 200) &&
+        twoSendPages.every((t) => t.includes('action="/login/email/verify"')),
+      JSON.stringify({ mails: mailTo(twiceMail).length, statuses: twoSends.map((r) => r.status) })
+    );
+
+    // Sends per address are capped across sign-ins: two more pass, the fourth
+    // is refused. (Within one sign-in a quick resend repeats the last send.)
+    const sendFresh = async () => {
+      const s = await startSignIn();
+      return postForm("/login/email", { request_id: s.rid, email: googler }, s.browser);
+    };
+    await sendFresh();
+    await sendFresh();
+    ok("fourth code for one address in 15 min -> 429", (await sendFresh()).status === 429);
   }
 
   // Enabled -> 400 (bad request), not configured -> 404; both prove routing works.
@@ -843,13 +883,25 @@ async function main(): Promise<void> {
   const twiceRes = await fetch(authUrl);
   const twiceCookie = browserCookie(twiceRes);
   const twiceRid = (await twiceRes.text()).match(/name="request_id" value="([^"]+)"/)?.[1] ?? "";
-  const overlapping = await Promise.all([loginPost(twiceRid, PASSWORD, twiceCookie), loginPost(twiceRid, PASSWORD, twiceCookie)]);
+  // The first answer is the sign-in; its code is redeemed at once, as a
+  // client does, so the second one, queued behind it, hears "Connected".
+  const overlappingSent = [loginPost(twiceRid, PASSWORD, twiceCookie), loginPost(twiceRid, PASSWORD, twiceCookie)];
+  const firstAnswer = await Promise.race(overlappingSent);
+  const twiceCode = new URL(firstAnswer.headers.get("location") ?? "http://invalid/").searchParams.get("code") ?? "";
+  const twiceTok: any = await (
+    await tokenPost({ grant_type: "authorization_code", code: twiceCode, code_verifier: verifier, client_id: client.client_id, redirect_uri: REDIRECT_URI })
+  ).json();
+  const overlapping = await Promise.all(overlappingSent);
+  const queuedPage = await (overlapping.find((r) => r.status === 200) ?? overlapping[1]!).text();
   ok(
-    "two overlapping sign-in POSTs -> one code",
+    "two overlapping sign-in POSTs -> one code, the queued one says connected",
     overlapping.filter((r) => r.status === 302 && !!r.headers.get("location")).length === 1 &&
-      overlapping.filter((r) => r.status === 200).length === 1,
+      overlapping.filter((r) => r.status === 200).length === 1 &&
+      queuedPage.includes("Connected. You can close this tab") &&
+      !!twiceTok.access_token,
     JSON.stringify(overlapping.map((r) => r.status))
   );
+  await form(asMeta.revocation_endpoint, { token: twiceTok.refresh_token ?? "", client_id: client.client_id });
 
   // 6. Token exchange with wrong verifier rejected
   const badToken = await tokenPost({
@@ -896,9 +948,14 @@ async function main(): Promise<void> {
       repeatedLaterHtml.includes("Connected. You can close this tab") &&
       !repeatedLaterHtml.includes("<form")
   );
+  const finishedBack = await fetch(`${BASE}/login?request_id=${requestId}`, { headers: { cookie } });
+  ok(
+    "another button on a finished sign-in's page -> already finished, not expired",
+    finishedBack.status === 200 && (await finishedBack.text()).includes("already finished")
+  );
   if (!externalBase) {
     // Counts as a failed sign-in, so it stays off the production smoke run.
-    const repeatedOtherPassword = await loginPost(requestId!, "not-the-password", cookie);
+    const repeatedOtherPassword = await loginPost(requestId!, "not-the-password", cookie, "10.78.0.2");
     ok(
       "a repeat with a wrong password -> says so, no code",
       repeatedOtherPassword.status === 400 &&

@@ -126,7 +126,11 @@ export class OAuthStore {
     };
   }
 
-  /** True while the code with this key (secretKey of the code) is stored and unexpired, i.e. not redeemed yet. */
+  /**
+   * True while the code with this key (secretKey of the code) is stored and
+   * unexpired. Once it is false the code was redeemed, expired, or erased with
+   * its account (delete_all_data).
+   */
   async codeOutstanding(codeKey: string): Promise<boolean> {
     const row = await db.oauthCode.findUnique({ where: { code: codeKey }, select: { expiresAt: true } });
     return !!row && row.expiresAt.getTime() >= Date.now();
