@@ -42,6 +42,33 @@ UNPROTECTED=$(psql "$DATABASE_URL" -tA -c "SELECT count(*) FROM pg_tables WHERE 
 [ "$UNPROTECTED" = "0" ] || { echo "FATAL: $UNPROTECTED public table(s) without RLS"; exit 1; }
 echo "    RLS green (all public tables)"
 
+echo "==> Supabase advisor: no ERROR-level security lint"
+# The advisor sees exposure the RLS count above cannot (security-definer views,
+# exposed functions); asked on every deploy instead of read from its weekly
+# email, it becomes a gate. The token is a read-only PAT (advisors_read on the
+# MCP projects), kept outside the repo.
+ADVISOR_TOKEN_FILE="${SUPABASE_ADVISOR_TOKEN_FILE:-$HOME/.config/supabase/advisors-read.token}"
+[ -s "$ADVISOR_TOKEN_FILE" ] || { echo "FATAL: $ADVISOR_TOKEN_FILE missing (read-only Supabase PAT)" >&2; exit 1; }
+# The ref comes from the connection string (pooler user postgres.<ref>, or host
+# db.<ref>.supabase.co): this public repo does not name the project.
+REF=$(sed -nE 's/.*postgres\.([a-z]{20})[:@].*/\1/p; s/.*db\.([a-z]{20})\.supabase\.co.*/\1/p' <<<"$DATABASE_URL" | head -1)
+[ -n "$REF" ] || { echo "FATAL: no Supabase project ref in DATABASE_URL" >&2; exit 1; }
+# The header goes through curl's stdin config, not argv, so ps never shows it.
+LINTS=$(printf 'header = "Authorization: Bearer %s"\n' "$(tr -d '[:space:]' < "$ADVISOR_TOKEN_FILE")" \
+  | curl -sf --max-time 30 -K - "https://api.supabase.com/v1/projects/$REF/advisors/security") \
+  || { echo "FATAL: the Supabase advisor did not answer (token expired or revoked?)" >&2; exit 1; }
+# WARN is printed, not fatal: it includes "upgrade Postgres", which must not
+# block a fix. A response without "lints" fails closed.
+python3 -I -c '
+import json, sys
+lints = json.load(sys.stdin)["lints"]
+for l in lints:
+    if l["level"] in ("ERROR", "WARN"):
+        print("    %s %s: %s" % (l["level"], l["name"], l.get("detail") or l.get("title")))
+sys.exit(any(l["level"] == "ERROR" for l in lints))
+' <<<"$LINTS" || { echo "FATAL: the Supabase advisor reports an ERROR-level lint (or an unreadable answer)" >&2; exit 1; }
+echo "    advisor green (no ERROR-level lint)"
+
 echo "==> Deploy lock on the box"
 # One deploy at a time: two interleaved rsync --delete runs into the same dir
 # leave a tree nobody committed. The owner line says who holds it.
