@@ -8,6 +8,8 @@
  * which is how claude.ai registers).
  *
  * Usage: bun run scripts/gate-a-e2e.ts [baseUrl]
+ * Spawn mode (no argument) runs on a separate local TEST database,
+ * E2E_DATABASE_URL: never the one in DATABASE_URL and never Supabase.
  * With baseUrl argument it tests a running (e.g. production) server instead
  * of spawning one; set E2E_EMAIL/E2E_PASSWORD env for that mode.
  */
@@ -17,13 +19,13 @@ import type { Subprocess } from "bun";
 const externalBase = process.argv[2];
 const PORT = 8790;
 const BASE = externalBase?.replace(/\/$/, "") ?? `http://localhost:${PORT}`;
-// Spawn mode deletes and recreates its test user in the real database, so it
-// never takes an identity from the environment: E2E_EMAIL/E2E_PASSWORD are
-// the prod-smoke credentials of a REAL account.
+// Spawn mode deletes and recreates its test user, so it never takes an
+// identity from the environment: E2E_EMAIL/E2E_PASSWORD are the prod-smoke
+// credentials of a REAL account.
 const EMAIL = externalBase ? (process.env.E2E_EMAIL ?? "gate-a@test.local") : "gate-a@test.local";
-// Spawn mode writes this account into the production database for the run,
-// where the live server accepts it too: a password from this public repo
-// would open it to anyone meanwhile (or after a run that died before cleanup).
+// A random password per run: spawn mode once wrote this account into the
+// production database, where a password from this public repo would have
+// opened it to anyone; a test database deserves the same habit.
 const PASSWORD = externalBase ? (process.env.E2E_PASSWORD ?? "gate-a-secret") : randomBytes(18).toString("base64url");
 const REDIRECT_URI = "http://localhost:19999/callback";
 /** Short refresh-reuse grace for the spawned server, so expiry is testable. */
@@ -34,6 +36,26 @@ const E2E_REFRESH_GRACE_MS = 1500;
  * trips to the remote database and must land inside it.
  */
 const E2E_SIGN_IN_REPEAT_WAIT_MS = 4000;
+
+/**
+ * The separate test database for spawn mode, schema synced. The hosted
+ * database accepts connections only from the app server, and a test run must
+ * never write accounts into real data.
+ */
+function testDatabaseUrl(): string {
+  const url = process.env.E2E_DATABASE_URL ?? "";
+  if (!url) throw new Error("E2E_DATABASE_URL is required: a separate local test database (never production).");
+  if (url === process.env.DATABASE_URL) throw new Error("E2E_DATABASE_URL equals DATABASE_URL: the e2e never runs on the main database.");
+  if (/supabase\.(com|co)/.test(url)) throw new Error("E2E_DATABASE_URL points at Supabase: use a local test database.");
+  // Non-destructive schema sync: fails instead of dropping anything.
+  const push = Bun.spawnSync(["./node_modules/.bin/prisma", "db", "push"], {
+    env: { ...process.env, DATABASE_URL: url },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  if (push.exitCode !== 0) throw new Error(`prisma db push on the test database failed: ${push.stderr.toString().slice(0, 400)}`);
+  return url;
+}
 
 let passed = 0;
 function ok(name: string, cond: boolean, detail?: string): void {
@@ -273,6 +295,9 @@ function startEbStub() {
 
 async function main(): Promise<void> {
   if (!externalBase) {
+    // Before any src import: config.ts snapshots process.env at module load,
+    // and the spawned server inherits it.
+    process.env.DATABASE_URL = testDatabaseUrl();
     const { generateKeyPairSync } = await import("node:crypto");
     const ebKey = generateKeyPairSync("rsa", { modulusLength: 2048 })
       .privateKey.export({ type: "pkcs8", format: "pem" })
@@ -290,8 +315,8 @@ async function main(): Promise<void> {
     const { db } = await import("../src/db");
     await db.user.deleteMany({ where: { email: EMAIL } });
     // The cross-currency pairing fixture needs the real EUR->USD rate of its
-    // date: fx_rates is the shared production cache, so a fixture rate must
-    // never be written into it. The stub's USD credit is that rate + 1%,
+    // date: fx_rates is the cache every conversion reads, so a fixture rate
+    // must never be written into it. The stub's USD credit is that rate + 1%,
     // inside the 2% pairing tolerance banks' FX spreads need.
     const { convert } = await import("../src/fx");
     const fxEurUsd = await convert(100, "EUR", "USD", new Date("2026-07-14T00:00:00.000Z"));
@@ -1832,8 +1857,9 @@ async function main(): Promise<void> {
 
     // 12eb4. Daily auto-sync: the server-side scheduler syncs stale connections
     const { db: adb } = await import("../src/db");
-    // The test user's connection only: this is the production database, and
-    // backdating real users' connections made prod re-pull their banks.
+    // The test user's connection only: when the e2e still ran on the
+    // production database, backdating every connection made prod re-pull
+    // real users' banks.
     await adb.bankConnection.updateMany({
       where: { userId: testUser.id, provider: "enablebanking" },
       data: { lastSyncAt: new Date(Date.now() - 30 * 3600 * 1000) },
@@ -2213,9 +2239,9 @@ try {
       console.error("WARN: e2e user cleanup failed:", e instanceof Error ? e.message : String(e));
     }
   }
-  // Spawn mode writes to the real database: never leave the run's OAuth
-  // clients behind (a confidential one holds a secret that never expires),
-  // whether the run passed or failed. External mode has no DB access.
+  // Never leave the run's OAuth clients behind (a confidential one holds a
+  // secret that never expires), whether the run passed or failed. External
+  // mode has no DB access.
   if (!externalBase && createdClients.length) {
     try {
       const { db } = await import("../src/db");

@@ -15,6 +15,34 @@ MSG="${1:?Usage: ./deploy.sh \"what changed\"}"
 export PATH="$HOME/homebrew/bin:$PATH"
 remote() { ssh -i "$SSH_KEY" "$SERVER" "$@"; }
 
+# The hosted database accepts connections only from the app server (Supabase
+# network restrictions), so DB steps from this Mac go through an SSH tunnel via
+# that server. TLS still runs end to end: the tunnel only forwards TCP.
+TUNNEL_PID=""
+open_db_tunnel() { # $1 = connection string; sets TUNNEL_URL
+  local hostport host port lport
+  hostport=$(sed -E 's#^[a-z]+://[^@]*@([^/?]+).*#\1#' <<<"$1")
+  host=${hostport%:*}; port=${hostport##*:}
+  [ "$port" != "$hostport" ] || port=5432
+  lport=$(python3 -I -c 'import socket; s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1])')
+  ssh -i "$SSH_KEY" -o ExitOnForwardFailure=yes -N -L "127.0.0.1:$lport:$host:$port" "$SERVER" &
+  TUNNEL_PID=$!
+  trap close_db_tunnel EXIT
+  for _ in $(seq 1 50); do
+    (exec 3<>"/dev/tcp/127.0.0.1/$lport") 2>/dev/null && break
+    kill -0 "$TUNNEL_PID" 2>/dev/null || { echo "FATAL: SSH tunnel to the database did not open" >&2; exit 1; }
+    sleep 0.2
+  done
+  (exec 3<>"/dev/tcp/127.0.0.1/$lport") 2>/dev/null || { echo "FATAL: SSH tunnel to the database did not open" >&2; exit 1; }
+  TUNNEL_URL=$(sed -E "s#@[^/?]+#@127.0.0.1:$lport#" <<<"$1")
+}
+close_db_tunnel() {
+  [ -n "$TUNNEL_PID" ] || return 0
+  kill "$TUNNEL_PID" 2>/dev/null || true
+  wait "$TUNNEL_PID" 2>/dev/null || true
+  TUNNEL_PID=""
+}
+
 echo "==> Preflight: main branch, nothing untracked"
 # What runs in prod must be what main holds: a deploy from another branch used
 # to push an unchanged main and rsync the branch's tree.
@@ -28,17 +56,29 @@ bun run build
 # Facts copied across the static pages (tool count, code length, FAQ
 # structured data) must match the code: a release used to leave some stale.
 bun run check:site
+# The e2e runs on a separate local Postgres (E2E_DATABASE_URL), never the
+# hosted one; a reboot stops that cluster, so start it when it is down.
+E2E_DATABASE_URL=$(grep -E '^E2E_DATABASE_URL=' .env | cut -d= -f2- | tr -d '"')
+[ -n "$E2E_DATABASE_URL" ] || { echo "FATAL: E2E_DATABASE_URL missing in .env (a local test database)" >&2; exit 1; }
+PG_E2E="$HOME/.local/share/pg-e2e"
+if ! pg_isready -q -d "$E2E_DATABASE_URL" && [ -d "$PG_E2E" ]; then
+  LC_ALL=C pg_ctl -D "$PG_E2E" -l "$PG_E2E/log.txt" -w start >/dev/null
+fi
 # Never `cmd && echo ok` for a gate: set -e ignores a failure on the left of
 # &&, so a red e2e used to fall through to commit, push and deploy.
-bun run e2e >/dev/null || { echo "FATAL: e2e failed, nothing deployed" >&2; exit 1; }
+E2E_DATABASE_URL="$E2E_DATABASE_URL" bun run e2e >/dev/null || { echo "FATAL: e2e failed, nothing deployed" >&2; exit 1; }
 echo "    e2e green"
 
-echo "==> DB gate: Row-Level Security on every public table"
+echo "==> DB: schema (non-destructive) + Row-Level Security on every public table"
+DATABASE_URL=$(grep -E '^DATABASE_URL=' .env | cut -d= -f2- | tr -d '"')
+open_db_tunnel "$DATABASE_URL"
+# db push without --accept-data-loss refuses a change that would drop data.
+DATABASE_URL="$TUNNEL_URL" ./node_modules/.bin/prisma db push
 # prisma db push creates new tables with RLS OFF; without RLS the Supabase Data
 # API exposes them to anyone with the anon key. rls.sql is idempotent.
-DATABASE_URL=$(grep -E '^DATABASE_URL=' .env | cut -d= -f2- | tr -d '"')
-psql "$DATABASE_URL" -q -f prisma/rls.sql
-UNPROTECTED=$(psql "$DATABASE_URL" -tA -c "SELECT count(*) FROM pg_tables WHERE schemaname='public' AND NOT rowsecurity;")
+psql "$TUNNEL_URL" -q -v ON_ERROR_STOP=1 -f prisma/rls.sql
+UNPROTECTED=$(psql "$TUNNEL_URL" -tA -c "SELECT count(*) FROM pg_tables WHERE schemaname='public' AND NOT rowsecurity;")
+close_db_tunnel
 [ "$UNPROTECTED" = "0" ] || { echo "FATAL: $UNPROTECTED public table(s) without RLS"; exit 1; }
 echo "    RLS green (all public tables)"
 

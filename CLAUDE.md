@@ -35,7 +35,7 @@ push `main`, rsync, `docker compose build && up -d`, nginx sync, health check
 bun install
 cp .env.example .env   # fill in your values
 bun run dev            # server on :8788
-bun run e2e            # self-contained E2E proof
+bun run e2e            # self-contained E2E proof on a LOCAL test DB (E2E_DATABASE_URL)
 bun run e2e https://myfinance-mcp.com      # same suite vs prod (E2E_EMAIL/E2E_PASSWORD)
 bun run lint
 ```
@@ -44,10 +44,12 @@ Password hash: `bun -e "console.log(await Bun.password.hash(process.argv[1]))" '
 
 ## Database
 
-Schema changes go through `prisma db push`. After any push that adds a table,
-re-run `psql "$DATABASE_URL" -f prisma/rls.sql` - Prisma creates tables with
-RLS off, and a public-schema table without RLS is exposed through the Supabase
-Data API to anyone with the anon key (see the header of that file).
+Schema changes ship with `./deploy.sh`: it runs `prisma db push`
+(non-destructive) and `prisma/rls.sql` on the hosted database through an SSH
+tunnel via the app server, the only address that database accepts. Prisma
+creates tables with RLS off, and a public-schema table without RLS is exposed
+through the Supabase Data API to anyone with the anon key (see the header of
+that file).
 
 ## Design rules (simplicity contract)
 

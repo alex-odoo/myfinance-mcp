@@ -118,6 +118,9 @@ model Transaction {
   @@unique([accountId, externalId])
   @@index([userId, occurredAt])
   @@index([userId, categoryKey])
+  // Covers the categories foreign key (Supabase advisor unindexed_foreign_keys):
+  // the composite above leads with userId, so it cannot serve that lookup.
+  @@index([categoryKey])
   // Per-row lookups of imports and syncs (dedup by reference, incoming
   // transfer legs) and balances' incoming-transfer query: without these each
   // one scanned the user's whole history, or every user's.
