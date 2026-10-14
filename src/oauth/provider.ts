@@ -23,7 +23,7 @@ import {
   UnsupportedResponseTypeError,
 } from "@modelcontextprotocol/sdk/server/auth/errors.js";
 import { OAuthStore, secretKey, type IssuedTokens } from "./store";
-import { isCimdClientId, keepCimdClient, refreshAllowed } from "./cimd";
+import { isCimdClientId, keepCimdClient } from "./cimd";
 import { MAX_CLIENT_NAME, MAX_FIELD_LENGTH, MAX_LIST_ENTRIES } from "./limits";
 import { codePage, destinationLabel, loginPage, type LoginClient, type Notice } from "./login";
 import { GOOGLE_CALLBACK_PATH, googleConsentUrl, googleIdentityFromCode } from "./google";
@@ -758,16 +758,8 @@ export class FinanceOAuthProvider implements OAuthServerProvider {
       { id: randomUUID(), issuedAt: Date.now() }
     );
     await this.store.redeemCode(authorizationCode, client.client_id, tokens);
-    // A published client keeps a copy of its document from here on, for when
-    // the live one cannot be used. Not awaited: the tokens do not wait on it.
-    if (isCimdClientId(client.client_id)) {
-      void keepCimdClient(client.client_id).catch((e: unknown) => {
-        console.error("[oauth] keeping the client metadata copy failed:", e instanceof Error ? e.message : String(e));
-      });
-    }
-    // A published document that leaves refresh_token out of its grants gets
-    // none. The row is still written with the pair; nobody holds its value.
-    return tokenResponse(tokens, refreshAllowed(client));
+    keepPublishedClient(client);
+    return tokenResponse(tokens);
   }
 
   async exchangeRefreshToken(
@@ -815,6 +807,7 @@ export class FinanceOAuthProvider implements OAuthServerProvider {
       grant
     );
     await this.store.rotateRefreshToken(refreshToken, client.client_id, tokens, config.refreshReuseGraceMs);
+    keepPublishedClient(client);
     void this.store.pruneExpired().catch((e: unknown) => {
       console.error("[oauth] prune failed:", e instanceof Error ? e.message : String(e));
     });
@@ -1100,12 +1093,44 @@ function bindResource(stored: string | undefined, requested: URL | undefined): s
   return stored ?? requested.href;
 }
 
-function tokenResponse(t: IssuedTokens, withRefresh = true): OAuthTokens {
+/**
+ * A published client (CIMD) keeps a copy of its document, for when the live
+ * one cannot be used. Written at the code exchange and again at every
+ * refresh, so a copy missed once (a database blip) is repaired the next day.
+ * Not awaited: the tokens do not wait on it.
+ */
+function keepPublishedClient(client: OAuthClientInformationFull): void {
+  if (!isCimdClientId(client.client_id)) return;
+  void keepCimdClient(client.client_id).catch((e: unknown) => {
+    console.error("[oauth] keeping the client metadata copy failed:", e instanceof Error ? e.message : String(e));
+  });
+}
+
+/**
+ * Every grant gets a refresh token, a published client's too, whatever its
+ * document lists in grant_types: the MCP spec's own example document lists
+ * only authorization_code, and its users would be signed out every 24 hours.
+ * DCR clients have always been treated the same way. A client that does not
+ * refresh ignores the token; it is bound to that client and rotates.
+ */
+function tokenResponse(t: IssuedTokens): OAuthTokens {
   return {
     access_token: t.accessToken,
     token_type: "Bearer",
     expires_in: Math.max(0, Math.floor((t.access.expiresAt - Date.now()) / 1000)),
-    ...(withRefresh ? { refresh_token: t.refreshToken } : {}),
+    refresh_token: t.refreshToken,
     scope: t.access.scopes.join(" ") || undefined,
   };
+}
+
+/** A redirect to the client with `iss` added (RFC 9207); one to this server stays as it is. */
+export function withIssuer(location: string): string {
+  try {
+    const url = new URL(location, config.baseUrl);
+    if (url.origin === new URL(config.baseUrl).origin || url.searchParams.has("iss")) return location;
+    url.searchParams.set("iss", ISSUER);
+    return url.href;
+  } catch {
+    return location;
+  }
 }

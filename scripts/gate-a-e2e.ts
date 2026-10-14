@@ -863,9 +863,8 @@ async function main(): Promise<void> {
       chatgptStyle.res.status === 200 && chatgptStyle.html.includes("E2E ChatGPT-style"),
       `${chatgptStyle.res.status} ${chatgptStyle.html.match(/could not verify[^<]*/)?.[0] ?? ""}`
     );
-    // A full sign-in with a document that lists its grants without refresh_token,
-    // asking only for offline_access: the grant then must still refresh nothing
-    // wider, and the token response carries no refresh token.
+    // A full sign-in with a document that lists its grants without
+    // refresh_token, and one asking only for offline_access.
     const signInAs = async (clientId: string, scope?: string) => {
       const a = await authorizeAs(clientId, scope);
       const rid = a.html.match(/name="request_id" value="([^"]+)"/)?.[1] ?? "";
@@ -877,10 +876,11 @@ async function main(): Promise<void> {
     const noRefresh = await signInAs(docUrl("norefresh.json"));
     createdClients.push(docUrl("norefresh.json"));
     ok(
-      "a document whose grants leave out refresh_token gets an access token and no refresh token",
-      noRefresh.status === 200 && !!noRefresh.tok.access_token && noRefresh.tok.refresh_token === undefined,
+      "a document whose grants leave out refresh_token still gets a refresh token, as DCR clients do",
+      noRefresh.status === 200 && !!noRefresh.tok.access_token && !!noRefresh.tok.refresh_token,
       JSON.stringify({ status: noRefresh.status, refresh: !!noRefresh.tok.refresh_token })
     );
+    await form(asMeta.revocation_endpoint, { token: noRefresh.tok.refresh_token ?? "", client_id: docUrl("norefresh.json") });
     const offlineOnly = await signInAs(published, "offline_access");
     const offlineRefresh = await tokenPost({ grant_type: "refresh_token", refresh_token: offlineOnly.tok.refresh_token, client_id: published, scope: "finance" });
     const offlineRefreshJson: any = await offlineRefresh.json();
@@ -959,6 +959,20 @@ async function main(): Promise<void> {
     ok("host down: the copy kept at sign-in stands in", stale === "E2E Flaky Client" && cimdFlakyHits === hits + 1, String(stale));
     const again = await cimd.cimdClient(flaky).then((c) => c.client_name, errorCode);
     ok("a copy that stood in is served for a minute without asking the host again", again === "E2E Flaky Client" && cimdFlakyHits === hits + 1);
+    // The copy in memory stands in by itself (no row to fall back on)
+    await cdb.oauthClient.deleteMany({ where: { clientId: flaky } });
+    cimd.expireCimdCache();
+    const fromMemory = await cimd.cimdClient(flaky).then((c) => c.client_name, errorCode);
+    ok("host down: the last copy read stands in from memory", fromMemory === "E2E Flaky Client" && cimdFlakyHits === hits + 2, String(fromMemory));
+    // A kept copy older than 7 days does not
+    await cimd.keepCimdClient(flaky);
+    const flakyRow = await cdb.oauthClient.findUniqueOrThrow({ where: { clientId: flaky } });
+    const keptJson = flakyRow.data as Record<string, unknown>;
+    await cdb.oauthClient.update({ where: { clientId: flaky }, data: { data: { ...keptJson, cimd_fetched_at: Date.now() - 8 * 86_400_000 } } });
+    cimd.forgetCimdCache();
+    const tooOld = await cimd.cimdClient(flaky).then(() => "accepted", errorCode);
+    ok("a kept copy over 7 days old does not stand in", tooOld === "server_error", tooOld);
+    await cdb.oauthClient.update({ where: { clientId: flaky }, data: { data: { ...keptJson, cimd_fetched_at: Date.now() } } });
     cimd.forgetCimdCache();
     cimdMode = "gone";
     const withdrawn = await cimd.cimdClient(flaky).then((c) => c.client_name, errorCode);
@@ -972,6 +986,28 @@ async function main(): Promise<void> {
     const noCopy = await cimd.cimdClient(flaky).then(() => "accepted", errorCode);
     ok("host down and no copy: a server error (retry), not a refusal", noCopy === "server_error", noCopy);
     cimdMode = "ok";
+    // The built-in copies stand in when claude.ai or chatgpt.com cannot be read
+    cimd.blockCimdFetches(true);
+    cimd.forgetCimdCache();
+    const claudeBuiltIn = await cimd.cimdClient("https://claude.ai/oauth/mcp-oauth-client-metadata").then((c) => c.client_name, errorCode);
+    const chatgptBuiltIn = await cimd.cimdClient("https://chatgpt.com/oauth/client.json").then((c) => c.client_name, errorCode);
+    cimd.blockCimdFetches(false);
+    cimd.forgetCimdCache();
+    ok(
+      "claude.ai and chatgpt.com unreachable: their built-in documents stand in",
+      claudeBuiltIn === "Claude" && chatgptBuiltIn === "ChatGPT",
+      `${claudeBuiltIn} / ${chatgptBuiltIn}`
+    );
+    // RFC 9207 on the SDK's error redirects (reached only past the /authorize pre-check)
+    const { withIssuer } = await import("../src/oauth/provider");
+    const issOf = (location: string) => new URL(withIssuer(location)).searchParams.get("iss");
+    ok(
+      "iss added to error redirects to any client, never to this server's own pages",
+      issOf("https://claude.ai/api/mcp/auth_callback?error=invalid_request&state=s") === asMeta.issuer &&
+        issOf("cursor://anysphere.cursor-retrieval/oauth/callback?error=invalid_request") === asMeta.issuer &&
+        withIssuer(`${BASE}/login`) === `${BASE}/login` &&
+        issOf("https://elsewhere.example/cb?iss=x") === "x"
+    );
   }
 
   // 3. Authorize -> login form
@@ -2842,8 +2878,8 @@ async function main(): Promise<void> {
   const onlyOfflineRes = await tokenPost({ ...refreshGrant, scope: "offline_access" });
   const onlyOffline = (await onlyOfflineRes.json()) as { scope?: string };
   ok(
-    "refresh naming only offline_access keeps the grant's scopes",
-    onlyOfflineRes.status === 200 && onlyOffline.scope !== "offline_access",
+    "refresh naming only offline_access keeps the grant's scopes (this grant was made without any)",
+    onlyOfflineRes.status === 200 && onlyOffline.scope === undefined,
     JSON.stringify({ status: onlyOfflineRes.status, scope: onlyOffline.scope })
   );
   // (After the grace window a reuse revokes the whole grant: section 2b.)

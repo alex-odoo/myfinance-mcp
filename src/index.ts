@@ -7,7 +7,7 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import { config, assertConfig } from "./config";
 import { db, logEvent } from "./db";
 import { OAuthStore } from "./oauth/store";
-import { FinanceOAuthProvider, ISSUER, OFFLINE_ACCESS, SUPPORTED_SCOPES, authorizeRequestProblem } from "./oauth/provider";
+import { FinanceOAuthProvider, ISSUER, OFFLINE_ACCESS, SUPPORTED_SCOPES, authorizeRequestProblem, withIssuer } from "./oauth/provider";
 import { cimdHost, isCimdClientId } from "./oauth/cimd";
 import { escapeHtml, loginPage, maskEmail } from "./oauth/login";
 import { bootstrapUser, markSettledCurrencies } from "./users";
@@ -113,18 +113,6 @@ const legacyHosts = new Set(
   })
 );
 
-/** A redirect to the client with `iss` added (RFC 9207); one to this server stays as it is. */
-function withIssuer(location: string): string {
-  try {
-    const url = new URL(location, config.baseUrl);
-    if (url.origin === new URL(config.baseUrl).origin || url.searchParams.has("iss")) return location;
-    url.searchParams.set("iss", ISSUER);
-    return url.href;
-  } catch {
-    return location;
-  }
-}
-
 // /authorize pre-check, ahead of the SDK. The SDK reports a malformed request
 // by redirecting to the client's redirect_uri, and registration is anonymous,
 // so a crafted link made this domain an open redirect (RFC 9700 4.11.2).
@@ -154,6 +142,16 @@ app.use(
       // host and the reason; retrying helps when the host was only down.
       if (isCimdClientId(clientParam) && (error.error === "invalid_client" || error.error === "server_error")) {
         const why = typeof error.error_description === "string" ? error.error_description.slice(0, 200) : "";
+        // On our side too: a document every user of a client is refused for
+        // must not be a silent page (the 2026-09 outage was one).
+        logEvent("oauth_error", undefined, {
+          endpoint: "/authorize",
+          status: res.statusCode,
+          error: error.error,
+          desc: why.slice(0, 160),
+          client_id: clientParam.slice(0, 64),
+        });
+        console.error(`[oauth] /authorize ${res.statusCode} ${String(error.error)}: ${why} (client ${clientParam.slice(0, 64)})`);
         return res
           .set("Cache-Control", "no-store")
           .type("html")

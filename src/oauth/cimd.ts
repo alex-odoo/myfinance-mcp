@@ -2,6 +2,7 @@ import { lookup } from "node:dns/promises";
 import { isIP } from "node:net";
 import type { OAuthClientInformationFull } from "@modelcontextprotocol/sdk/shared/auth.js";
 import { InvalidClientError, ServerError } from "@modelcontextprotocol/sdk/server/auth/errors.js";
+import { setTimeout as sleep } from "node:timers/promises";
 import { config } from "../config";
 import { db } from "../db";
 import { LOOPBACK_HOSTS, pruneMap } from "../httpUtil";
@@ -32,9 +33,10 @@ import { MAX_CLIENT_NAME, MAX_FIELD_LENGTH, MAX_LIST_ENTRIES } from "./limits";
  * challenge page in front of claude.ai for a minute must not end every
  * Claude connector's refresh with invalid_client (the 2026-09-24 outage
  * looked exactly like that). The cost is that a publisher cannot revoke its
- * client here by withdrawing the document while a copy is under 7 days old;
- * a public client holds no secret worth revoking, and its redirect URIs in
- * the copy are its own.
+ * client here by withdrawing the document while a copy is under 7 days old
+ * (a built-in copy has no age: it ships with the release); a public client
+ * holds no secret worth revoking, and its redirect URIs in the copy are its
+ * own.
  */
 
 const MIN_TTL_MS = 5 * 60 * 1000;
@@ -44,6 +46,8 @@ const MAX_TTL_MS = 24 * 60 * 60 * 1000;
 const STALE_MAX_MS = 7 * 24 * 60 * 60 * 1000;
 /** After a copy stood in, the live document is tried again this much later. */
 const RETRY_AFTER_STAND_IN_MS = 60 * 1000;
+/** With a copy in hand, a request waits this long for the live document, then takes the copy. */
+const SLOW_HOST_MS = 1500;
 /** With no copy, a bad document is remembered this long, an unreachable host briefly. */
 const BAD_TTL_MS = 60 * 1000;
 const UNREACHABLE_TTL_MS = 10 * 1000;
@@ -54,10 +58,12 @@ const MAX_URL_LENGTH = 512;
 const MAX_CACHED = 1000;
 // /authorize and /token are anonymous: without a budget, a stream of made-up
 // client_ids would have this server fetch whatever it is handed. Per host
-// first, so one host cannot spend everyone's; a client with a copy keeps
-// working while the budget is spent.
-const FETCHES_PER_MINUTE = 60;
-const FETCHES_PER_HOST_PER_MINUTE = 10;
+// first, so one host cannot spend everyone's. Someone who spends a host's
+// budget on purpose delays the FIRST sign-in of a client published there by
+// a minute at a time; a client with a copy (and Claude, ChatGPT and Codex,
+// built in) keeps working.
+const FETCHES_PER_MINUTE = 120;
+const FETCHES_PER_HOST_PER_MINUTE = 20;
 
 // Schemes a redirect may never use. Other custom schemes are a native app's
 // own (RFC 8252 7.1, cursor:// and the like).
@@ -137,6 +143,8 @@ class FetchFailure extends Error {
 const cache = new Map<string, CacheEntry>();
 const inFlight = new Map<string, Promise<OAuthClientInformationFull>>();
 let budget = { minute: 0, used: 0, perHost: new Map<string, number>() };
+/** Test hook: every fetch fails as if the host were down (e2e reaches the built-in copies). */
+let fetchesBlocked = false;
 
 /** A client_id this module answers for: an https URL (http on loopback in a local test setup). */
 export function isCimdClientId(clientId: string): boolean {
@@ -316,20 +324,12 @@ export function clientFromDocument(clientId: string, doc: unknown): OAuthClientI
     client_name: name || cimdHost(clientId),
     ...(clientUri ? { client_uri: clientUri } : {}),
     redirect_uris: redirects as string[],
-    // A document that lists its grants and leaves out refresh_token gets no
-    // refresh token. One that lists none gets one: the MCP spec's minimal
-    // document has no grant_types, and without refresh its connector would
-    // sign out every 24 hours.
-    grant_types:
-      Array.isArray(grants) && !grants.includes("refresh_token") ? ["authorization_code"] : ["authorization_code", "refresh_token"],
+    // Refresh tokens go to every grant, as for DCR clients (tokenResponse in
+    // provider.ts says why), so the document's own list is not kept.
+    grant_types: ["authorization_code", "refresh_token"],
     response_types: ["code"],
     token_endpoint_auth_method: "none",
   };
-}
-
-/** Whether a client may hold a refresh token. Only a published document can say no. */
-export function refreshAllowed(client: OAuthClientInformationFull): boolean {
-  return !isCimdClientId(client.client_id) || (client.grant_types ?? []).includes("refresh_token");
 }
 
 /** Cache-Control max-age within [5 minutes, 24 hours]; an hour when the host says nothing. */
@@ -382,6 +382,7 @@ function spendBudget(host: string): void {
 async function fetchDocument(clientId: string): Promise<{ client: OAuthClientInformationFull; ttlMs: number }> {
   const url = new URL(clientId);
   const host = url.host;
+  if (fetchesBlocked) throw new FetchFailure(false, `${host} is not fetched (test)`);
   spendBudget(url.hostname);
   if (!(config.cimdAllowLoopback && LOOPBACK_HOSTS.has(url.hostname))) await assertPublicHost(url.hostname);
   let res: Response;
@@ -424,21 +425,21 @@ function remember(clientId: string, entry: Omit<CacheEntry, "expiresAt">): void 
 }
 
 /**
- * What a kept copy holds: the checked client and when its document was read.
- * The client is stored as a document and re-checked on the way out, so a
- * row is never trusted past the rules.
+ * What a kept copy holds: the checked client (the same shape as a DCR row's
+ * data) and when its document was read. It is re-checked like a document on
+ * the way out, so a row is never trusted past the rules.
  */
 function keptData(client: OAuthClientInformationFull, fetchedAt: number): object {
-  return { cimd_document: client, cimd_fetched_at: fetchedAt };
+  return { ...client, cimd_fetched_at: fetchedAt };
 }
 
-/** The copy kept when this client last signed someone in. */
+/** The copy kept when this client last signed someone in or refreshed. */
 async function keptCopy(clientId: string): Promise<{ client: OAuthClientInformationFull; fetchedAt: number } | undefined> {
   try {
     const row = await db.oauthClient.findUnique({ where: { clientId } });
-    const data = row?.data as { cimd_document?: unknown; cimd_fetched_at?: unknown } | undefined;
-    if (!data || typeof data.cimd_fetched_at !== "number") return undefined;
-    return { client: clientFromDocument(clientId, data.cimd_document), fetchedAt: data.cimd_fetched_at };
+    const { cimd_fetched_at: fetchedAt, ...doc } = (row?.data ?? {}) as Record<string, unknown>;
+    if (typeof fetchedAt !== "number") return undefined;
+    return { client: clientFromDocument(clientId, doc), fetchedAt };
   } catch {
     return undefined;
   }
@@ -508,8 +509,12 @@ export async function cimdClient(clientId: string): Promise<OAuthClientInformati
   const now = Date.now();
   if (entry?.client && entry.freshUntil > now) return entry.client;
   if (entry?.failure && entry.failure.until > now) throw asOAuthError(entry.failure);
+  const live = resolve(clientId);
+  // A copy in hand (read within 7 days, or built in): a slow host costs this
+  // request a moment, not its timeout; the fetch goes on and lands in the cache.
+  const copy = entry?.client && (!entry.fetchedAt || now - entry.fetchedAt < STALE_MAX_MS) ? entry.client : undefined;
   try {
-    return await resolve(clientId);
+    return copy ? await Promise.race([live, sleep(SLOW_HOST_MS).then(() => copy)]) : await live;
   } catch (e) {
     throw e instanceof FetchFailure ? asOAuthError(e) : e;
   }
@@ -526,9 +531,15 @@ export async function keepCimdClient(clientId: string): Promise<void> {
   await db.oauthClient.upsert({ where: { clientId }, update: { data }, create: { clientId, data } });
 }
 
-/** Test hook: forget every cached document and the spent budget (e2e runs the stand-in paths). */
+/** Test hooks (e2e runs the stand-in paths): forget everything, or only freshness; or fail every fetch. */
 export function forgetCimdCache(): void {
   cache.clear();
   inFlight.clear();
   budget = { minute: 0, used: 0, perHost: new Map() };
+}
+export function expireCimdCache(): void {
+  for (const entry of cache.values()) entry.freshUntil = 0;
+}
+export function blockCimdFetches(blocked: boolean): void {
+  fetchesBlocked = blocked;
 }
