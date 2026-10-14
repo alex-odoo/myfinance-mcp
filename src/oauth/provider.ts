@@ -23,7 +23,8 @@ import {
   UnsupportedResponseTypeError,
 } from "@modelcontextprotocol/sdk/server/auth/errors.js";
 import { OAuthStore, secretKey, type IssuedTokens } from "./store";
-import { isCimdClientId, keepCimdClient } from "./cimd";
+import { isCimdClientId, keepCimdClient, refreshAllowed } from "./cimd";
+import { MAX_CLIENT_NAME, MAX_FIELD_LENGTH, MAX_LIST_ENTRIES } from "./limits";
 import { codePage, destinationLabel, loginPage, type LoginClient, type Notice } from "./login";
 import { GOOGLE_CALLBACK_PATH, googleConsentUrl, googleIdentityFromCode } from "./google";
 import { pruneMap, readCookie, sha256 } from "../httpUtil";
@@ -82,6 +83,15 @@ export const SUPPORTED_SCOPES = ["finance"];
  */
 export const OFFLINE_ACCESS = "offline_access";
 const GRANTABLE_SCOPES = [...SUPPORTED_SCOPES, OFFLINE_ACCESS];
+const resourceScope = (scope: string) => scope !== OFFLINE_ACCESS;
+
+/**
+ * This server's issuer identifier, spelled exactly as the metadata's
+ * `issuer` (the SDK writes URL.href, with the trailing slash). Every
+ * authorization response carries it as `iss` (RFC 9207), and clients compare
+ * the two as plain strings.
+ */
+export const ISSUER = new URL(config.baseUrl).href;
 
 // /authorize is unauthenticated and parks each request in memory until
 // sign-in, so what one request may hold is capped.
@@ -90,11 +100,6 @@ const MAX_STATE_LENGTH = 1024;
 const MAX_SCOPE_LENGTH = 256;
 // S256 challenge = base64url(sha256(verifier)) without padding: 43 chars.
 const S256_CHALLENGE = /^[A-Za-z0-9_-]{43}$/;
-
-// DCR is anonymous and its rows are permanent, so a registration's size is capped.
-const MAX_CLIENT_NAME = 100;
-const MAX_LIST_ENTRIES = 10;
-const MAX_FIELD_LENGTH = 2048;
 
 // Browser binding. /authorize gives the browser one random id (shared by
 // parallel sign-ins) and the pending request keeps its hash; the login POST
@@ -705,6 +710,7 @@ export class FinanceOAuthProvider implements OAuthServerProvider {
     const redirect = new URL(pendingReq.params.redirectUri);
     redirect.searchParams.set("code", code);
     if (pendingReq.params.state) redirect.searchParams.set("state", pendingReq.params.state);
+    redirect.searchParams.set("iss", ISSUER);
     this.pending.delete(requestId);
     pruneMap(this.finished, PENDING_MAX);
     this.finished.set(requestId, {
@@ -752,14 +758,16 @@ export class FinanceOAuthProvider implements OAuthServerProvider {
       { id: randomUUID(), issuedAt: Date.now() }
     );
     await this.store.redeemCode(authorizationCode, client.client_id, tokens);
-    // A published client keeps a copy of its document from here on: its
-    // refreshes then outlast a short outage of the host that serves it.
+    // A published client keeps a copy of its document from here on, for when
+    // the live one cannot be used. Not awaited: the tokens do not wait on it.
     if (isCimdClientId(client.client_id)) {
-      await keepCimdClient(client.client_id).catch((e: unknown) => {
+      void keepCimdClient(client.client_id).catch((e: unknown) => {
         console.error("[oauth] keeping the client metadata copy failed:", e instanceof Error ? e.message : String(e));
       });
     }
-    return tokenResponse(tokens);
+    // A published document that leaves refresh_token out of its grants gets
+    // none. The row is still written with the pair; nobody holds its value.
+    return tokenResponse(tokens, refreshAllowed(client));
   }
 
   async exchangeRefreshToken(
@@ -785,19 +793,23 @@ export class FinanceOAuthProvider implements OAuthServerProvider {
     // A grant stored without scopes predates scope checks and meant all of
     // this server (prod holds such grants); refusing "finance" on it would
     // drop those connectors on their next refresh.
-    // offline_access widens nothing (every grant refreshes), so a grant from
-    // before it was listed may name it too.
-    const requested = knownScopes(scopes);
-    const granted = record.scopes.length ? record.scopes : SUPPORTED_SCOPES;
-    if (requested.some((s) => s !== OFFLINE_ACCESS && !granted.includes(s))) {
+    // offline_access is checked apart: it names no part of this server, and
+    // every grant refreshes. A grant without it may still name it here (a
+    // client asks for it once the metadata lists it) and is not refused for
+    // that, but the token does not claim it either.
+    const requested = knownScopes(scopes).filter(resourceScope);
+    const grantedResource = record.scopes.filter(resourceScope);
+    const granted = grantedResource.length ? grantedResource : SUPPORTED_SCOPES;
+    if (requested.some((s) => !granted.includes(s))) {
       throw new InvalidScopeError("Requested scope exceeds the original grant");
     }
     // A narrower request applies to the access token; the refresh token keeps
     // the original grant (RFC 6749 section 6).
+    const offline = record.scopes.includes(OFFLINE_ACCESS) ? [OFFLINE_ACCESS] : [];
     const tokens = this.newTokens(
       client.client_id,
       record.userId,
-      requested.length ? requested : record.scopes,
+      requested.length ? [...requested, ...offline] : record.scopes,
       record.scopes,
       bindResource(record.resource, resource),
       grant
@@ -1088,12 +1100,12 @@ function bindResource(stored: string | undefined, requested: URL | undefined): s
   return stored ?? requested.href;
 }
 
-function tokenResponse(t: IssuedTokens): OAuthTokens {
+function tokenResponse(t: IssuedTokens, withRefresh = true): OAuthTokens {
   return {
     access_token: t.accessToken,
     token_type: "Bearer",
     expires_in: Math.max(0, Math.floor((t.access.expiresAt - Date.now()) / 1000)),
-    refresh_token: t.refreshToken,
+    ...(withRefresh ? { refresh_token: t.refreshToken } : {}),
     scope: t.access.scopes.join(" ") || undefined,
   };
 }

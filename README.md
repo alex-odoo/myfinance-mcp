@@ -164,7 +164,7 @@ bun run e2e            # end-to-end suite (spawns its own server; WRITES to the 
 bun run lint
 ```
 
-The e2e suite (346 checks) covers the full OAuth flow (discovery, dynamic registration, client ID metadata documents, PKCE, refresh rotation, revocation; public and confidential clients), every tool, statement-import dedup semantics, ZenMoney sync against a stubbed Diff API, and GDPR deletion.
+The e2e suite (355 checks) covers the full OAuth flow (discovery, dynamic registration, client ID metadata documents, PKCE, refresh rotation, revocation; public and confidential clients), every tool, statement-import dedup semantics, ZenMoney sync against a stubbed Diff API, and GDPR deletion.
 
 ## API Endpoints
 

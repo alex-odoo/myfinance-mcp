@@ -1,5 +1,6 @@
+import { LOOPBACK_HOSTS as LOOPBACK } from "./httpUtil";
+
 const GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token";
-const LOOPBACK = new Set(["localhost", "127.0.0.1", "[::1]"]);
 
 /** A duration setting: anything but a non-negative number falls back to the default. */
 function milliseconds(value: string | undefined, fallback: number): number {

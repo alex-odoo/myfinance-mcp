@@ -145,6 +145,17 @@ function startCimdStub() {
           return Response.json(doc({ client_secret: "e2e-secret" }));
         case "/jwt.json":
           return Response.json(doc({ token_endpoint_auth_method: "private_key_jwt" }));
+        case "/noauth.json": {
+          const { token_endpoint_auth_method: _method, ...rest } = doc();
+          return Response.json(rest);
+        }
+        case "/chatgpt.json":
+          // ChatGPT's shape: a signed-assertion preference, "none" in the plural list
+          return Response.json(
+            doc({ client_name: "E2E ChatGPT-style", token_endpoint_auth_method: "private_key_jwt", token_endpoint_auth_methods_supported: ["none", "private_key_jwt"] })
+          );
+        case "/norefresh.json":
+          return Response.json(doc({ client_name: "E2E No Refresh", grant_types: ["authorization_code"] }));
         case "/moved.json":
           return new Response(null, { status: 302, headers: { location: "/client.json" } });
         case "/big.json":
@@ -515,6 +526,13 @@ async function main(): Promise<void> {
     JSON.stringify(asMeta.scopes_supported)
   );
   ok(
+    "issuer identification (RFC 9207) advertised, and both resource documents name the issuer exactly",
+    asMeta.authorization_response_iss_parameter_supported === true &&
+      prm.authorization_servers?.[0] === asMeta.issuer &&
+      prmRoot.authorization_servers?.[0] === asMeta.issuer,
+    JSON.stringify({ issuer: asMeta.issuer, prm: prm.authorization_servers, root: prmRoot.authorization_servers })
+  );
+  ok(
     "resource metadata keeps the resource's own scopes",
     JSON.stringify(prm.scopes_supported) === JSON.stringify(["finance"]),
     JSON.stringify(prm.scopes_supported)
@@ -779,7 +797,9 @@ async function main(): Promise<void> {
       String(pub.res.status)
     );
     const pubLogin = await loginPost(pubRid, PASSWORD, browserCookie(pub.res));
-    const pubCode = new URL(pubLogin.headers.get("location") ?? "http://invalid/").searchParams.get("code") ?? "";
+    const pubBack = new URL(pubLogin.headers.get("location") ?? "http://invalid/");
+    const pubCode = pubBack.searchParams.get("code") ?? "";
+    ok("authorization response carries iss = the metadata issuer (RFC 9207)", pubBack.searchParams.get("iss") === asMeta.issuer, pubBack.searchParams.get("iss") ?? "none");
     const pubTokRes = await tokenPost({
       grant_type: "authorization_code",
       code: pubCode,
@@ -821,6 +841,7 @@ async function main(): Promise<void> {
       ["wrong-id.json", "different client_id"],
       ["secret.json", "client secret"],
       ["jwt.json", "public clients only"],
+      ["noauth.json", "public clients only"],
       ["moved.json", "redirects"],
       ["big.json", "too large"],
       ["missing.json", "no client metadata"],
@@ -834,6 +855,41 @@ async function main(): Promise<void> {
       );
     }
     await form(asMeta.revocation_endpoint, { token: pubRefJson.refresh_token, client_id: published });
+
+    // ChatGPT's document: private_key_jwt preferred, "none" in the plural list -> a public client
+    const chatgptStyle = await authorizeAs(docUrl("chatgpt.json"));
+    ok(
+      "a ChatGPT-style document (plural methods include none) is accepted",
+      chatgptStyle.res.status === 200 && chatgptStyle.html.includes("E2E ChatGPT-style"),
+      `${chatgptStyle.res.status} ${chatgptStyle.html.match(/could not verify[^<]*/)?.[0] ?? ""}`
+    );
+    // A full sign-in with a document that lists its grants without refresh_token,
+    // asking only for offline_access: the grant then must still refresh nothing
+    // wider, and the token response carries no refresh token.
+    const signInAs = async (clientId: string, scope?: string) => {
+      const a = await authorizeAs(clientId, scope);
+      const rid = a.html.match(/name="request_id" value="([^"]+)"/)?.[1] ?? "";
+      const login = await loginPost(rid, PASSWORD, browserCookie(a.res));
+      const code = new URL(login.headers.get("location") ?? "http://invalid/").searchParams.get("code") ?? "";
+      const res = await tokenPost({ grant_type: "authorization_code", code, code_verifier: a.verifier, redirect_uri: REDIRECT_URI, client_id: clientId });
+      return { status: res.status, tok: (await res.json()) as any };
+    };
+    const noRefresh = await signInAs(docUrl("norefresh.json"));
+    createdClients.push(docUrl("norefresh.json"));
+    ok(
+      "a document whose grants leave out refresh_token gets an access token and no refresh token",
+      noRefresh.status === 200 && !!noRefresh.tok.access_token && noRefresh.tok.refresh_token === undefined,
+      JSON.stringify({ status: noRefresh.status, refresh: !!noRefresh.tok.refresh_token })
+    );
+    const offlineOnly = await signInAs(published, "offline_access");
+    const offlineRefresh = await tokenPost({ grant_type: "refresh_token", refresh_token: offlineOnly.tok.refresh_token, client_id: published, scope: "finance" });
+    const offlineRefreshJson: any = await offlineRefresh.json();
+    ok(
+      "a grant asked only for offline_access still refreshes with finance (empty resource grant = all of it)",
+      offlineRefresh.status === 200 && String(offlineRefreshJson.scope ?? "").split(" ").includes("finance"),
+      JSON.stringify({ status: offlineRefresh.status, scope: offlineRefreshJson.scope, error: offlineRefreshJson.error })
+    );
+    await form(asMeta.revocation_endpoint, { token: offlineRefreshJson.refresh_token ?? "", client_id: published });
 
     // In-process (the server's cache lives in the other process): URL and
     // address rules, the cache, the kept copy.
@@ -882,8 +938,11 @@ async function main(): Promise<void> {
     ok("CIMD fetch reaches public addresses only", addressMisses.length === 0, addressMisses.join(", "));
     const builtIn = Object.entries(cimd.CIMD_BUILT_IN).map(([id, doc]) => cimd.clientFromDocument(id, doc));
     ok(
-      "built-in copies of Claude's documents pass the document checks",
-      builtIn.length === 2 && builtIn[0]!.redirect_uris[0] === "https://claude.ai/api/mcp/auth_callback"
+      "built-in copies of the Claude, Claude Code, ChatGPT and Codex documents pass the document checks",
+      builtIn.length === 4 &&
+        builtIn.every((c) => c.token_endpoint_auth_method === "none" && c.grant_types?.includes("refresh_token")) &&
+        builtIn[0]!.redirect_uris[0] === "https://claude.ai/api/mcp/auth_callback" &&
+        builtIn[2]!.redirect_uris[0] === "https://chatgpt.com/connector_platform_oauth_redirect"
     );
 
     const errorCode = (e: unknown) => (e as { errorCode?: string }).errorCode ?? String(e);
@@ -898,11 +957,16 @@ async function main(): Promise<void> {
     cimd.forgetCimdCache();
     const stale = await cimd.cimdClient(flaky).then((c) => c.client_name, errorCode);
     ok("host down: the copy kept at sign-in stands in", stale === "E2E Flaky Client" && cimdFlakyHits === hits + 1, String(stale));
+    const again = await cimd.cimdClient(flaky).then((c) => c.client_name, errorCode);
+    ok("a copy that stood in is served for a minute without asking the host again", again === "E2E Flaky Client" && cimdFlakyHits === hits + 1);
     cimd.forgetCimdCache();
     cimdMode = "gone";
-    const withdrawn = await cimd.cimdClient(flaky).then(() => "accepted", errorCode);
-    ok("document withdrawn (404): refused even with a kept copy", withdrawn === "invalid_client", withdrawn);
+    const withdrawn = await cimd.cimdClient(flaky).then((c) => c.client_name, errorCode);
+    ok("document gone (404) with a kept copy: the copy stands in (a minute of 404 must not end every refresh)", withdrawn === "E2E Flaky Client", withdrawn);
     await cdb.oauthClient.deleteMany({ where: { clientId: flaky } });
+    cimd.forgetCimdCache();
+    const goneNoCopy = await cimd.cimdClient(flaky).then(() => "accepted", errorCode);
+    ok("document gone and no copy: invalid_client", goneNoCopy === "invalid_client", goneNoCopy);
     cimd.forgetCimdCache();
     cimdMode = "down";
     const noCopy = await cimd.cimdClient(flaky).then(() => "accepted", errorCode);
@@ -2766,9 +2830,22 @@ async function main(): Promise<void> {
     widenRes.status === 200 && !String(widened.scope ?? "").includes("admin"),
     JSON.stringify({ status: widenRes.status, scope: widened.scope })
   );
-  // offline_access widens nothing: a grant made without it may name it on refresh
+  // offline_access widens nothing: a grant made without it may name it on
+  // refresh, and naming only it keeps the grant's own scopes
   const offlineRes = await tokenPost({ ...refreshGrant, scope: "finance offline_access" });
-  ok("refresh naming offline_access on a grant made without it -> 200", offlineRes.status === 200, String(offlineRes.status));
+  const offlineJson = (await offlineRes.json()) as { scope?: string };
+  ok(
+    "refresh naming offline_access on a grant made without it -> 200, and the token does not claim it",
+    offlineRes.status === 200 && !String(offlineJson.scope ?? "").includes("offline_access"),
+    JSON.stringify({ status: offlineRes.status, scope: offlineJson.scope })
+  );
+  const onlyOfflineRes = await tokenPost({ ...refreshGrant, scope: "offline_access" });
+  const onlyOffline = (await onlyOfflineRes.json()) as { scope?: string };
+  ok(
+    "refresh naming only offline_access keeps the grant's scopes",
+    onlyOfflineRes.status === 200 && onlyOffline.scope !== "offline_access",
+    JSON.stringify({ status: onlyOfflineRes.status, scope: onlyOffline.scope })
+  );
   // (After the grace window a reuse revokes the whole grant: section 2b.)
   const refreshRes = await tokenPost(refreshGrant);
   const refreshed: any = await refreshRes.json();

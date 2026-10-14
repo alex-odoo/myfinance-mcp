@@ -3,6 +3,9 @@ import type { Request } from "express";
 
 /** Small helpers shared by the sign-in, bank-consent and admin routes. */
 
+/** Host names of this machine, as URL.hostname spells them. */
+export const LOOPBACK_HOSTS: ReadonlySet<string> = new Set(["localhost", "127.0.0.1", "[::1]"]);
+
 export function sha256(value: string): Buffer {
   return createHash("sha256").update(value).digest();
 }

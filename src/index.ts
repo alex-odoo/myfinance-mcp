@@ -7,7 +7,7 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import { config, assertConfig } from "./config";
 import { db, logEvent } from "./db";
 import { OAuthStore } from "./oauth/store";
-import { FinanceOAuthProvider, OFFLINE_ACCESS, SUPPORTED_SCOPES, authorizeRequestProblem } from "./oauth/provider";
+import { FinanceOAuthProvider, ISSUER, OFFLINE_ACCESS, SUPPORTED_SCOPES, authorizeRequestProblem } from "./oauth/provider";
 import { cimdHost, isCimdClientId } from "./oauth/cimd";
 import { escapeHtml, loginPage, maskEmail } from "./oauth/login";
 import { bootstrapUser, markSettledCurrencies } from "./users";
@@ -113,6 +113,18 @@ const legacyHosts = new Set(
   })
 );
 
+/** A redirect to the client with `iss` added (RFC 9207); one to this server stays as it is. */
+function withIssuer(location: string): string {
+  try {
+    const url = new URL(location, config.baseUrl);
+    if (url.origin === new URL(config.baseUrl).origin || url.searchParams.has("iss")) return location;
+    url.searchParams.set("iss", ISSUER);
+    return url.href;
+  } catch {
+    return location;
+  }
+}
+
 // /authorize pre-check, ahead of the SDK. The SDK reports a malformed request
 // by redirecting to the client's redirect_uri, and registration is anonymous,
 // so a crafted link made this domain an open redirect (RFC 9700 4.11.2).
@@ -168,11 +180,20 @@ app.use(
           )
         );
     };
+    // RFC 9207: the SDK's error redirects to the client carry `iss` too
+    // (the metadata promises it for every authorization response).
+    const redirect = res.redirect.bind(res) as (status: number, url: string) => void;
+    res.redirect = ((statusOrUrl: number | string, maybeUrl?: string) => {
+      const [status, url] = typeof statusOrUrl === "number" ? [statusOrUrl, maybeUrl ?? ""] : [302, statusOrUrl];
+      return redirect(status, withIssuer(url));
+    }) as typeof res.redirect;
     const problem = authorizeRequestProblem(params ?? {});
     if (!problem) return next();
     // A pruned client whose request is also malformed: retrying cannot help,
     // re-adding the connector does. Read only on this error path.
-    if (clientParam && !(await store.getClient(clientParam).catch(() => undefined))) {
+    // A published client (CIMD) is not looked up here: an anonymous
+    // malformed request must not cost a fetch of whatever URL it names.
+    if (clientParam && !isCimdClientId(clientParam) && !(await store.getClient(clientParam))) {
       return res.status(400).json({ error: "invalid_client" }); // rendered by the res.json hook above
     }
     // Leave the same trace as the oauth_error middleware below, so a client
@@ -234,44 +255,47 @@ app.use(["/token", "/revoke", "/register"], (req, res, next) => {
   next();
 });
 
-// Authorization server metadata: the SDK's, plus two facts it has no option
-// for. client_id_metadata_document_supported: claude.ai's "Use Claude's
-// published identity" (CIMD, src/oauth/cimd.ts) is chosen only when this is
-// true and "none" is an auth method (the SDK lists it). offline_access:
-// ChatGPT and Claude look for it before they count on refresh tokens.
-// Mounted ahead of the SDK router, which serves the same path.
+// One set of options for the SDK router and for the metadata served ahead of it.
+const authOptions = {
+  provider,
+  issuerUrl: new URL(config.baseUrl),
+  resourceServerUrl: new URL(`${config.baseUrl}/mcp`),
+  resourceName: "MyFinance MCP",
+  scopesSupported: SUPPORTED_SCOPES,
+  // The SDK default expires DCR client secrets after 30 days. claude.ai
+  // registers once per connector and never re-registers, so day 31 its
+  // refresh gets invalid_client and the connector dies (2026-09-24).
+  // 0 = never expires (RFC 7591); older rows: see OAuthStore.getClient.
+  // Rate limits: the SDK counts per IP, and claude.ai / ChatGPT register
+  // and refresh from a few backend egress IPs, so its defaults (20
+  // registrations an hour, 50 token calls per 15 min) are effectively a
+  // global cap that one busy hour of new connectors would hit. nginx still
+  // limits every IP to 5 requests a second on these paths.
+  clientRegistrationOptions: { clientSecretExpirySeconds: 0, rateLimit: { windowMs: 60 * 60 * 1000, max: 300 } },
+  tokenOptions: { rateLimit: { windowMs: 15 * 60 * 1000, max: 1000 } },
+  revocationOptions: { rateLimit: { windowMs: 15 * 60 * 1000, max: 1000 } },
+};
+// Authorization server metadata: the SDK's, plus what it has no option for.
+// client_id_metadata_document_supported: claude.ai's "Use Claude's published
+// identity", ChatGPT and Codex use CIMD (src/oauth/cimd.ts) when this is true
+// and "none" is an auth method (the SDK lists it).
+// authorization_response_iss_parameter_supported: every authorization
+// response carries `iss` (RFC 9207: finishLogin, and the /authorize hook
+// above for the SDK's error redirects); ChatGPT and Codex then use their
+// stable client documents. offline_access: ChatGPT and Claude look for it
+// before they count on refresh tokens. The resource's own scopes (protected
+// resource metadata) stay SUPPORTED_SCOPES. Mounted ahead of the SDK router,
+// which serves the same path.
 app.use(
   "/.well-known/oauth-authorization-server",
   metadataHandler({
-    ...createOAuthMetadata({
-      provider,
-      issuerUrl: new URL(config.baseUrl),
-      scopesSupported: [...SUPPORTED_SCOPES, OFFLINE_ACCESS],
-    }),
+    ...createOAuthMetadata(authOptions),
+    scopes_supported: [...SUPPORTED_SCOPES, OFFLINE_ACCESS],
     client_id_metadata_document_supported: true,
+    authorization_response_iss_parameter_supported: true,
   })
 );
-app.use(
-  mcpAuthRouter({
-    provider,
-    issuerUrl: new URL(config.baseUrl),
-    resourceServerUrl: new URL(`${config.baseUrl}/mcp`),
-    resourceName: "MyFinance MCP",
-    scopesSupported: SUPPORTED_SCOPES,
-    // The SDK default expires DCR client secrets after 30 days. claude.ai
-    // registers once per connector and never re-registers, so day 31 its
-    // refresh gets invalid_client and the connector dies (2026-09-24).
-    // 0 = never expires (RFC 7591); older rows: see OAuthStore.getClient.
-    // Rate limits: the SDK counts per IP, and claude.ai / ChatGPT register
-    // and refresh from a few backend egress IPs, so its defaults (20
-    // registrations an hour, 50 token calls per 15 min) are effectively a
-    // global cap that one busy hour of new connectors would hit. nginx still
-    // limits every IP to 5 requests a second on these paths.
-    clientRegistrationOptions: { clientSecretExpirySeconds: 0, rateLimit: { windowMs: 60 * 60 * 1000, max: 300 } },
-    tokenOptions: { rateLimit: { windowMs: 15 * 60 * 1000, max: 1000 } },
-    revocationOptions: { rateLimit: { windowMs: 15 * 60 * 1000, max: 1000 } },
-  })
-);
+app.use(mcpAuthRouter(authOptions));
 // The operator overview shares the Google callback: its handler goes first
 // and passes on every state it did not issue.
 app.get(GOOGLE_CALLBACK_PATH, adminGoogleCallback);
@@ -285,7 +309,7 @@ app.use(provider.loginRouter());
 app.get("/.well-known/oauth-protected-resource", (_req, res) => {
   res.json({
     resource: `${config.baseUrl}/mcp`,
-    authorization_servers: [config.baseUrl],
+    authorization_servers: [ISSUER], // the metadata's issuer, character for character
     scopes_supported: SUPPORTED_SCOPES,
     resource_name: "MyFinance MCP",
   });
