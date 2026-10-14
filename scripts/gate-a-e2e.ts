@@ -2885,6 +2885,8 @@ async function main(): Promise<void> {
         ...series("Old Magazine", [5], [200, 170, 140], "subscriptions"),
         ...series("Gym yearly", [300], [370, 5], "health"),
         { date: ago(20), amount: -10.99, merchant: "SPOTIFY P1234567", category: "other", currency: "EUR" },
+        ...series("DEEZER", [10.99], [72, 42, 12], "subscriptions"),
+        ...series("YouTube Premium", [11.99, 11.99, 11.99, 13.99, 13.99], [130, 100, 70, 40, 10], "subscriptions"),
         // Not recurring payments, whatever their rhythm or name:
         ...series("Bolt", [8.4, 8.9], [16, 9], "transport"),
         ...series("Cinesa", [9.5], [44, 14], "entertainment"),
@@ -2909,7 +2911,8 @@ async function main(): Promise<void> {
           byName("Iberdrola")?.amount_varies === true &&
           byName("Gym yearly")?.cadence === "yearly" &&
           apple.length === 2 &&
-          byName("SPOTIFY P1234567")?.evidence === "seen_once" && byName("SPOTIFY P1234567")?.next_date === undefined,
+          byName("SPOTIFY P1234567")?.evidence === "seen_once" && byName("SPOTIFY P1234567")?.next_date === undefined &&
+          byName("YouTube Premium")?.amount === 13.99 && byName("DEEZER")?.amount === 10.99,
         JSON.stringify(list.json.found.map((f: any) => [f.name, f.cadence, f.amount, f.evidence]))
       );
       ok(
@@ -2924,7 +2927,7 @@ async function main(): Promise<void> {
       );
       ok(
         "monthly total: rent + Netflix + Apple + bill + a twelfth of the gym; the once-seen Spotify waits for its cadence",
-        Math.abs(list.json.monthly_total - (800 + 12.99 + 2.99 + 9.99 + 60 + 25)) < 0.02 && Math.abs(list.json.yearly_total - list.json.monthly_total * 12) < 0.02,
+        Math.abs(list.json.monthly_total - (800 + 12.99 + 2.99 + 9.99 + 60 + 25 + 10.99 + 13.99)) < 0.02 && Math.abs(list.json.yearly_total - list.json.monthly_total * 12) < 0.02,
         String(list.json.monthly_total)
       );
       ok("upcoming lists what is due in 30 days", list.json.upcoming.some((u: any) => u.name === "Netflix" && !u.saved));
@@ -2986,6 +2989,7 @@ async function main(): Promise<void> {
       ok("changing a payment keeps its pending date: the missed charge is still logged", caughtUp.logged === 1, JSON.stringify(caughtUp));
       // Switching auto_log on later starts from today, without the past
       await r.tool("set_recurring", { name: "Water", amount: 15, cadence: "monthly", next_date: ago(40), category: "utilities" });
+      await cdb.recurringPayment.updateMany({ where: { userId: ur.id, name: "Water" }, data: { nextDate: new Date(Date.parse(`${ago(40)}T00:00:00Z`)) } });
       const waterOn = await r.tool("set_recurring", { name: "Water", auto_log: true });
       const waterRun = await rec.runRecurring(new Date(), ur.id);
       ok(
@@ -2994,12 +2998,34 @@ async function main(): Promise<void> {
         `${waterOn.text} ${JSON.stringify(waterRun)}`
       );
       // Saved under the user's own name, linked or not, a found payment is not suggested again
-      await r.tool("set_recurring", { name: "Electricity", amount: 60, cadence: "monthly", next_date: byName("Iberdrola").next_date, category: "utilities" });
+      await r.tool("set_recurring", { name: "Electricity", amount: 55, cadence: "monthly", next_date: byName("Iberdrola").next_date, category: "utilities" });
+      await r.tool("set_recurring", { name: "Spotify", amount: 10.99, cadence: "monthly", next_date: madridToday });
+      await r.tool("set_recurring", { name: "iCloud", merchant: "APPLE.COM/BILL", amount: 2.99, cadence: "monthly", next_date: madridToday });
       const linked = await r.tool("get_recurring");
       ok(
-        "a payment saved under another name (same amount and cadence) is not suggested again",
+        "a payment saved under another name (a varying bill, a month's amount) is not suggested again",
         !linked.json.found.some((f: any) => f.name === "Iberdrola"),
-        JSON.stringify(linked.json.found.map((f: any) => f.name))
+        JSON.stringify(linked.json.found.map((f: any) => [f.name, f.amount]))
+      );
+      ok(
+        "each saved payment hides one series: Deezer at Spotify's price stays, the other Apple price stays",
+        linked.json.found.some((f: any) => f.name === "DEEZER") &&
+          linked.json.found.filter((f: any) => f.name === "APPLE.COM/BILL").map((f: any) => f.amount).join() === "9.99" &&
+          !linked.json.found.some((f: any) => f.name === "SPOTIFY P1234567"),
+        JSON.stringify(linked.json.found.map((f: any) => [f.name, f.amount]))
+      );
+      // A stored date of a payment that is not auto-logged moves on when it is changed
+      await cdb.recurringPayment.updateMany({ where: { userId: ur.id, name: "Electricity" }, data: { nextDate: new Date(Date.parse(`${ago(50)}T00:00:00Z`)) } });
+      const elec = await r.tool("set_recurring", { name: "Electricity", amount: 56 });
+      ok("changing a payment that is not auto-logged moves its old date to today or later", elec.json.next_date >= madridToday && elec.json.note === undefined, elec.text);
+      // A cadence change takes the day from the stored date
+      const cleaner = await r.tool("set_recurring", { name: "Cleaner", amount: 30, cadence: "weekly", next_date: ago(-2), category: "family" });
+      const cleanerMonthly = await r.tool("set_recurring", { name: "Cleaner", cadence: "monthly" });
+      ok(
+        "weekly to monthly keeps the stored date and its day of the month",
+        cleanerMonthly.json.next_date === cleaner.json.next_date &&
+          (await cdb.recurringPayment.findFirstOrThrow({ where: { userId: ur.id, name: "Cleaner" } })).anchorDay === Number(cleaner.json.next_date.slice(8)),
+        cleanerMonthly.text
       );
       // A sync connected after saving: the scheduler moves the date and writes nothing
       const later = await fresh({ currencySetAt: new Date(), timezone: "Europe/Madrid" });
@@ -3012,6 +3038,14 @@ async function main(): Promise<void> {
         laterRun.synced === 1 && laterRun.logged === 0 && (await cdb.transaction.count({ where: { userId: later.id } })) === 0,
         JSON.stringify(laterRun)
       );
+      const gymEdit = await lr.tool("set_recurring", { name: "Gym", amount: 45 });
+      const gymList = await lr.tool("get_recurring");
+      ok(
+        "a payment can still be changed once a sync is linked; its auto_log goes off and says so",
+        !gymEdit.isError && gymEdit.json.auto_log === false && /now off/.test(gymEdit.json.auto_log_note ?? "") &&
+          gymList.json.saved.find((x: any) => x.name === "Gym")?.auto_log === false,
+        gymEdit.text
+      );
       await lr.close();
       // A new account's first saved payment sets the base, like a first entry
       const newbie = await fresh();
@@ -3023,6 +3057,28 @@ async function main(): Promise<void> {
         firstSave.text
       );
       await nr.close();
+      const euroFirst = await fresh();
+      const er = await inProcess(euroFirst.id);
+      await er.tool("set_recurring", { name: "Netflix", amount: 12.99, currency: "EUR", cadence: "monthly", next_date: madridToday });
+      await er.tool("set_recurring", { name: "Kyivstar", amount: 300, currency: "UAH", cadence: "monthly", next_date: madridToday });
+      const euroAfter = await cdb.user.findUniqueOrThrow({ where: { id: euroFirst.id } });
+      ok("a first payment in the default currency settles it: a later one in UAH does not switch the base", euroAfter.baseCurrency === "EUR" && !!euroAfter.currencySetAt);
+      await er.close();
+      // A one-month statement: subscriptions seen once are named after the import
+      const oneMonth = await fresh({ currencySetAt: new Date(), timezone: "Europe/Madrid" });
+      const om = await inProcess(oneMonth.id);
+      const omImport = await om.tool("import_transactions", {
+        transactions: [
+          { date: ago(12), amount: -12.99, merchant: "NETFLIX.COM", currency: "EUR" },
+          { date: ago(9), amount: -45.1, merchant: "Mercadona", category: "groceries", currency: "EUR" },
+        ],
+      });
+      ok(
+        "a one-month import names a subscription seen once",
+        omImport.json?.recurring_found?.count === 0 && omImport.json.recurring_found.seen_once?.[0]?.name === "NETFLIX.COM" && /ask how often/.test(omImport.json.next),
+        omImport.text.slice(0, 500)
+      );
+      await om.close();
       // Not with a bank or ZenMoney sync connected
       const synced = await fresh({ currencySetAt: new Date() });
       await cdb.bankConnection.create({ data: { userId: synced.id, provider: "zenmoney", status: "active" } });
@@ -3046,7 +3102,12 @@ async function main(): Promise<void> {
         mail?.text.slice(0, 900)
       );
       const profile = await r.tool("export_profile");
-      ok("export_profile carries the saved recurring payments", profile.json.recurring_payments?.length === 6, JSON.stringify(profile.json.recurring_payments?.map((x: any) => x.name)));
+      ok(
+        "export_profile carries the saved recurring payments, merchant links included",
+        profile.json.recurring_payments?.length === (await cdb.recurringPayment.count({ where: { userId: ur.id } })) &&
+          profile.json.recurring_payments.find((x: any) => x.name === "iCloud")?.merchant === "APPLE.COM/BILL",
+        JSON.stringify(profile.json.recurring_payments?.map((x: any) => x.name))
+      );
       const removed = await r.tool("set_recurring", { name: "netflix", remove: true });
       const notThere = await r.tool("set_recurring", { name: "Nothing like it", remove: true });
       ok(

@@ -16,7 +16,7 @@ import { ebConfigured, ebAspsps, ebStartAuth, ebDeleteSession } from "./enableba
 import { syncEnableBanking } from "./enablebanking/sync";
 import { merchantCategoryMap, normMerchant, rememberMerchantCategory } from "./merchantMemory";
 import type { EbConnectionMeta } from "./enablebanking/sync";
-import { AUTO_LOG_NOTE, CADENCES, foundAfterImport, localToday, recurringOverview, rollForward, type Cadence } from "./recurring";
+import { CADENCES, foundAfterImport, localToday, recurringOverview, rollForward, type Cadence } from "./recurring";
 import type { TxType } from "./generated/prisma/enums";
 import { Prisma } from "./generated/prisma/client";
 
@@ -161,7 +161,7 @@ function whereItWent(
     next:
       "Tell the user where the money went (top categories)" +
       (recurring
-        ? ` and the recurring payments found in their records (recurring_found: ${recurring.count}, about ${recurring.monthly_total} ${recurring.base_currency} a month; get_recurring lists them)`
+        ? ` and the recurring payments found in their records (recurring_found${recurring.count ? `: ${recurring.count} repeating, about ${recurring.monthly_total} ${recurring.base_currency} a month` : ""}${recurring.seen_once ? `; subscriptions charged once in these rows: ask how often` : ""}; get_recurring lists them)`
         : "") +
       ", then offer ONE next step: a monthly budget for the biggest category (set_budget)" +
       (recurring ? ", saving the recurring payments they confirm (set_recurring)" : "") +
@@ -1312,7 +1312,7 @@ export function registerFinanceTools(server: McpServer, userId: string, options:
               // A row the recurring scheduler logged carries the user's own
               // name ("Rent"), not the bank's ("LANDLORD SL"): the same amount
               // within the window is its charge.
-              if (c.note === AUTO_LOG_NOTE) return true;
+              if (c.recurringId !== null) return true;
               const cm = normalize(c.merchant);
               if (rm && cm) return cm.includes(rm) || rm.includes(cm);
               // no merchant info to compare: only exact same day counts as duplicate (conservative)
@@ -2223,24 +2223,38 @@ export function registerFinanceTools(server: McpServer, userId: string, options:
       const user = await getUser(userId);
       const currency = (args.currency ?? existing?.currency ?? account?.currency ?? user.baseCurrency).toUpperCase();
       await assertConvertible(currency);
-      const autoLog = args.auto_log ?? existing?.autoLog ?? false;
-      // Any link, also one in error or still pending: it is meant to bring the charges.
-      if (autoLog && (await db.bankConnection.count({ where: { userId } })) > 0) {
+      // Any link, also one in error or still pending, is meant to bring the
+      // charges: auto_log cannot be turned on, and one inherited from before
+      // the link goes off (the scheduler writes nothing for linked users).
+      const linked = (await db.bankConnection.count({ where: { userId } })) > 0;
+      if (linked && args.auto_log === true) {
         throw new Error(
-          "auto_log is off for users with a bank or ZenMoney sync: the sync brings this charge itself, and a logged copy would count it twice. Save it without auto_log."
+          "auto_log is off for users with a bank or ZenMoney sync: the sync brings this charge itself, and a logged copy would count it twice. Save it with auto_log=false."
         );
       }
+      const autoLog = linked ? false : (args.auto_log ?? existing?.autoLog ?? false);
       const today = localToday(user.timezone);
-      const anchorDay = args.next_date ? Number(args.next_date.slice(8, 10)) : existing!.anchorDay;
-      // A date the user gives that is past moves to the next one; nothing is
-      // logged for it. A stored date is kept as it is (an auto-log still
-      // waiting on it must not be dropped), unless auto_log is switched on
-      // now: then it starts from today, without logging the past.
       const stored = existing ? existing.nextDate.toISOString().slice(0, 10) : undefined;
+      // The day of the month a payment keeps: the given date's, or the stored
+      // date's when the cadence changes (a weekly payment's old anchor means nothing monthly).
+      const anchorDay = args.next_date
+        ? Number(args.next_date.slice(8, 10))
+        : args.cadence && args.cadence !== existing!.cadence
+          ? Number(stored!.slice(8, 10))
+          : existing!.anchorDay;
+      // A past date the user gives moves to the next one; nothing is logged
+      // for it. A stored date stays as it is only while it is an auto-log
+      // still waiting to be written; otherwise it moves on to today or later.
       const given = args.next_date ?? stored!;
-      const nextDate = args.next_date || (autoLog && !existing?.autoLog) ? rollForward(given, cadence, anchorDay, today) : given;
-      // Like a first entry: a new account's first payment in another currency sets the base.
+      const keepPending = !args.next_date && autoLog && existing?.autoLog;
+      const nextDate = keepPending ? given : rollForward(given, cadence, anchorDay, today);
+      // Like a first entry: a new account's first payment in another currency
+      // sets the base, and one in the default currency settles it (a saved
+      // payment is no transaction, so the gate would not see it later).
       const adopted = await adoptFirstCurrency(userId, currency);
+      if (!adopted && !user.currencySetAt && currency === user.baseCurrency) {
+        await db.user.updateMany({ where: { id: userId, currencySetAt: null }, data: { currencySetAt: new Date() } });
+      }
       const saved = await adoptingWrite(userId, adopted, async () => {
         const data = {
           name: args.name,
@@ -2270,7 +2284,10 @@ export function registerFinanceTools(server: McpServer, userId: string, options:
         category: saved.categoryKey,
         ...(account ? { account: account.name } : {}),
         auto_log: autoLog,
-        ...(nextDate !== given ? { note: `${given} is past: the next date is ${nextDate}. Nothing was logged for past dates.` } : {}),
+        ...(args.next_date && nextDate !== args.next_date
+          ? { note: `${args.next_date} is past: the next date is ${nextDate}. Nothing was logged for past dates.` }
+          : {}),
+        ...(existing?.autoLog && linked ? { auto_log_note: "auto_log is now off: a bank or ZenMoney sync is linked and brings this charge." } : {}),
         ...setupNote(await getUser(userId), adopted),
       });
     }
@@ -2573,6 +2590,7 @@ export function registerFinanceTools(server: McpServer, userId: string, options:
         merchant_rules: rules.map((r) => ({ merchant: r.merchant, category: r.categoryKey })),
         recurring_payments: recurring.map((r) => ({
           name: r.name,
+          ...(r.merchant ? { merchant: r.merchant } : {}),
           amount: Number(r.amount),
           currency: r.currency,
           cadence: r.cadence,

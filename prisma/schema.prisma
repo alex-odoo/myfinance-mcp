@@ -119,12 +119,17 @@ model Transaction {
   // When two bank rows (debit + credit) were merged into one transfer, the
   // credit side's external id lands here so re-syncs skip it as already imported.
   counterExternalId String?
+  // The saved recurring payment that logged this row automatically (null for
+  // every other row). Imports merge such a row with the bank's by amount and
+  // date; detection does not count it as evidence.
+  recurringId     String?  @db.Uuid
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
-  user     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  account  Account   @relation(fields: [accountId], references: [id], onDelete: Cascade)
-  category Category? @relation(fields: [categoryKey], references: [key])
+  user      User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  account   Account           @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  category  Category?         @relation(fields: [categoryKey], references: [key])
+  recurring RecurringPayment? @relation(fields: [recurringId], references: [id], onDelete: SetNull)
 
   @@unique([accountId, externalId])
   @@index([userId, occurredAt])
@@ -138,6 +143,7 @@ model Transaction {
   @@index([counterAccountId, occurredAt])
   @@index([userId, externalId])
   @@index([userId, counterExternalId])
+  @@index([recurringId])
   @@map("transactions")
 }
 
@@ -164,8 +170,9 @@ model RecurringPayment {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
-  user    User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  account Account? @relation(fields: [accountId], references: [id], onDelete: SetNull)
+  user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  account      Account?      @relation(fields: [accountId], references: [id], onDelete: SetNull)
+  transactions Transaction[]
 
   @@unique([userId, name])
   @@index([accountId])
