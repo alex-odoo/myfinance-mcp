@@ -150,6 +150,9 @@ model RecurringPayment {
   id          String   @id @default(uuid()) @db.Uuid
   userId      String   @db.Uuid
   name        String
+  // The merchant text the charge carries in statements ("NETFLIX.COM",
+  // "LANDLORD SL"), when the user's name differs: links it to its rows.
+  merchant    String?
   amount      Decimal  @db.Decimal(14, 2) // positive, in `currency`
   currency    String   @db.Char(3)
   cadence     String // weekly | monthly | quarterly | yearly

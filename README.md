@@ -85,7 +85,7 @@ Three tools return an interactive dashboard (`ui://myfinancemcp/dashboard`) rend
 - Bank access is strictly read-only: ZenMoney via the user's own API token, and, in the closed beta, open banking consent via Enable Banking (the bank authenticates the user; we never see credentials). Session ids and tokens are stored AES-256-GCM encrypted.
 - CSV export and instant full deletion are tools, not support tickets.
 - Hosted instance: EU data residency (Supabase, eu-central-1), TLS to the database with a pinned CA. Every query is scoped to your account by the server; the database's own API is closed to everyone (row-level security, deny-all).
-- 388 automated end-to-end checks (full OAuth flow for public and confidential clients incl. browser binding and audience checks, every tool, import dedup semantics, GDPR deletion) run as a hard deploy gate; CI runs lint and typecheck on every push.
+- 395 automated end-to-end checks (full OAuth flow for public and confidential clients incl. browser binding and audience checks, every tool, import dedup semantics, GDPR deletion) run as a hard deploy gate; CI runs lint and typecheck on every push.
 
 See [SECURITY.md](SECURITY.md) for the disclosure policy.
 

@@ -758,7 +758,7 @@
     {
       "name": "get_recurring",
       "title": "Recurring payments",
-      "description": "Subscriptions, rent, bills and other payments that repeat: the ones the user saved (set_recurring) and the ones found in their records (charges at one merchant that repeat weekly, monthly, quarterly or yearly at a steady amount, and single recent charges from known subscription services). Each with amount, cadence, next expected date and monthly cost in the base currency; plus the monthly and yearly total and what is coming up in the next 30 days. Call it for 'what subscriptions do I pay', 'my fixed costs', 'what bills are coming'. Found ones are suggestions: offer to save the ones the user confirms (set_recurring).",
+      "description": "Subscriptions, rent, bills and other payments that repeat: the ones the user saved (set_recurring) and the ones found in their records (charges at one merchant that repeat weekly, monthly, quarterly or yearly at a steady amount; evidence=seen_once marks a single recent charge of a subscription service, cadence unknown). Each with amount, cadence, next expected date and monthly cost in the base currency; plus the monthly and yearly total (saved and repeating ones) and what is coming up in the next 30 days. Call it for 'what subscriptions do I pay', 'my fixed costs', 'what bills are coming'. Found ones are suggestions: offer to save the ones the user confirms (set_recurring).",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -778,7 +778,7 @@
     {
       "name": "set_recurring",
       "title": "Save a recurring payment",
-      "description": "Save, change or remove a payment the user expects again (a subscription, rent, a bill). Saved ones show in get_recurring and in the email summary's 'Coming up'. With auto_log=true the expense is written on each date automatically: only for a fixed amount, and only for users who log by hand (refused while a bank or ZenMoney sync is connected: the sync brings the charge). A statement import later merges an auto-logged row with the bank's row. Saving again under the same name changes it; remove=true deletes it (expenses already logged stay).",
+      "description": "Save, change or remove a payment the user expects again (a subscription, rent, a bill). Saved ones show in get_recurring and in the email summary's 'Coming up'. With auto_log=true the expense is written on each date automatically: only for a fixed amount charged in this currency, and only for users who log by hand (refused while a bank or ZenMoney sync is connected: the sync brings the charge). A statement import merges an auto-logged row with the bank's row of the same amount within two days. Saving again under the same name changes it; remove=true deletes it (expenses already logged stay).",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -787,6 +787,12 @@
             "minLength": 1,
             "maxLength": 60,
             "description": "The payment as the user calls it, e.g. Netflix, Rent."
+          },
+          "merchant": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 60,
+            "description": "The merchant as the records spell it (a found payment's name, e.g. 'LANDLORD SL'), when the user's name differs: links the saved payment to its charges."
           },
           "amount": {
             "type": "number",
@@ -1145,7 +1151,7 @@
       },
       "annotations": {
         "readOnlyHint": false,
-        "destructiveHint": false,
+        "destructiveHint": true,
         "idempotentHint": true,
         "openWorldHint": true
       }
@@ -1209,7 +1215,7 @@
       },
       "annotations": {
         "readOnlyHint": false,
-        "destructiveHint": false,
+        "destructiveHint": true,
         "idempotentHint": false,
         "openWorldHint": true
       }

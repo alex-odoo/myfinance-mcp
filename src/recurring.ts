@@ -9,10 +9,15 @@ import { asBaseWriter } from "./baseGate";
  * found in their rows here, which are suggestions until saved.
  *
  * Found = an expense series at one merchant in one currency that repeats on
- * a cadence (weekly, monthly, quarterly, yearly) at a steady amount, or a
- * single recent charge from a known subscription service (a one-month
- * statement shows each subscription once). Everyday spending (groceries,
- * cafes, fuel) is never a recurring payment, whatever its rhythm.
+ * a cadence (weekly, monthly, quarterly, yearly) at a steady amount. Two
+ * charges are enough for what is a bill by its category (subscriptions,
+ * housing, utilities, education), a known subscription service, or a steady
+ * price a quarter or a year apart; anything else needs three, weekly always
+ * three. Everyday spending (groceries, cafes,
+ * fuel) never counts, whatever its rhythm. A single recent charge from a
+ * known subscription service is listed as seen once: its cadence is unknown
+ * (an annual plan looks the same), so it stays out of totals and dates until
+ * the user saves it.
  */
 
 export const CADENCES = ["weekly", "monthly", "quarterly", "yearly"] as const;
@@ -38,31 +43,37 @@ const RULES: Record<Cadence, CadenceRule> = {
 const DAY_MS = 86_400_000;
 const LOOKBACK_DAYS = 400;
 const MAX_ROWS = 20_000;
-/** A single charge from a subscription service counts if it is this recent. */
+/** A single charge from a subscription service is listed if it is this recent. */
 const SINGLE_CHARGE_DAYS = 45;
 const MAX_FOUND = 50;
 /** How far ahead get_recurring and the email look for what is coming up. */
 export const UPCOMING_DAYS = 30;
 /** Auto-logging catches up at most this many missed dates per payment and run. */
 const MAX_CATCH_UP = 12;
+/** Auto-logging looks at the most overdue payments first, this many per tick. */
+const MAX_DUE_PER_TICK = 500;
 export const AUTO_LOG_NOTE = "Logged automatically: recurring payment";
 
 // Spending that repeats by habit, not by contract.
-const EVERYDAY = new Set(["groceries", "restaurants", "fuel", "clothing", "personal_care", "pharmacy", "gifts", "travel"]);
+const EVERYDAY = new Set(["groceries", "restaurants", "fuel", "clothing", "personal_care", "pharmacy", "gifts", "travel", "electronics"]);
+// What is a bill by its category: two charges are enough.
+const BILL_CATEGORIES = new Set(["subscriptions", "housing", "utilities", "education"]);
 // Bills whose amount moves with use: a wider tolerance.
 const VARIABLE_BILLS = new Set(["housing", "utilities"]);
 
-// Merchant words of subscription services: one charge from them is enough to
-// suggest it. Matched as substrings of the normalized merchant.
+// Services sold almost only as subscriptions, matched as whole words of the
+// merchant key. App stores and shops (Apple, Google Play, PlayStation) sell
+// one-off purchases too and are left out.
 const SUBSCRIPTION_SERVICES = [
-  "netflix", "spotify", "youtube", "apple.com/bill", "itunes", "icloud", "google one", "google storage", "google play",
-  "disney", "hbo", "amazon prime", "prime video", "audible", "kindle unlimited", "microsoft", "xbox", "playstation",
-  "nintendo", "adobe", "canva", "notion", "figma", "github", "openai", "chatgpt", "anthropic", "claude.ai", "midjourney",
-  "dropbox", "zoom.us", "slack", "linkedin", "duolingo", "patreon", "twitch", "deezer", "tidal", "yandex plus",
-  "яндекс плюс", "кинопоиск", "okko", "ivi", "wink", "megogo", "sweet.tv", "1password", "nordvpn", "expressvpn",
-  "proton", "grammarly", "cursor", "jetbrains", "mubi", "crunchyroll", "paramount", "hulu", "peacock", "dazn",
-  "strava", "headspace", "calm.com", "tinder", "bumble",
+  "netflix", "spotify", "youtube premium", "icloud", "google one", "disney plus", "disneyplus", "hbo max", "amazon prime",
+  "prime video", "audible", "kindle unlimited", "adobe", "canva", "notion", "figma", "github", "openai", "chatgpt",
+  "anthropic", "claude.ai", "midjourney", "dropbox", "zoom.us", "slack", "linkedin premium", "duolingo", "patreon",
+  "deezer", "tidal", "yandex plus", "яндекс плюс", "кинопоиск", "okko", "ivi", "wink", "megogo", "sweet.tv",
+  "1password", "nordvpn", "expressvpn", "proton", "grammarly", "cursor", "jetbrains", "mubi", "crunchyroll",
+  "paramount", "hulu", "peacock", "dazn", "strava", "headspace", "calm.com",
 ];
+// Merchants that bill several subscriptions under one name: each fixed price is its own series.
+const MULTI_BILLERS = ["apple.com", "itunes", "google", "microsoft", "amazon"];
 
 /** A merchant string reduced to what stays the same across charges: no store numbers, references or dates. */
 export function merchantKey(merchant: string): string {
@@ -76,7 +87,10 @@ export function merchantKey(merchant: string): string {
     .trim();
 }
 
-const isSubscriptionService = (key: string) => SUBSCRIPTION_SERVICES.some((s) => key.includes(s));
+const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const SERVICE_RE = new RegExp(`(?:^|[^\\p{L}\\p{N}])(?:${SUBSCRIPTION_SERVICES.map(escapeRe).join("|")})(?:$|[^\\p{L}\\p{N}])`, "u");
+const isSubscriptionService = (key: string) => SERVICE_RE.test(key);
+const isMultiBiller = (key: string) => MULTI_BILLERS.some((m) => key.includes(m));
 
 // ---- dates (rows are stored as UTC midnight of the user's local day)
 
@@ -110,18 +124,21 @@ export function rollForward(date: string, cadence: Cadence, anchorDay: number, t
 // ---- finding them in the rows
 
 export interface FoundPayment {
+  /** The merchant as the records spell it: pass it as `merchant` when saving under another name. */
   name: string;
-  cadence: Cadence;
   amount: number;
   currency: string;
   amount_varies: boolean;
-  monthly_base: number;
   last_date: string;
-  next_date: string;
   occurrences: number;
   status: "active" | "stopped";
-  evidence: "repeats" | "subscription_service" | "subscription_category";
+  /** repeats: a cadence seen in the rows. seen_once: one charge of a subscription service, cadence unknown. */
+  evidence: "repeats" | "seen_once";
   category: string;
+  /** Only for repeats. */
+  cadence?: Cadence;
+  next_date?: string;
+  monthly_base?: number;
   key: string;
 }
 
@@ -154,7 +171,7 @@ function cadenceOf(dates: string[]): Cadence | undefined {
 
 /** One series (same merchant, currency and, when split, amount) as a found payment, or undefined. */
 function asPayment(key: string, currency: string, rows: Row[], today: string): FoundPayment | undefined {
-  // Several charges on one day are one charge here (a double entry, or a split).
+  // Several charges on one day at one price are one charge (a double entry).
   const byDay = new Map<string, Row>();
   for (const r of rows) if (!byDay.has(r.date)) byDay.set(r.date, r);
   const series = [...byDay.values()].sort((a, b) => a.date.localeCompare(b.date));
@@ -165,39 +182,42 @@ function asPayment(key: string, currency: string, rows: Row[], today: string): F
   const typical = median(amounts);
   if (typical <= 0) return undefined;
   const spread = Math.max(...amounts.map((a) => Math.abs(a - typical) / typical));
-  const base = median(series.map((r) => r.amountBase));
+  const service = isSubscriptionService(key);
+  const base = {
+    name: last.merchant.trim().slice(0, 60),
+    amount: round2(typical),
+    currency,
+    amount_varies: spread > 0.02,
+    last_date: last.date,
+    occurrences: series.length,
+    category,
+    key,
+  };
 
-  let cadence: Cadence | undefined;
-  let evidence: FoundPayment["evidence"];
-  if (series.length >= 2) {
-    cadence = cadenceOf(series.map((r) => r.date));
-    if (!cadence) return undefined;
-    if (spread > (VARIABLE_BILLS.has(category) ? 0.35 : 0.1)) return undefined;
-    evidence = "repeats";
-  } else {
-    if (daysBetween(last.date, today) > SINGLE_CHARGE_DAYS) return undefined;
-    if (isSubscriptionService(key)) evidence = "subscription_service";
-    else if (category === "subscriptions") evidence = "subscription_category";
-    else return undefined;
-    cadence = "monthly";
+  if (series.length === 1) {
+    if (!service || daysBetween(last.date, today) > SINGLE_CHARGE_DAYS) return undefined;
+    return { ...base, status: "active", evidence: "seen_once" };
   }
+  const cadence = cadenceOf(series.map((r) => r.date));
+  if (!cadence) return undefined;
+  // Two charges are a pattern for a bill, a subscription service, or a
+  // steady price a quarter or a year apart (an annual fee rarely has three
+  // years of history); two taxi rides a week apart, or two cinema tickets a
+  // month apart, are not. Weekly always needs three.
+  const needed =
+    cadence === "weekly" ? 3 : BILL_CATEGORIES.has(category) || service || cadence === "quarterly" || cadence === "yearly" ? 2 : 3;
+  if (series.length < needed) return undefined;
+  if (spread > (VARIABLE_BILLS.has(category) ? 0.35 : 0.1)) return undefined;
   const anchor = Number(last.date.slice(8, 10));
   const next = nextCharge(last.date, cadence, anchor);
   const stopped = daysBetween(next, today) > RULES[cadence].grace;
   return {
-    name: last.merchant.trim().slice(0, 60),
-    cadence,
-    amount: round2(typical),
-    currency,
-    amount_varies: spread > 0.02,
-    monthly_base: round2(base * RULES[cadence].perMonth),
-    last_date: last.date,
-    next_date: stopped ? next : rollForward(next, cadence, anchor, today),
-    occurrences: series.length,
+    ...base,
     status: stopped ? "stopped" : "active",
-    evidence,
-    category,
-    key,
+    evidence: "repeats",
+    cadence,
+    next_date: stopped ? next : rollForward(next, cadence, anchor, today),
+    monthly_base: round2(median(series.map((r) => r.amountBase)) * RULES[cadence].perMonth),
   };
 }
 
@@ -209,6 +229,9 @@ export async function findRecurring(userId: string, today: string): Promise<Foun
       type: "expense",
       amount: { gt: 0 },
       merchant: { not: null },
+      // A row the scheduler logged is the saved payment itself, not evidence.
+      // (NOT alone would drop every row without a note: NULL <> x is NULL.)
+      OR: [{ note: null }, { note: { not: AUTO_LOG_NOTE } }],
       occurredAt: { gte: new Date(day(today).getTime() - LOOKBACK_DAYS * DAY_MS) },
     },
     select: { merchant: true, amount: true, amountBase: true, currency: true, occurredAt: true, categoryKey: true },
@@ -242,24 +265,25 @@ export async function findRecurring(userId: string, today: string): Promise<Foun
       found.push(whole);
       continue;
     }
-    // One merchant can bill several subscriptions at fixed prices (Apple,
-    // Google): each exact amount is its own series.
+    // Each fixed price apart, but only where one merchant bills several
+    // subscriptions: a shop's repeated price is a coincidence, not a plan.
+    if (!mixedDays && !isMultiBiller(g.key)) continue;
     const byAmount = new Map<number, Row[]>();
     for (const r of g.rows) byAmount.set(r.amount, [...(byAmount.get(r.amount) ?? []), r]);
-    if (byAmount.size < 2) continue;
     for (const [amount, rs] of byAmount) {
       if (rs.length < 2) continue;
       const p = asPayment(g.key, g.currency, rs, today);
-      if (p) found.push({ ...p, key: `${g.key} ${amount}` });
+      if (p?.evidence === "repeats") found.push({ ...p, key: `${g.key} ${amount}` });
     }
   }
-  return found.sort((a, b) => b.monthly_base - a.monthly_base).slice(0, MAX_FOUND);
+  return found.sort((a, b) => (b.monthly_base ?? -1) - (a.monthly_base ?? -1)).slice(0, MAX_FOUND);
 }
 
 // ---- saved ones, and both together
 
 export interface SavedView {
   name: string;
+  merchant?: string;
   amount: number;
   currency: string;
   cadence: Cadence;
@@ -270,12 +294,23 @@ export interface SavedView {
   monthly_base: number | null;
 }
 
-/** Whether a found series is one the user already saved (same currency, names that contain each other). */
-function sameAs(found: FoundPayment, saved: { name: string; currency: string }): boolean {
+type SavedLike = { name: string; merchant: string | null; currency: string; amount: unknown; cadence: string };
+
+/**
+ * Whether a found series is a payment the user already saved: by the
+ * merchant linked to it, by its name, or, for a payment saved under a name of
+ * the user's own without a link ("Rent" for "LANDLORD SL"), by the same
+ * amount, currency and cadence.
+ */
+function sameAs(found: FoundPayment, saved: SavedLike): boolean {
   if (found.currency !== saved.currency) return false;
-  const a = merchantKey(saved.name);
   const b = found.key;
-  return !!a && (a === b || (a.length >= 4 && b.includes(a)) || (b.length >= 4 && a.includes(b)));
+  for (const label of [saved.merchant, saved.name]) {
+    const a = label ? merchantKey(label) : "";
+    if (a && (a === b || (a.length >= 4 && b.includes(a)) || (b.length >= 4 && a.includes(b)))) return true;
+  }
+  const amount = Number(saved.amount);
+  return found.cadence === saved.cadence && amount > 0 && Math.abs(found.amount - amount) / amount <= 0.02;
 }
 
 /** Everything get_recurring and the email show: saved, found (not saved), totals, coming up. */
@@ -297,10 +332,11 @@ export async function recurringOverview(
     try {
       monthly = round2((await convert(amount, r.currency, user.baseCurrency, day(today))).converted * RULES[cadence].perMonth);
     } catch {
-      monthly = null; // no rate today: the total says so
+      monthly = null; // no rate today: `unpriced` names it
     }
     saved.push({
       name: r.name,
+      ...(r.merchant ? { merchant: r.merchant } : {}),
       amount,
       currency: r.currency,
       cadence,
@@ -313,18 +349,20 @@ export async function recurringOverview(
     });
   }
   const suggestions = found.filter((f) => !savedRows.some((s) => sameAs(f, s)) && (includeStopped || f.status === "active"));
-  const active = [...saved.map((s) => s.monthly_base ?? 0), ...suggestions.filter((f) => f.status === "active").map((f) => f.monthly_base)];
-  const monthly = round2(active.reduce((a, b) => a + b, 0));
+  const counted = suggestions.filter((f) => f.status === "active" && f.evidence === "repeats");
+  const monthly = round2(saved.reduce((a, s) => a + (s.monthly_base ?? 0), 0) + counted.reduce((a, f) => a + (f.monthly_base ?? 0), 0));
   const horizon = iso(new Date(day(today).getTime() + UPCOMING_DAYS * DAY_MS));
   const upcoming = [
     ...saved.map((s) => ({ name: s.name, date: s.next_date, amount: s.amount, currency: s.currency, saved: true })),
-    ...suggestions.filter((f) => f.status === "active").map((f) => ({ name: f.name, date: f.next_date, amount: f.amount, currency: f.currency, saved: false })),
+    ...counted.map((f) => ({ name: f.name, date: f.next_date!, amount: f.amount, currency: f.currency, saved: false })),
   ]
     .filter((u) => u.date >= today && u.date <= horizon)
     .sort((a, b) => a.date.localeCompare(b.date));
   return {
     today,
     base_currency: user.baseCurrency,
+    // Saved payments plus found ones that repeat; seen-once charges have no
+    // known cadence and are left out until saved.
     monthly_total: monthly,
     yearly_total: round2(monthly * 12),
     unpriced: saved.filter((s) => s.monthly_base === null).map((s) => s.name),
@@ -334,23 +372,48 @@ export async function recurringOverview(
   };
 }
 
+/**
+ * After an import: the active recurring payments found that are not saved
+ * yet, for the response. A statement shows a subscription the user forgot;
+ * that is the moment to name it.
+ */
+export async function foundAfterImport(user: { id: string; baseCurrency: string; timezone: string }) {
+  const today = localToday(user.timezone);
+  const [found, saved] = await Promise.all([
+    findRecurring(user.id, today),
+    db.recurringPayment.findMany({ where: { userId: user.id }, select: { name: true, merchant: true, currency: true, amount: true, cadence: true } }),
+  ]);
+  const fresh = found.filter((f) => f.status === "active" && !saved.some((s) => sameAs(f, s)));
+  const repeating = fresh.filter((f) => f.evidence === "repeats");
+  if (!repeating.length) return null;
+  return {
+    count: repeating.length,
+    monthly_total: round2(repeating.reduce((a, f) => a + (f.monthly_base ?? 0), 0)),
+    base_currency: user.baseCurrency,
+    biggest: repeating.slice(0, 5).map((f) => ({ name: f.name, amount: f.amount, currency: f.currency, cadence: f.cadence })),
+    ...(fresh.length > repeating.length ? { seen_once: fresh.length - repeating.length } : {}),
+  };
+}
+
 // ---- writing them on their date
 
 /**
  * One scheduler tick: every saved payment with auto_log whose date has come
  * (in the user's timezone) is written as an expense, and its next date set,
- * in one transaction: a second tick finds the date moved and writes nothing.
- * A charge already in the books (logged by hand or imported within 3 days,
- * same amount) only moves the date. A date the FX sources cannot price stays
- * due and is retried next tick. onlyUserId scopes a test run.
+ * in one transaction: a concurrent or later tick finds the date moved and
+ * writes nothing. A charge already in the books (by hand or imported within
+ * 3 days, same amount) only moves the date, and so does a user who has since
+ * connected a bank or ZenMoney sync (the sync brings the charge). A date the
+ * FX sources cannot price stays due and is retried. onlyUserId scopes a test.
  */
 export async function runRecurring(now = new Date(), onlyUserId?: string) {
-  const result = { logged: 0, matched: 0, failed: 0 };
+  const result = { logged: 0, matched: 0, synced: 0, skipped: 0, failed: 0 };
   const due = await db.recurringPayment.findMany({
     // Local "today" runs up to 14 hours ahead of UTC.
     where: { autoLog: true, nextDate: { lte: new Date(now.getTime() + 14 * 3600_000) }, ...(onlyUserId ? { userId: onlyUserId } : {}) },
     include: { user: { select: { timezone: true } } },
-    take: 500,
+    orderBy: { nextDate: "asc" },
+    take: MAX_DUE_PER_TICK,
   });
   for (const rp of due) {
     try {
@@ -360,9 +423,8 @@ export async function runRecurring(now = new Date(), onlyUserId?: string) {
       for (let n = 0; date <= today && n < MAX_CATCH_UP; n++) {
         const next = nextCharge(date, cadence, rp.anchorDay);
         const outcome = await asBaseWriter(rp.userId, () => logOne(rp, date, next));
-        if (outcome === "gone") break;
-        if (outcome === "logged") result.logged++;
-        if (outcome === "matched") result.matched++;
+        result[outcome]++;
+        if (outcome === "skipped") break;
         date = next;
       }
     } catch (e) {
@@ -370,46 +432,54 @@ export async function runRecurring(now = new Date(), onlyUserId?: string) {
       console.error("[recurring] auto-log failed:", e instanceof Error ? e.message : String(e));
     }
   }
-  if (result.logged || result.failed) logEvent("recurring_run", undefined, result);
+  if (result.logged || result.failed || result.skipped) logEvent("recurring_run", undefined, result);
   return result;
 }
 
-type Saved = { id: string; userId: string; name: string; amount: unknown; currency: string; categoryKey: string; accountId: string | null; nextDate: Date };
+type Saved = { id: string; userId: string; name: string; merchant: string | null; amount: unknown; currency: string; categoryKey: string; accountId: string | null };
 
-async function logOne(rp: Saved, date: string, next: string): Promise<"logged" | "matched" | "gone"> {
-  const user = await db.user.findUniqueOrThrow({ where: { id: rp.userId }, select: { baseCurrency: true } });
+async function logOne(rp: Saved, date: string, next: string): Promise<"logged" | "matched" | "synced" | "skipped"> {
+  const [user, connections] = await Promise.all([
+    db.user.findUniqueOrThrow({ where: { id: rp.userId }, select: { baseCurrency: true } }),
+    db.bankConnection.count({ where: { userId: rp.userId } }),
+  ]);
   const amount = Number(rp.amount);
   const at = day(date);
-  const account = rp.accountId
-    ? await db.account.findFirst({ where: { id: rp.accountId, userId: rp.userId } })
-    : await resolveAccount(rp.userId);
-  if (!account) return "gone";
-  const key = merchantKey(rp.name);
-  const near = await db.transaction.findMany({
-    where: {
-      userId: rp.userId,
-      type: "expense",
-      amount,
-      currency: rp.currency,
-      occurredAt: { gte: new Date(at.getTime() - 3 * DAY_MS), lte: new Date(at.getTime() + 3 * DAY_MS) },
-    },
-    select: { merchant: true },
-  });
-  const already = near.some((t) => {
-    const k = merchantKey(t.merchant ?? "");
-    return !!k && (k.includes(key) || key.includes(k));
-  });
+  let already = false;
+  if (!connections) {
+    const near = await db.transaction.findMany({
+      where: {
+        userId: rp.userId,
+        type: "expense",
+        amount,
+        currency: rp.currency,
+        occurredAt: { gte: new Date(at.getTime() - 3 * DAY_MS), lte: new Date(at.getTime() + 3 * DAY_MS) },
+      },
+      select: { merchant: true, note: true },
+    });
+    // The same amount near the date is this charge, unless it is another
+    // saved payment's own auto-logged row (two 9.99 subscriptions on one day).
+    already = near.some((t) => !(t.note === AUTO_LOG_NOTE && t.merchant !== rp.name));
+  }
+  const write = !connections && !already;
+  const account = !write
+    ? null
+    : rp.accountId
+      ? await db.account.findFirst({ where: { id: rp.accountId, userId: rp.userId } })
+      : await resolveAccount(rp.userId);
+  if (write && !account) return "skipped";
   // Priced before the transaction opens: an FX lookup must not hold it.
-  const priced = already ? null : await convert(amount, rp.currency, user.baseCurrency, at);
+  const priced = write ? await convert(amount, rp.currency, user.baseCurrency, at) : null;
   return db.$transaction(async (tx) => {
     const { count } = await tx.recurringPayment.updateMany({
       where: { id: rp.id, autoLog: true, nextDate: at },
       data: { nextDate: day(next) },
     });
-    if (count !== 1) return "gone" as const; // another tick, or the user changed it
-    if (already || !priced) return "matched" as const;
-    // A hand-logged row in every way that matters (source manual, no
-    // external id): a statement import merges it with the bank's row.
+    if (count !== 1) return "skipped" as const; // another tick, or the user changed it
+    if (connections) return "synced" as const;
+    if (!write || !account || !priced) return "matched" as const;
+    // A hand-logged row in every way an import looks at (source manual, no
+    // external id); the import also knows the note and merges by amount.
     await tx.transaction.create({
       data: {
         userId: rp.userId,
@@ -430,25 +500,4 @@ async function logOne(rp: Saved, date: string, next: string): Promise<"logged" |
     logEvent("recurring_logged", rp.userId, {});
     return "logged" as const;
   });
-}
-
-/**
- * After an import: the active recurring payments found that are not saved
- * yet, for the response. A statement shows a subscription the user forgot;
- * that is the moment to name it.
- */
-export async function foundAfterImport(user: { id: string; baseCurrency: string; timezone: string }) {
-  const today = localToday(user.timezone);
-  const [found, saved] = await Promise.all([
-    findRecurring(user.id, today),
-    db.recurringPayment.findMany({ where: { userId: user.id }, select: { name: true, currency: true } }),
-  ]);
-  const fresh = found.filter((f) => f.status === "active" && !saved.some((s) => sameAs(f, s)));
-  if (!fresh.length) return null;
-  return {
-    count: fresh.length,
-    monthly_total: round2(fresh.reduce((a, f) => a + f.monthly_base, 0)),
-    base_currency: user.baseCurrency,
-    biggest: fresh.slice(0, 5).map((f) => ({ name: f.name, amount: f.amount, currency: f.currency, cadence: f.cadence })),
-  };
 }

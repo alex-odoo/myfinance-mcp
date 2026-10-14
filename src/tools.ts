@@ -16,7 +16,7 @@ import { ebConfigured, ebAspsps, ebStartAuth, ebDeleteSession } from "./enableba
 import { syncEnableBanking } from "./enablebanking/sync";
 import { merchantCategoryMap, normMerchant, rememberMerchantCategory } from "./merchantMemory";
 import type { EbConnectionMeta } from "./enablebanking/sync";
-import { CADENCES, foundAfterImport, localToday, recurringOverview, rollForward, type Cadence } from "./recurring";
+import { AUTO_LOG_NOTE, CADENCES, foundAfterImport, localToday, recurringOverview, rollForward, type Cadence } from "./recurring";
 import type { TxType } from "./generated/prisma/enums";
 import { Prisma } from "./generated/prisma/client";
 
@@ -673,7 +673,7 @@ export function registerFinanceTools(server: McpServer, userId: string, options:
       const isLive = (a: { id: string; provider: string | null }) => !!a.provider || mappedIds.has(a.id);
       if (isLive(src) && isLive(dst)) {
         throw new Error(
-          "Both accounts are live-linked to a bank source; merging two live feeds is not allowed. Disable one side instead (connect_* action=set_account_sync)."
+          "Both accounts are live-linked to a bank source; merging two live feeds is not allowed. Disable one side instead (zenmoney or bank action=set_account_sync)."
         );
       }
       const dryRun = dry_run === true;
@@ -835,6 +835,9 @@ export function registerFinanceTools(server: McpServer, userId: string, options:
               }
               if (touched) await px.bankConnection.update({ where: { id: c.id }, data: { accountMap: map as object } });
             }
+            // Saved recurring payments follow their account into the target
+            // (deleting it would set them to Manual).
+            await px.recurringPayment.updateMany({ where: { accountId: src.id }, data: { accountId: dst.id } });
             await px.account.delete({ where: { id: src.id } }); // cascades remaining snapshots
           },
           { timeout: 120_000, maxWait: 15_000 }
@@ -1306,6 +1309,10 @@ export function registerFinanceTools(server: McpServer, userId: string, options:
               // movement even at the same amount and day (Wise -> Mono EUR -> Mono
               // UAH hops), and receiving legs were matched above.
               if (c.type === "transfer" && c.accountId !== acc.id) return false;
+              // A row the recurring scheduler logged carries the user's own
+              // name ("Rent"), not the bank's ("LANDLORD SL"): the same amount
+              // within the window is its charge.
+              if (c.note === AUTO_LOG_NOTE) return true;
               const cm = normalize(c.merchant);
               if (rm && cm) return cm.includes(rm) || rm.includes(cm);
               // no merchant info to compare: only exact same day counts as duplicate (conservative)
@@ -1488,7 +1495,16 @@ export function registerFinanceTools(server: McpServer, userId: string, options:
       },
     },
     async ({ period, from, to, type, group_by, category, exclude_categories, entity, compare, currency, trend_months }, extra) => {
-      if (trend_months !== undefined) return delegate("get_trends", { months: trend_months, category, entity }, extra);
+      if (trend_months !== undefined) {
+        const unsupported = Object.entries({ period, from, to, type, group_by, exclude_categories, compare, currency })
+          .filter(([, v]) => v !== undefined)
+          .map(([k]) => k);
+        if (unsupported.length) throw new Error(`trend_months works with category (an expense category) and entity only; drop ${unsupported.join(", ")}.`);
+        if (category && !(EXPENSE_CATEGORIES as readonly string[]).includes(category)) {
+          throw new Error("trend_months follows expenses: category must be an expense category.");
+        }
+        return delegate("get_trends", { months: trend_months, category, entity }, extra);
+      }
       const user = await getUser(userId);
       const range = periodRange(user.timezone, period, from, to);
       const target = currency?.toUpperCase();
@@ -2136,7 +2152,7 @@ export function registerFinanceTools(server: McpServer, userId: string, options:
       title: "Recurring payments",
       annotations: { readOnlyHint: true, openWorldHint: false },
       description:
-        "Subscriptions, rent, bills and other payments that repeat: the ones the user saved (set_recurring) and the ones found in their records (charges at one merchant that repeat weekly, monthly, quarterly or yearly at a steady amount, and single recent charges from known subscription services). Each with amount, cadence, next expected date and monthly cost in the base currency; plus the monthly and yearly total and what is coming up in the next 30 days. Call it for 'what subscriptions do I pay', 'my fixed costs', 'what bills are coming'. Found ones are suggestions: offer to save the ones the user confirms (set_recurring).",
+        "Subscriptions, rent, bills and other payments that repeat: the ones the user saved (set_recurring) and the ones found in their records (charges at one merchant that repeat weekly, monthly, quarterly or yearly at a steady amount; evidence=seen_once marks a single recent charge of a subscription service, cadence unknown). Each with amount, cadence, next expected date and monthly cost in the base currency; plus the monthly and yearly total (saved and repeating ones) and what is coming up in the next 30 days. Call it for 'what subscriptions do I pay', 'my fixed costs', 'what bills are coming'. Found ones are suggestions: offer to save the ones the user confirms (set_recurring).",
       inputSchema: {
         include_stopped: z.boolean().optional().describe("Also list found series that seem to have stopped (no charge since the expected date)."),
       },
@@ -2148,7 +2164,7 @@ export function registerFinanceTools(server: McpServer, userId: string, options:
         overview.saved.length + overview.found.length === 0
           ? "Nothing repeats in the records yet. The user can save a payment with set_recurring, or import two or three months of statements so repeats show."
           : overview.found.length
-            ? "Show the saved and the found payments with the monthly total. Found ones are suggestions: save only the ones the user confirms (set_recurring with name, amount, currency, cadence, next_date)."
+            ? "Show the saved and the found payments with the monthly total. Found ones are suggestions: save only the ones the user confirms (set_recurring with name, amount, currency, cadence, next_date, and merchant = the found name when the user calls it something else). For a seen_once one, ask how often it is charged first."
             : undefined;
       return text({ ...overview, ...(hint ? { hint } : {}) });
     }
@@ -2160,9 +2176,16 @@ export function registerFinanceTools(server: McpServer, userId: string, options:
       title: "Save a recurring payment",
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
       description:
-        "Save, change or remove a payment the user expects again (a subscription, rent, a bill). Saved ones show in get_recurring and in the email summary's 'Coming up'. With auto_log=true the expense is written on each date automatically: only for a fixed amount, and only for users who log by hand (refused while a bank or ZenMoney sync is connected: the sync brings the charge). A statement import later merges an auto-logged row with the bank's row. Saving again under the same name changes it; remove=true deletes it (expenses already logged stay).",
+        "Save, change or remove a payment the user expects again (a subscription, rent, a bill). Saved ones show in get_recurring and in the email summary's 'Coming up'. With auto_log=true the expense is written on each date automatically: only for a fixed amount charged in this currency, and only for users who log by hand (refused while a bank or ZenMoney sync is connected: the sync brings the charge). A statement import merges an auto-logged row with the bank's row of the same amount within two days. Saving again under the same name changes it; remove=true deletes it (expenses already logged stay).",
       inputSchema: {
         name: z.string().trim().min(1).max(60).describe("The payment as the user calls it, e.g. Netflix, Rent."),
+        merchant: z
+          .string()
+          .trim()
+          .min(1)
+          .max(60)
+          .optional()
+          .describe("The merchant as the records spell it (a found payment's name, e.g. 'LANDLORD SL'), when the user's name differs: links the saved payment to its charges."),
         amount: z.number().positive().optional().describe("Amount per charge. Required for a new one."),
         currency: currencySchema.optional(),
         cadence: z.enum(CADENCES).optional().describe("How often it is charged. Required for a new one."),
@@ -2179,7 +2202,6 @@ export function registerFinanceTools(server: McpServer, userId: string, options:
       },
     },
     async (args) => {
-      const user = await getUser(userId);
       const existing = await db.recurringPayment.findFirst({ where: { userId, name: { equals: args.name, mode: "insensitive" } } });
       if (args.remove) {
         if (!existing) {
@@ -2194,40 +2216,53 @@ export function registerFinanceTools(server: McpServer, userId: string, options:
       }
       const amount = args.amount ?? (existing ? Number(existing.amount) : undefined);
       const cadence = (args.cadence ?? existing?.cadence) as Cadence | undefined;
-      const given = args.next_date ?? (existing ? existing.nextDate.toISOString().slice(0, 10) : undefined);
-      if (amount === undefined || !cadence || !given) {
+      if (amount === undefined || !cadence || (!args.next_date && !existing)) {
         throw new Error("A new recurring payment needs amount, cadence and next_date (the next expected charge).");
       }
       const account = args.account ? await resolveAccount(userId, args.account) : null;
+      const user = await getUser(userId);
       const currency = (args.currency ?? existing?.currency ?? account?.currency ?? user.baseCurrency).toUpperCase();
       await assertConvertible(currency);
       const autoLog = args.auto_log ?? existing?.autoLog ?? false;
-      if (autoLog && (await db.bankConnection.count({ where: { userId, status: "active" } })) > 0) {
+      // Any link, also one in error or still pending: it is meant to bring the charges.
+      if (autoLog && (await db.bankConnection.count({ where: { userId } })) > 0) {
         throw new Error(
-          "auto_log is off for users with a bank or ZenMoney sync connected: the sync brings this charge itself, and a logged copy would count it twice. Save it without auto_log."
+          "auto_log is off for users with a bank or ZenMoney sync: the sync brings this charge itself, and a logged copy would count it twice. Save it without auto_log."
         );
       }
-      const anchorDay = args.next_date ? Number(args.next_date.slice(8, 10)) : existing!.anchorDay;
       const today = localToday(user.timezone);
-      const nextDate = rollForward(given, cadence, anchorDay, today);
-      const data = {
-        name: args.name,
-        amount,
-        currency,
-        cadence,
-        nextDate: parseDate(nextDate),
-        anchorDay,
-        categoryKey: args.category ?? existing?.categoryKey ?? "subscriptions",
-        accountId: account ? account.id : (existing?.accountId ?? null),
-        autoLog,
-      };
-      const saved = existing
-        ? await db.recurringPayment.update({ where: { id: existing.id }, data })
-        : await db.recurringPayment.create({ data: { userId, ...data } });
+      const anchorDay = args.next_date ? Number(args.next_date.slice(8, 10)) : existing!.anchorDay;
+      // A date the user gives that is past moves to the next one; nothing is
+      // logged for it. A stored date is kept as it is (an auto-log still
+      // waiting on it must not be dropped), unless auto_log is switched on
+      // now: then it starts from today, without logging the past.
+      const stored = existing ? existing.nextDate.toISOString().slice(0, 10) : undefined;
+      const given = args.next_date ?? stored!;
+      const nextDate = args.next_date || (autoLog && !existing?.autoLog) ? rollForward(given, cadence, anchorDay, today) : given;
+      // Like a first entry: a new account's first payment in another currency sets the base.
+      const adopted = await adoptFirstCurrency(userId, currency);
+      const saved = await adoptingWrite(userId, adopted, async () => {
+        const data = {
+          name: args.name,
+          merchant: args.merchant ?? existing?.merchant ?? null,
+          amount,
+          currency,
+          cadence,
+          nextDate: parseDate(nextDate),
+          anchorDay,
+          categoryKey: args.category ?? existing?.categoryKey ?? "subscriptions",
+          accountId: account ? account.id : (existing?.accountId ?? null),
+          autoLog,
+        };
+        return existing
+          ? db.recurringPayment.update({ where: { id: existing.id }, data })
+          : db.recurringPayment.create({ data: { userId, ...data } });
+      });
       logEvent("recurring_saved", userId, { cadence, auto_log: autoLog, created: !existing });
       return text({
         saved: true,
         name: saved.name,
+        ...(saved.merchant ? { merchant: saved.merchant } : {}),
         amount,
         currency,
         cadence,
@@ -2235,7 +2270,8 @@ export function registerFinanceTools(server: McpServer, userId: string, options:
         category: saved.categoryKey,
         ...(account ? { account: account.name } : {}),
         auto_log: autoLog,
-        ...(nextDate !== given ? { note: `next_date ${given} is past: moved to ${nextDate}. Nothing was logged for past dates.` } : {}),
+        ...(nextDate !== given ? { note: `${given} is past: the next date is ${nextDate}. Nothing was logged for past dates.` } : {}),
+        ...setupNote(await getUser(userId), adopted),
       });
     }
   );
@@ -2809,7 +2845,7 @@ export function registerFinanceTools(server: McpServer, userId: string, options:
           authorize_url: url,
           bank: bank.name,
           instructions:
-            "Show authorize_url to the user as a clickable link. They open it, sign in at their bank and approve read-only access, then confirm on our page that the MyFinance account shown is theirs. The link works once, within 30 minutes. When they say they are done, run sync_bank.",
+            "Show authorize_url to the user as a clickable link. They open it, sign in at their bank and approve read-only access, then confirm on our page that the MyFinance account shown is theirs. The link works once, within 30 minutes. When they say they are done, run bank action=sync.",
         });
       }
     );
@@ -2931,7 +2967,8 @@ export function registerFinanceTools(server: McpServer, userId: string, options:
     "zenmoney",
     {
       title: "ZenMoney sync",
-      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+      // destructive: a sync deletes rows removed in ZenMoney, disconnect drops the link
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true },
       description:
         "Read-only sync with a ZenMoney account (zenmoney.app international and zenmoney.ru both work; the backend is detected). action=paste_token stores the user's personal ZenMoney API token: free at zerro.app (log in choosing YOUR ZenMoney version, then open zerro.app/token and copy it). action=sync pulls transactions, accounts and balances (incremental, safe to re-run; the first sync takes the full history unless months_back is set; dry_run previews; unmapped ZenMoney tags land in 'other' for the user to review). action=status: connection health and synced accounts. action=set_account_sync with account + enabled turns ONE account on or off, e.g. when the same bank also syncs from another source (relay any overlap_warnings). action=disconnect removes the link and token; imported rows stay.",
       inputSchema: {
@@ -2953,8 +2990,9 @@ export function registerFinanceTools(server: McpServer, userId: string, options:
       "bank",
       {
         title: "Bank sync",
-        // Not idempotent: each start opens a new consent link.
-        annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+        // Not idempotent: each start opens a new consent link. destructive:
+        // disconnect revokes the consent and drops the link.
+        annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
         description:
           "Read-only sync with a real bank via open banking (Enable Banking, EU/UK/EEA). If the user's country or bank is not listed, stop and import a statement instead (import_transactions). Flow: action=list_banks with the country (and optional search) for the exact bank name; action=start with bank_name + country returns an authorize_url the user opens and approves at the bank; when they are done, action=sync (first sync takes months_back of history, default 3; later ones are incremental; the server also syncs healthy connections daily). action=status: health, consent expiry, synced accounts. action=set_account_sync with account + enabled turns ONE account on or off (relay any overlap_warnings: the same bank via ZenMoney duplicates). action=disconnect revokes the session; imported rows stay. One bank connection at a time.",
         inputSchema: {

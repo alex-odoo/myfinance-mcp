@@ -51,7 +51,7 @@ const ERROR_CLASSES: Array<[RegExp, string]> = [
   [/^Account ".*" not found|is not part of this connection/, "account_not_found"],
   [/rate.?limit|\b429\b/i, "rate_limited"],
   [/application credentials/, "server_auth"], // our own Enable Banking key, not the user's consent
-  [/rejected the token|access was rejected|consent .*expired|reconnect with connect_|token is malformed/i, "auth"],
+  [/rejected the token|access was rejected|consent .*expired|reconnect with connect_|reconnect with (bank|zenmoney) action|token is malformed/i, "auth"],
   [/No (bank|ZenMoney) connection|is not connected|No bank is connected|not finished|not configured|not enabled/i, "not_connected"],
   [/not found/i, "not_found"],
   [/already (exists|connected|taken)|Unique constraint|still has/i, "conflict"],
