@@ -1,0 +1,234 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script defer src="/consent.js"></script>
+<title>Expense Tracker for Cursor - Add MyFinance MCP in 1 Minute</title>
+<meta name="description" content="Add MyFinance MCP to Cursor in one click or via mcp.json, sign in once, then log expenses, import statements and check budgets from Agent chat. Free.">
+<link rel="canonical" href="https://myfinance-mcp.com/install/cursor">
+<meta name="theme-color" content="#FAF8F3" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#181712" media="(prefers-color-scheme: dark)">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="icon" href="/favicon.ico" sizes="48x48">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<link rel="preload" href="/fonts/Switzer-Variable.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="/styles.css">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://myfinance-mcp.com/install/cursor">
+<meta property="og:title" content="Expense Tracker for Cursor - Add MyFinance MCP in 1 Minute">
+<meta property="og:description" content="Add MyFinance MCP to Cursor in one click or via mcp.json, sign in once, then log expenses, import statements and check budgets from Agent chat. Free.">
+<meta property="og:image" content="https://myfinance-mcp.com/og.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Expense Tracker for Cursor - Add MyFinance MCP in 1 Minute">
+<meta name="twitter:description" content="Add MyFinance MCP to Cursor in one click or via mcp.json, sign in once, then log expenses, import statements and check budgets from Agent chat. Free.">
+<script type="application/ld+json">{"@context": "https://schema.org", "@type": "BreadcrumbList", "itemListElement": [{"@type": "ListItem", "position": 1, "name": "Home", "item": "https://myfinance-mcp.com/"}, {"@type": "ListItem", "position": 2, "name": "Install", "item": "https://myfinance-mcp.com/install"}, {"@type": "ListItem", "position": 3, "name": "Cursor", "item": "https://myfinance-mcp.com/install/cursor"}]}</script>
+<script type="application/ld+json">{"@context": "https://schema.org", "@type": "HowTo", "name": "How to add MyFinance MCP to Cursor", "description": "Add MyFinance MCP to Cursor in one click or via mcp.json, sign in once, then log expenses, import statements and check budgets from Agent chat. Free.", "totalTime": "PT1M", "url": "https://myfinance-mcp.com/install/cursor#steps", "estimatedCost": {"@type": "MonetaryAmount", "currency": "USD", "value": "0"}, "step": [{"@type": "HowToStep", "position": 1, "name": "Step 1", "text": "Click Add to Cursor above; the link opens Cursor, which asks to install the MyFinance MCP server"}, {"@type": "HowToStep", "position": 2, "name": "Step 2", "text": "Confirm the install prompt in Cursor"}, {"@type": "HowToStep", "position": 3, "name": "Step 3", "text": "Open Customize in the sidebar, find MyFinance under MCP servers and click Connect"}, {"@type": "HowToStep", "position": 4, "name": "Step 4", "text": "Sign in with Google or an email code in the browser window that opens, then return to Cursor"}, {"@type": "HowToStep", "position": 5, "name": "Step 5", "text": "Ask in the Agent chat, for example: log 12 EUR for lunch in MyFinance"}]}</script>
+<script type="application/ld+json">{"@context": "https://schema.org", "@type": "FAQPage", "mainEntity": [{"@type": "Question", "name": "Connect does nothing", "acceptedAnswer": {"@type": "Answer", "text": "Click the Needs authentication line under the server name instead, or open the Output panel (Cmd+Shift+U on Mac, Ctrl+Shift+U on Windows and Linux), choose MCP Logs and open the sign-in link from there."}}, {"@type": "Question", "name": "MyFinance shows no tools", "acceptedAnswer": {"@type": "Answer", "text": "Toggle MyFinance off and on in Customize, or remove it and add it again. MCP Logs in the Output panel shows the exact error."}}, {"@type": "Question", "name": "The Add to Cursor button opened nothing", "acceptedAnswer": {"@type": "Answer", "text": "Install or update Cursor and try again, or use the manual mcp.json setup on this page. The button page also shows the config to copy."}}, {"@type": "Question", "name": "Something broke after a MyFinance update", "acceptedAnswer": {"@type": "Answer", "text": "Toggle MyFinance off and on in Customize, or restart Cursor, so it reloads the tool list. If tools are still missing, remove the server and add it again."}}]}</script>
+</head>
+<body>
+<header class="site">
+  <div class="wrap site-inner">
+    <a class="logo" href="/">
+      <svg class="mark" width="26" height="26" viewBox="0 0 64 64" aria-hidden="true">
+        <g>
+          <polygon class="mk-top" points="18,6 52,6 46,14 27,14 27,24 40,24 40,32 18,32"/>
+          <polygon class="mk-bot" points="18,38 27,38 27,53 21,58 18,58 18,49 8,49 8,42 18,42"/>
+        </g>
+        <clipPath id="mkclip">
+          <polygon points="18,6 52,6 46,14 27,14 27,24 40,24 40,32 18,32"/>
+          <polygon points="18,38 27,38 27,53 21,58 18,58 18,49 8,49 8,42 18,42"/>
+        </clipPath>
+        <g clip-path="url(#mkclip)"><rect class="mk-sheen" x="-24" y="-12" width="14" height="88"/></g>
+      </svg>
+      MyFinance&nbsp;<b>MCP</b></a>
+    <nav class="main" aria-label="Main">
+      <a href="/#how">How it works</a>
+      <a href="/install">Install</a>
+      <a href="/#examples">Examples</a>
+      <a href="/alternatives">Alternatives</a>
+      <a href="/#faq">FAQ</a>
+    </nav>
+    <a class="gh-link" href="https://github.com/alex-odoo/myfinance-mcp" target="_blank" rel="noopener">★ GitHub</a>
+    <a class="hd-cta" href="/install">Connect</a>
+  </div>
+</header>
+
+<main>
+
+<section class="alt-hero">
+  <div class="wrap">
+    <nav class="crumbs" aria-label="Breadcrumb"><a href="/">Home</a> / <a href="/install">Install</a> / Cursor</nav>
+    <span class="eyebrow">Install guide · Cursor</span>
+    <h1>Expense tracker for <span class="talk">Cursor</span>, set up in a minute</h1>
+    <p class="sec-sub">One click adds MyFinance to Cursor. Then the Agent chat logs what you spent, imports statements from any bank and answers budget questions, next to your code.</p>
+    <p class="server-url-line">Server URL: <span class="srv-url">https://myfinance-mcp.com/mcp</span></p>
+    <div class="cta-row">
+      <a class="btn btn-solid" href="https://cursor.com/install-mcp?name=MyFinance&amp;config=eyJ1cmwiOiJodHRwczovL215ZmluYW5jZS1tY3AuY29tL21jcCJ9">Add to Cursor</a>
+      <a class="btn btn-ghost" href="#manual">Manual setup</a>
+    </div>
+  </div>
+</section>
+
+<section id="steps">
+  <div class="wrap">
+    <span class="eyebrow">Setup</span>
+    <h2>Five steps, about a minute</h2>
+    <div class="panel on">
+      <ol>
+        <li>Click <b>Add to Cursor</b> above; the link opens Cursor, which asks to install the MyFinance MCP server</li>
+        <li>Confirm the install prompt in Cursor</li>
+        <li>Open <b>Customize</b> in the sidebar, find MyFinance under MCP servers and click <b>Connect</b></li>
+        <li>Sign in with Google or an email code in the browser window that opens, then return to Cursor</li>
+        <li>Ask in the Agent chat, for example: log 12 EUR for lunch in MyFinance</li>
+      </ol>
+      <p class="soft">Cursor asks for approval before each MCP tool call by default. If the button does nothing, the <a href="cursor://anysphere.cursor-deeplink/mcp/install?name=MyFinance&amp;config=eyJ1cmwiOiJodHRwczovL215ZmluYW5jZS1tY3AuY29tL21jcCJ9">direct cursor:// link</a> opens the same install prompt.</p>
+    </div>
+    <div id="manual" class="panel on manual-panel">
+      <p class="lead">Manual setup: add MyFinance to <code class="inline">~/.cursor/mcp.json</code> for every project, or to <code class="inline">.cursor/mcp.json</code> in one project, then sign in as in steps 3 and 4.</p>
+<pre class="code">{
+  "mcpServers": {
+    "myfinance": {
+      "url": "<span class="srv-url">https://myfinance-mcp.com/mcp</span>"
+    }
+  }
+}</pre>
+    </div>
+  </div>
+</section>
+
+<section id="signin">
+  <div class="wrap">
+    <span class="eyebrow">Sign-in</span>
+    <h2>What the <span class="nobr">sign-in</span> screen looks like</h2>
+    <div class="signin-grid">
+      <div>
+        <p class="prose">When Cursor connects, a MyFinance MCP page opens on myfinance-mcp.com. It names the client you are connecting and where you return afterwards: "an app on this device" (that is Cursor). There is no separate MyFinance website login; this page is the only one you will see.</p>
+        <ol class="prose">
+          <li><b>Continue with Google</b>: one click if you use a Google account.</li>
+          <li>Or type any email address and click <b>Email me a sign-in code</b>. We send an 8-digit code that expires in 10 minutes; enter it and click <b>Sign in</b>. No Google account needed.</li>
+          <li>The first sign-in creates your account. Next time, the same Google account or email brings back the same data.</li>
+        </ol>
+      </div>
+      <div>
+        <div class="signin-mock" role="img" aria-label="Sketch of the MyFinance MCP sign-in page: Continue with Google, or email a sign-in code">
+          <div class="sm-h">MyFinance MCP</div>
+          <div class="sm-p">Sign in to connect Cursor to your finances.</div>
+          <div class="sm-btn sm-g">Continue with Google</div>
+          <div class="sm-or">or</div>
+          <div class="sm-l">Email</div>
+          <div class="sm-i">you@example.com</div>
+          <div class="sm-btn sm-b">Email me a sign-in code</div>
+          <div class="sm-hint">New here? The same code creates your account.</div>
+        </div>
+        <p class="signin-cap">Sketch of the sign-in page</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="first">
+  <div class="wrap">
+    <span class="eyebrow">First things to say</span>
+    <h2>Five messages that pay off fast</h2>
+    <p class="sec-sub">Start with your currency and city, so every amount and date lands right. Then log, import, ask and set one budget. Use your own currency and shops: these are examples, typed into Cursor as plain messages.</p>
+    <div class="ledger reveal in">
+      <div class="lrow">
+        <span class="ln num">01</span>
+        <span class="say">"My currency is ARS and I live in Buenos Aires"</span>
+        <span class="res num">base currency ARS · <b>timezone set</b></span>
+      </div>
+      <div class="lrow">
+        <span class="ln num">02</span>
+        <span class="say">"I spent 12,500 on groceries at Coto yesterday and 4,000 on a taxi today"</span>
+        <span class="res num">2 expenses · groceries, transport · <b>dates resolved</b></span>
+      </div>
+      <div class="lrow">
+        <span class="ln num">03</span>
+        <span class="say"><span class="ph">[screenshot]</span> "Here is my bank statement"</span>
+        <span class="res num">every row imported · <b>duplicates skipped</b></span>
+      </div>
+      <div class="lrow">
+        <span class="ln num">04</span>
+        <span class="say">"How much did I spend this month by category?"</span>
+        <span class="res num">totals by category · <b>computed in SQL</b></span>
+      </div>
+      <div class="lrow">
+        <span class="ln num">05</span>
+        <span class="say">"Set a monthly budget of 80,000 for entertainment"</span>
+        <span class="res num">80,000 ARS cap · <b>alerts only when exceeded</b></span>
+      </div>
+    </div>
+    <p class="soften">Every total comes from the server, computed in SQL. Cursor explains the numbers; it never adds them up itself.</p>
+  </div>
+</section>
+
+<section id="trouble">
+  <div class="wrap">
+    <span class="eyebrow">Troubleshooting</span>
+    <h2>If something is off</h2>
+    <div class="faq reveal in">
+      <details>
+        <summary>Connect does nothing</summary>
+        <p class="fa">Click the Needs authentication line under the server name instead, or open the Output panel (Cmd+Shift+U on Mac, Ctrl+Shift+U on Windows and Linux), choose MCP Logs and open the sign-in link from there.</p>
+      </details>
+      <details>
+        <summary>MyFinance shows no tools</summary>
+        <p class="fa">Toggle MyFinance off and on in Customize, or remove it and add it again. MCP Logs in the Output panel shows the exact error.</p>
+      </details>
+      <details>
+        <summary>The Add to Cursor button opened nothing</summary>
+        <p class="fa">Install or update Cursor and try again, or use the manual mcp.json setup on this page. The button page also shows the config to copy.</p>
+      </details>
+      <details>
+        <summary>Something broke after a MyFinance update</summary>
+        <p class="fa">Toggle MyFinance off and on in Customize, or restart Cursor, so it reloads the tool list. If tools are still missing, remove the server and add it again.</p>
+      </details>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <span class="eyebrow">Other clients</span>
+    <h2>Using another AI?</h2>
+    <p class="sec-sub">The same server and the same account work in every client: sign in with the same Google account or email and your data is there.</p>
+    <div class="feat-grid cols3 reveal in">
+      <a class="feat alt-card" href="/install/claude"><span class="fi num">install guide</span><h3>Claude <span class="arr">&rarr;</span></h3><p>Customize, Connectors, Add custom connector. Every Claude plan, Free included.</p></a>
+      <a class="feat alt-card" href="/install/chatgpt"><span class="fi num">install guide</span><h3>ChatGPT <span class="arr">&rarr;</span></h3><p>Developer mode on the web. Logging on Business, Enterprise and Edu.</p></a>
+      <a class="feat alt-card" href="/install/codex"><span class="fi num">install guide</span><h3>Codex <span class="arr">&rarr;</span></h3><p>codex mcp add, then codex mcp login. In every ChatGPT plan, Free too.</p></a>
+    </div>
+    <p class="soften">Windsurf, VS Code, Claude Code and any MCP client with OAuth work too: see <a href="/install">all install guides</a>.</p>
+    <p class="fineprint">Last updated: October 14, 2026. Steps follow each vendor's current help pages; menus move, so if a label differs, look for the closest match. Claude, ChatGPT, Codex and Cursor are trademarks of their respective owners. MyFinance MCP is an independent, open-source project and is not affiliated with or endorsed by them.</p>
+  </div>
+</section>
+
+</main>
+
+<div class="final">
+  <div class="wrap">
+    <h2>Track money inside the AI you already use.</h2>
+    <p>Free and open source. One URL, one <span class="nobr">sign-in</span>, then just talk.</p>
+    <div class="cta-row center">
+      <a class="btn btn-solid" href="/install">All install guides</a>
+      <a class="btn btn-ghost" href="https://github.com/alex-odoo/myfinance-mcp" target="_blank" rel="noopener">★ Star on GitHub</a>
+    </div>
+  </div>
+</div>
+
+<footer class="site">
+  <div class="wrap foot-inner">
+    <a href="/">Home</a>
+    <a href="/install">Install guides</a>
+    <a href="/alternatives">Alternatives</a>
+    <a href="/blog">Blog</a>
+    <a href="https://github.com/alex-odoo/myfinance-mcp" target="_blank" rel="noopener">GitHub</a>
+    <a href="/#contact">Contact</a>
+    <a href="/privacy">Privacy &amp; Terms</a>
+    <a href="/privacy#cookies" data-cookie-settings>Cookie settings</a>
+    <span class="cr">Open source under MIT. Built by <a href="https://rteam.agency" target="_blank" rel="noopener">Rteam</a>.</span>
+  </div>
+</footer>
+
+</body>
+</html>

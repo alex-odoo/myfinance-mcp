@@ -67,13 +67,13 @@
     return r;
   }
 
-  function renderSync() {
+  function renderImport() {
     var r = el("div", "render");
-    r.innerHTML = "<h4>Revolut EUR · synced just now</h4>" +
-      acct("Salary", "new", "+2,050.00", true) +
-      acct("Bolt ride", "new", "-8.40") +
-      acct("Lidl", "merged", "-24.50") +
-      acct("Zara", "new", "-49.90");
+    r.innerHTML = "<h4>Statement import · July</h4>" +
+      acct("Rows imported", "new", "61") +
+      acct("Lidl, logged by you", "merged", "-24.50") +
+      acct("Already imported", "skipped", "2") +
+      acct("Net vs statement", "match", "-1,842.30 EUR", true);
     return r;
   }
 
@@ -81,9 +81,9 @@
     { user: "Spent 24.50 eur on groceries at Lidl",
       ai: "Logged: 24.50 EUR, groceries. Here's where you are this month:",
       render: renderBudgets },
-    { user: "Sync my bank",
-      ai: "27 new transactions from Revolut. Duplicates skipped, your hand-logged Lidl entry merged, everything categorized:",
-      render: renderSync },
+    { user: "Here's my bank statement [screenshot]",
+      ai: "Read 64 rows. 61 imported, your hand-logged Lidl entry merged, 2 already there. The total matches the statement:",
+      render: renderImport },
     { user: "How much did I spend on restaurants in June?",
       ai: "412 EUR across 18 visits, 14% of your June spending, up 6% from May.",
       render: renderSummary },

@@ -20,7 +20,7 @@
 <meta property="og:description" content="A practical 2026 guide to tracking expenses with AI: chat logging, receipt photos, statement imports, and the one architecture rule that keeps your numbers honest.">
 <meta property="og:image" content="https://myfinance-mcp.com/og.png">
 <meta name="twitter:card" content="summary_large_image">
-<script type="application/ld+json">{"@context": "https://schema.org", "@type": "BlogPosting", "headline": "How to Track Expenses with AI in 2026: a Setup That Actually Sticks", "url": "https://myfinance-mcp.com/blog/track-expenses-with-ai", "datePublished": "2026-07-20", "dateModified": "2026-07-20", "author": {"@type": "Organization", "name": "Rteam", "url": "https://rteam.agency"}, "publisher": {"@type": "Organization", "name": "Rteam", "url": "https://rteam.agency"}, "image": "https://myfinance-mcp.com/og.png", "description": "A practical 2026 guide to tracking expenses with AI: chat logging, receipt photos, statement imports, and the one architecture rule that keeps your numbers honest."}</script>
+<script type="application/ld+json">{"@context": "https://schema.org", "@type": "BlogPosting", "headline": "How to Track Expenses with AI in 2026: a Setup That Actually Sticks", "url": "https://myfinance-mcp.com/blog/track-expenses-with-ai", "datePublished": "2026-07-20", "dateModified": "2026-10-14", "author": {"@type": "Organization", "name": "Rteam", "url": "https://rteam.agency"}, "publisher": {"@type": "Organization", "name": "Rteam", "url": "https://rteam.agency"}, "image": "https://myfinance-mcp.com/og.png", "description": "A practical 2026 guide to tracking expenses with AI: chat logging, receipt photos, statement imports, and the one architecture rule that keeps your numbers honest."}</script>
 <script type="application/ld+json">{"@context": "https://schema.org", "@type": "BreadcrumbList", "itemListElement": [{"@type": "ListItem", "position": 1, "name": "Home", "item": "https://myfinance-mcp.com/"}, {"@type": "ListItem", "position": 2, "name": "Blog", "item": "https://myfinance-mcp.com/blog"}, {"@type": "ListItem", "position": 3, "name": "How to Track Expenses with AI", "item": "https://myfinance-mcp.com/blog/track-expenses-with-ai"}]}</script>
 </head>
 <body>
@@ -80,7 +80,7 @@
     <li><strong>LLMs are unreliable at arithmetic over long lists.</strong> Ask a model to sum 190 transactions and you will get a confident number that is wrong often enough to be useless for money.</li>
   </ul>
   <p>The setup that works splits the job: the AI converts your messy input (a sentence, a photo, a PDF) into structured records, and a database stores them and computes every total in SQL. The model never adds numbers; it asks the database and explains the answer.</p>
-  <p>You can build this yourself: a spreadsheet plus a custom GPT, or a self-hosted tool like Actual Budget or Firefly III with one of the community MCP bridges on top. Or use a tool built for exactly this pattern: <a href="/">MyFinance MCP</a> is an open-source (MIT) server that connects to Claude or ChatGPT with one URL, stores your records in Postgres, and computes every stat server-side. Disclosure: it is our product, and this whole article is the reasoning behind how we built it.</p>
+  <p>You can build this yourself: a spreadsheet plus a custom GPT, or a self-hosted tool like <a href="/actual-budget-mcp">Actual Budget</a> or <a href="/firefly-iii-mcp">Firefly III</a> with one of the community MCP bridges on top. Or use a tool built for exactly this pattern: <a href="/">MyFinance MCP</a> is an open-source (MIT) server that connects to Claude or ChatGPT with one URL, stores your records in Postgres, and computes every stat server-side. Disclosure: it is our product, and this whole article is the reasoning behind how we built it.</p>
 
   <h2>The three inputs that replace every form</h2>
   <h3>1. A sentence</h3>
@@ -92,8 +92,8 @@
   <h3>2. A receipt photo</h3>
   <p>Snap the receipt, drop it in the chat. Vision models read line items, totals and VAT reliably in 2026. One privacy detail worth checking in whatever tool you use: with an MCP setup the photo is parsed by your own AI client, and only structured numbers reach the server. The image itself never leaves the chat.</p>
   <h3>3. A statement file</h3>
-  <p>For everything you did not log in the moment, a monthly CSV or PDF export from your bank catches you up in one message. Deduplication matters more than parsing here; we wrote a <a href="/blog/import-bank-statement-into-ai">separate guide on statement imports</a> because it is where most AI setups quietly corrupt their data.</p>
-  <p>If your bank is in the EU or UK, open banking sync can replace the monthly file entirely: a read-only consent pulls new transactions daily. That closes the loop where abandonment usually happens.</p>
+  <p>For everything you did not log in the moment, a monthly CSV or PDF export from your bank, or a screenshot from your banking app, catches you up in one message. Deduplication matters more than parsing here; we wrote a <a href="/blog/import-bank-statement-into-ai">separate guide on statement imports</a> because it is where most AI setups quietly corrupt their data.</p>
+  <p>Statement import works with any bank in any country, which matters more than it sounds: the people who keep tracking are the ones whose setup never depends on their bank being supported. If you already use ZenMoney (popular in Ukraine, Russia, Kazakhstan and Belarus), a read-only ZenMoney sync can replace the monthly file entirely.</p>
 
   <h2>What you get back</h2>
   <div class="video-shell clipv">
@@ -109,14 +109,14 @@
   <ul>
     <li><strong>Advice quality varies.</strong> A June 2026 study in the Journal of Financial Planning found AI financial recommendations differed significantly across platforms, and in some cases varied by the hypothetical user's race or gender. Use AI to know your numbers; be slower to outsource decisions. Only 18% of respondents in the TD survey would trust AI to make financial recommendations on its own, and that instinct is roughly correct today.</li>
     <li><strong>Categorization needs correction.</strong> Models miscategorize maybe 1 purchase in 20. Good tools remember your correction per merchant; if yours makes you re-correct the same store every month, that is form-filling with extra steps.</li>
-    <li><strong>Not for shared complexity.</strong> If you need multi-user household budgets with approval flows, or envelope discipline where every euro is pre-assigned, dedicated apps like YNAB still do that better. Chat-based tracking shines for individuals and freelancers who mostly need capture, totals and trends.</li>
+    <li><strong>Not for shared complexity.</strong> If you need multi-user household budgets with approval flows, or envelope discipline where every euro is pre-assigned, dedicated apps like <a href="/ynab-mcp">YNAB</a> still do that better. Chat-based tracking shines for individuals and freelancers who mostly need capture, totals and trends.</li>
   </ul>
 
   <h2>Set it up this week</h2>
   <ol>
     <li>Pick where records will live. Rule out anything where the chat itself is the storage.</li>
-    <li>Connect it to the AI you already open daily. With <a href="/#install">MyFinance MCP</a> that is one URL pasted into Claude or ChatGPT settings, under a minute, free while in beta.</li>
-    <li>Import last month's statement first. Starting with a full month of real data makes the tool immediately useful, so you keep using it.</li>
+    <li>Connect it to the AI you already open daily. With MyFinance MCP that is one URL pasted into <a href="/install/claude">Claude</a>, <a href="/install/chatgpt">ChatGPT</a>, <a href="/install/cursor">Cursor</a> or <a href="/install/codex">Codex</a>, under a minute, free while in beta.</li>
+    <li>Import last month's statement first. Starting with a full month of real data makes the tool immediately useful, so you keep using it. Coming from <a href="/mint-mcp">Mint</a> or <a href="/monarch-money-mcp">Monarch Money</a>? Their CSV exports work the same way.</li>
     <li>Set two or three budgets max, on categories you actually want to change.</li>
     <li>Log by voice for one week. If a purchase takes more than one sentence to record, something in your setup is wrong.</li>
   </ol>
@@ -131,7 +131,7 @@
     <li><a href="https://www.cnbc.com/2026/07/07/ai-personal-finance-advice.html" target="_blank" rel="noopener">CNBC, July 2026, on the Journal of Financial Planning study</a></li>
   </ul>
 
-  <p class="fineprint">Last updated: July 20, 2026. Product names are trademarks of their respective owners. MyFinance MCP is an independent open-source project by Rteam.</p>
+  <p class="fineprint">Last updated: October 14, 2026. Product names are trademarks of their respective owners. MyFinance MCP is an independent open-source project by Rteam.</p>
 </article>
 </main>
 
@@ -149,6 +149,7 @@
 <footer class="site">
   <div class="wrap foot-inner">
     <a href="/">Home</a>
+    <a href="/install">Install guides</a>
     <a href="/alternatives">Alternatives</a>
     <a href="/blog">Blog</a>
     <a href="https://github.com/alex-odoo/myfinance-mcp" target="_blank" rel="noopener">GitHub</a>

@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <script defer src="/consent.js"></script>
-<title>PocketGuard MCP Server? Track Money in Claude &amp; ChatGPT</title>
+<title>PocketGuard MCP Server: Free Spending Tracker, No Paywall</title>
 <meta name="description" content="PocketGuard has no MCP server and locks key features behind Plus. MyFinance MCP is the free, open-source way to track spending by talking to Claude or ChatGPT.">
 <link rel="canonical" href="https://myfinance-mcp.com/pocketguard-mcp">
 <meta name="theme-color" content="#FAF8F3" media="(prefers-color-scheme: light)">
@@ -16,13 +16,13 @@
 <link rel="stylesheet" href="/styles.css">
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://myfinance-mcp.com/pocketguard-mcp">
-<meta property="og:title" content="PocketGuard MCP Server? Track Money in Claude &amp; ChatGPT">
+<meta property="og:title" content="PocketGuard MCP Server: Free Spending Tracker, No Paywall">
 <meta property="og:description" content="PocketGuard has no MCP server and locks key features behind Plus. MyFinance MCP is the free, open-source way to track spending by talking to Claude or ChatGPT.">
 <meta property="og:image" content="https://myfinance-mcp.com/og.png">
 <meta name="twitter:card" content="summary_large_image">
-<script type="application/ld+json">{"@context": "https://schema.org", "@type": "FAQPage", "mainEntity": [{"@type": "Question", "name": "Does PocketGuard have an MCP server?", "acceptedAnswer": {"@type": "Answer", "text": "No official hosted one. PocketGuard cannot run inside Claude or ChatGPT directly. MyFinance MCP is built as an MCP server, so it connects with one URL and an OAuth sign-in."}}, {"@type": "Question", "name": "Is anything in MyFinance MCP paywalled?", "acceptedAnswer": {"@type": "Answer", "text": "No. Everything is free while in beta: budgets, statement import, receipts, export. No ads, no card required."}}, {"@type": "Question", "name": "Is MyFinance MCP free?", "acceptedAnswer": {"@type": "Answer", "text": "Yes, free while in beta. No ads, no card required. It is open source under MIT, so self-hosting is always an option too."}}, {"@type": "Question", "name": "Does it work with ChatGPT?", "acceptedAnswer": {"@type": "Answer", "text": "Yes. Settings, then Apps, then create a custom app with the server URL using OAuth. It works on every ChatGPT plan, and with Claude, Cursor, Windsurf and any MCP client with OAuth."}}, {"@type": "Question", "name": "Is my data private?", "acceptedAnswer": {"@type": "Answer", "text": "Your data is linked to your account and only you can access it: every query is scoped to your account. EU hosting, no amounts or merchants in server logs, sign-in tokens stored only as a one-way hash, and receipt photos never reach the server at all."}}]}</script>
+<script type="application/ld+json">{"@context": "https://schema.org", "@type": "FAQPage", "mainEntity": [{"@type": "Question", "name": "Does PocketGuard have an MCP server?", "acceptedAnswer": {"@type": "Answer", "text": "No official hosted one. PocketGuard cannot run inside Claude or ChatGPT directly. MyFinance MCP is built as an MCP server, so it connects with one URL and an OAuth sign-in."}}, {"@type": "Question", "name": "Is anything in MyFinance MCP paywalled?", "acceptedAnswer": {"@type": "Answer", "text": "No. Everything is free while in beta: budgets, statement import, receipts, export. No ads, no card required."}}, {"@type": "Question", "name": "Is MyFinance MCP free?", "acceptedAnswer": {"@type": "Answer", "text": "Yes, free while in beta. No ads, no card required. It is open source under MIT, so self-hosting is always an option too."}}, {"@type": "Question", "name": "Does it work with ChatGPT?", "acceptedAnswer": {"@type": "Answer", "text": "Yes, in ChatGPT on the web with Developer mode: logging works on Business, Enterprise and Edu, Pro gets read-only access, and on Free, Go and Plus you can use it through Codex instead. It also works with Claude, Cursor, Windsurf and any MCP client with OAuth."}}, {"@type": "Question", "name": "Is my data private?", "acceptedAnswer": {"@type": "Answer", "text": "Your data is linked to your account and only you can access it: every query is scoped to your account. EU hosting, no amounts or merchants in server logs, sign-in tokens stored only as a one-way hash, and receipt photos never reach the server at all."}}]}</script>
 <script type="application/ld+json">{"@context": "https://schema.org", "@type": "BreadcrumbList", "itemListElement": [{"@type": "ListItem", "position": 1, "name": "Home", "item": "https://myfinance-mcp.com/"}, {"@type": "ListItem", "position": 2, "name": "Alternatives", "item": "https://myfinance-mcp.com/alternatives"}, {"@type": "ListItem", "position": 3, "name": "PocketGuard", "item": "https://myfinance-mcp.com/pocketguard-mcp"}]}</script>
-<script type="application/ld+json">{"@context": "https://schema.org", "@type": "WebPage", "url": "https://myfinance-mcp.com/pocketguard-mcp", "datePublished": "2026-07-16", "dateModified": "2026-10-01", "publisher": {"@type": "Organization", "name": "Rteam", "url": "https://rteam.agency"}}</script>
+<script type="application/ld+json">{"@context": "https://schema.org", "@type": "WebPage", "url": "https://myfinance-mcp.com/pocketguard-mcp", "datePublished": "2026-07-16", "dateModified": "2026-10-14", "publisher": {"@type": "Organization", "name": "Rteam", "url": "https://rteam.agency"}}</script>
 </head>
 <body>
 <header class="site">
@@ -134,15 +134,31 @@
     <p class="sec-sub">Works with any MCP client that supports OAuth 2.0 with PKCE. On first connect you sign in with Google or with a one-time code sent to your email.</p>
     <div class="panel on">
       <ol>
-        <li>Open Claude and click <b>Customize</b></li>
-        <li>Click <b>Connectors</b></li>
-        <li>Click <b>+</b>, then <b>Add custom connector</b></li>
-        <li>Name it, for example "MyFinance"</li>
-        <li>Paste <span class="srv-url">https://myfinance-mcp.com/mcp</span> into Remote MCP server URL</li>
-        <li><b>Leave the OAuth Client ID and Client Secret fields empty</b></li>
-        <li>Click <b>Add</b>, then <b>Connect</b> and sign in</li>
+        <li>Open Claude and go to <b>Customize</b>, then <b>Connectors</b></li>
+        <li>Click <b>+ Add</b>, then <b>Add custom connector</b></li>
+        <li>Name it "MyFinance", paste <span class="srv-url">https://myfinance-mcp.com/mcp</span> as the remote MCP server URL and click <b>Continue</b></li>
+        <li>Choose <b>Sign in now</b> and, under OAuth client, <b>Register automatically</b></li>
+        <li>Click <b>Add</b>, then sign in with Google or an email code</li>
       </ol>
-      <p class="soft">On ChatGPT: Settings, then Apps, then Create app with the same URL using OAuth. Full guide on the <a href="/#install">home page</a>.</p>
+      <p class="soft">On ChatGPT, Cursor or Codex? Follow the <a href="/install">install guide for your client</a>. The <a href="/install/claude">Claude guide</a> explains each step above.</p>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <span class="eyebrow">Compare with other apps</span>
+    <h2>Switching from something else?</h2>
+    <p class="sec-sub">The same question, answered for the other trackers people move from.</p>
+    <div class="feat-grid reveal in">
+      <a class="feat alt-card" href="/mint-mcp"><span class="fi num">switching from</span><h3>Mint <span class="arr">&rarr;</span></h3><p>Shut down in 2024. Your exported CSV imports here in one message.</p></a>
+      <a class="feat alt-card" href="/ynab-mcp"><span class="fi num">switching from</span><h3>YNAB <span class="arr">&rarr;</span></h3><p>No official MCP server. The zero-method alternative, free.</p></a>
+      <a class="feat alt-card" href="/monarch-money-mcp"><span class="fi num">switching from</span><h3>Monarch Money <span class="arr">&rarr;</span></h3><p>No MCP server. Same tracking, no subscription.</p></a>
+      <a class="feat alt-card" href="/lunch-money-mcp"><span class="fi num">switching from</span><h3>Lunch Money <span class="arr">&rarr;</span></h3><p>Indie and API-first, but no official MCP. This one lives in your AI.</p></a>
+      <a class="feat alt-card" href="/copilot-money-mcp"><span class="fi num">switching from</span><h3>Copilot Money <span class="arr">&rarr;</span></h3><p>Apple-only, no MCP server. This works wherever your AI does.</p></a>
+      <a class="feat alt-card" href="/actual-budget-mcp"><span class="fi num">switching from</span><h3>Actual Budget <span class="arr">&rarr;</span></h3><p>Open source like us, but you host it. This one is connect-and-go.</p></a>
+      <a class="feat alt-card" href="/firefly-iii-mcp"><span class="fi num">switching from</span><h3>Firefly III <span class="arr">&rarr;</span></h3><p>Powerful self-hosted OSS. This is the zero-setup way.</p></a>
+      <a class="feat alt-card" href="/alternatives"><span class="fi num">overview</span><h3>All alternatives <span class="arr">&rarr;</span></h3><p>Bridges vs standalone servers, and every comparison on one page.</p></a>
     </div>
   </div>
 </section>
@@ -166,14 +182,14 @@
       </details>
       <details>
         <summary>Does it work with ChatGPT?</summary>
-        <p class="fa">Yes. Settings, then Apps, then create a custom app with the server URL using OAuth. It works on every ChatGPT plan, and with Claude, Cursor, Windsurf and any MCP client with OAuth.</p>
+        <p class="fa">Yes, in ChatGPT on the web with Developer mode: logging works on Business, Enterprise and Edu, Pro gets read-only access, and on Free, Go and Plus you can use it through Codex instead. It also works with Claude, Cursor, Windsurf and any MCP client with OAuth.</p>
       </details>
       <details>
         <summary>Is my data private?</summary>
         <p class="fa">Your data is linked to your account and only you can access it: every query is scoped to your account. EU hosting, no amounts or merchants in server logs, sign-in tokens stored only as a one-way hash, and receipt photos never reach the server at all.</p>
       </details>
     </div>
-    <p class="fineprint">Last updated: October 1, 2026.</p>
+    <p class="fineprint">Last updated: October 14, 2026.</p>
 <p class="fineprint">Mint, YNAB, Monarch Money, Lunch Money, Copilot Money, Actual Budget, Firefly III, PocketGuard and other product names are trademarks of their respective owners. MyFinance MCP is an independent, open-source project and is not affiliated with or endorsed by them. Comparisons reflect publicly available information at the time of writing and may change.</p>
   </div>
 </section>
@@ -194,6 +210,7 @@
 <footer class="site">
   <div class="wrap foot-inner">
     <a href="/">Home</a>
+    <a href="/install">Install guides</a>
     <a href="/alternatives">Alternatives</a>
     <a href="/blog">Blog</a>
     <a href="https://github.com/alex-odoo/myfinance-mcp" target="_blank" rel="noopener">GitHub</a>

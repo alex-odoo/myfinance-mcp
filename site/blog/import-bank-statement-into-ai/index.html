@@ -20,7 +20,7 @@
 <meta property="og:description" content="AI parses bank statements well and ruins them two ways: invented numbers and duplicate rows. How to get a clean, reconciled import from any CSV or PDF export.">
 <meta property="og:image" content="https://myfinance-mcp.com/og.png">
 <meta name="twitter:card" content="summary_large_image">
-<script type="application/ld+json">{"@context": "https://schema.org", "@type": "BlogPosting", "headline": "Import a Bank Statement into AI: From PDF Mess to Clean Data in One Message", "url": "https://myfinance-mcp.com/blog/import-bank-statement-into-ai", "datePublished": "2026-07-20", "dateModified": "2026-07-20", "author": {"@type": "Organization", "name": "Rteam", "url": "https://rteam.agency"}, "publisher": {"@type": "Organization", "name": "Rteam", "url": "https://rteam.agency"}, "image": "https://myfinance-mcp.com/og.png", "description": "How to get a clean, reconciled bank statement import through an AI assistant: deduplication, reconciliation against the statement total, and the traps to avoid."}</script>
+<script type="application/ld+json">{"@context": "https://schema.org", "@type": "BlogPosting", "headline": "Import a Bank Statement into AI: From PDF Mess to Clean Data in One Message", "url": "https://myfinance-mcp.com/blog/import-bank-statement-into-ai", "datePublished": "2026-07-20", "dateModified": "2026-10-14", "author": {"@type": "Organization", "name": "Rteam", "url": "https://rteam.agency"}, "publisher": {"@type": "Organization", "name": "Rteam", "url": "https://rteam.agency"}, "image": "https://myfinance-mcp.com/og.png", "description": "How to get a clean, reconciled bank statement import through an AI assistant: deduplication, reconciliation against the statement total, and the traps to avoid."}</script>
 <script type="application/ld+json">{"@context": "https://schema.org", "@type": "BreadcrumbList", "itemListElement": [{"@type": "ListItem", "position": 1, "name": "Home", "item": "https://myfinance-mcp.com/"}, {"@type": "ListItem", "position": 2, "name": "Blog", "item": "https://myfinance-mcp.com/blog"}, {"@type": "ListItem", "position": 3, "name": "Import a Bank Statement into AI", "item": "https://myfinance-mcp.com/blog/import-bank-statement-into-ai"}]}</script>
 </head>
 <body>
@@ -70,7 +70,7 @@
   </div>
 
   <h2>Why statements beat bank APIs (for most people, still, in 2026)</h2>
-  <p>Open banking is real in the EU and UK, and where it works it is the better answer. But coverage is uneven: US access runs through commercial aggregators, many banks worldwide expose nothing, and every aggregator supports a finite list. The statement file is the universal fallback: every bank on earth produces one, it needs no consent flow, and it contains the bank's own canonical record of what happened. If your tooling handles statements well, no bank is unsupported.</p>
+  <p>Open banking is real in the EU and UK, and where it works it is the better answer. But coverage is uneven: US access runs through commercial aggregators, many banks worldwide expose nothing, and every aggregator supports a finite list. The statement file is the universal fallback: every bank on earth produces one (and every banking app can show a screenshot of it), it needs no consent flow, and it contains the bank's own canonical record of what happened. If your tooling handles statements well, no bank is unsupported.</p>
 
   <h2>Failure mode 1: the model invents a number</h2>
   <p>Ask an LLM to transcribe a 200-row PDF and it will get 199 rows right with total confidence, which is precisely the problem: you cannot see which row is wrong. Long transcriptions drift: merged rows, a rounded amount, an off-by-one date at a page break.</p>
@@ -84,7 +84,7 @@
     <li><strong>Manual overlap.</strong> You logged the dinner by voice on Tuesday; the same charge arrives in Friday's statement. Naive imports now count it twice; naive dedup deletes your version with the correct category and keeps the bank's cryptic one.</li>
     <li><strong>Chunking.</strong> AI clients split big files into batches to stay within output limits. Batch two does not remember batch one, so recurring identical charges (two 1.50 metro taps on the same day) get merged or doubled depending on the guesswork.</li>
   </ul>
-  <p>The fix is boring and absolute: <strong>stable ids</strong>. Banks print a reference for every transaction; a correct import carries that reference on every row, making re-imports no-ops instead of disasters. This is the same idempotency idea YNAB formalized for CSV imports years ago, and any AI-era tool that skipped it has re-learned why it exists. For the manual-overlap case, the right behavior is a merge that keeps your category and note while attaching the bank's reference, not a delete.</p>
+  <p>The fix is boring and absolute: <strong>stable ids</strong>. Banks print a reference for every transaction; a correct import carries that reference on every row, making re-imports no-ops instead of disasters. This is the same idempotency idea <a href="/ynab-mcp">YNAB</a> formalized for CSV imports years ago, and any AI-era tool that skipped it has re-learned why it exists. For the manual-overlap case, the right behavior is a merge that keeps your category and note while attaching the bank's reference, not a delete.</p>
 
   <p>See the difference yourself. Same June statement, dropped a second time by accident:</p>
   <div class="demo-tabs" data-demo-tabs>
@@ -122,22 +122,23 @@
     <li><strong>Import history in statement-sized chunks,</strong> month by month, checking the total after each. One giant "here are 3 years" file maximizes both failure modes at once.</li>
     <li><strong>Expenses-only imports distort net worth.</strong> If you import spending but not income or balances, anchor the account with its real balance afterward, or every trend chart will show you going broke.</li>
     <li><strong>Multi-currency: keep the original currency per row</strong> and let the tool convert at the transaction date's rate. Converting everything to one currency during import throws information away permanently.</li>
+    <li><strong>Leaving another app?</strong> The same rules apply to an export from <a href="/mint-mcp">Mint</a>, <a href="/monarch-money-mcp">Monarch Money</a>, <a href="/lunch-money-mcp">Lunch Money</a> or <a href="/pocketguard-mcp">PocketGuard</a>: it is just another CSV with references to keep.</li>
   </ul>
 
   <h2>Where this approach ends</h2>
-  <p>Statement import is batch catch-up, not real-time awareness: you learn about June in July. If your bank is reachable by read-only open banking (EU/UK), a daily sync closes that gap and demotes statements to a backup plan. And if you need audited books for a business, none of this replaces accounting software; it feeds it.</p>
+  <p>Statement import is batch catch-up, not real-time awareness: you learn about June in July. Logging the big purchases by voice as they happen and importing the statement at month end closes most of that gap, and if you already use ZenMoney, its read-only sync closes the rest. And if you need audited books for a business, none of this replaces accounting software; it feeds it.</p>
 
   <h2>Try it this week</h2>
   <ol>
     <li>Download last month's statement from your main account, CSV if available.</li>
-    <li>Pick a tool that stores rows with bank references and reconciles totals. (<a href="/#install">Ours connects to Claude or ChatGPT in under a minute</a>; bring your own if you prefer, just interrogate its dedup.)</li>
+    <li>Pick a tool that stores rows with bank references and reconciles totals. (Ours connects to <a href="/install/claude">Claude</a>, <a href="/install/chatgpt">ChatGPT</a>, <a href="/install/cursor">Cursor</a> or <a href="/install/codex">Codex</a> in under a minute; bring your own if you prefer, just interrogate its dedup.)</li>
     <li>Drop the file in, read the import summary line by line, verify the total against the statement footer.</li>
     <li>Drop the same file in again. If anything imports twice, stop using that tool.</li>
   </ol>
 
   <p>That folder of PDFs is the most complete dataset anyone has ever kept about you. This is the year it starts working for you instead of against you.</p>
 
-  <p class="fineprint">Last updated: July 20, 2026. Product names are trademarks of their respective owners. MyFinance MCP is an independent open-source project by Rteam.</p>
+  <p class="fineprint">Last updated: October 14, 2026. Product names are trademarks of their respective owners. MyFinance MCP is an independent open-source project by Rteam.</p>
 </article>
 </main>
 
@@ -155,6 +156,7 @@
 <footer class="site">
   <div class="wrap foot-inner">
     <a href="/">Home</a>
+    <a href="/install">Install guides</a>
     <a href="/alternatives">Alternatives</a>
     <a href="/blog">Blog</a>
     <a href="https://github.com/alex-odoo/myfinance-mcp" target="_blank" rel="noopener">GitHub</a>

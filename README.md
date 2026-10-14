@@ -1,6 +1,6 @@
 # MyFinance MCP
 
-A remote MCP server for personal finance - log expenses by talking, snap receipt photos, import whole bank statements, and get budgets, trends and net worth computed for you, in 150+ currencies.
+A remote MCP server for personal finance, an AI expense tracker for Claude, ChatGPT, Codex and Cursor - log expenses by talking, snap receipt photos, import statements from any bank (CSV, PDF or a screenshot), and get budgets, trends and net worth computed for you, in 150+ currencies.
 
 **Website:** [myfinance-mcp.com](https://myfinance-mcp.com) · Free while in beta · Built by [Rteam](https://rteam.agency)
 
@@ -12,18 +12,27 @@ Already hosted and ready to use - just connect it to your MCP client:
 https://myfinance-mcp.com/mcp
 ```
 
-**On Claude.ai:** Customize → Connectors → **+** → Add custom connector → paste the URL → Connect. Leave the OAuth Client ID and Client Secret fields **empty** - filling them breaks sign-in.
+**On Claude:** Customize → Connectors → **+ Add** → Add custom connector → name it and paste the URL → Continue → Authentication: Sign in now, OAuth client: **Register automatically** → Add. Never choose "Use your own OAuth client" or fill a Client ID/Secret - that breaks sign-in. Works on every Claude plan (Free allows one custom connector).
 
-**On ChatGPT:** Settings → Apps → Create app → paste the URL → choose OAuth → Create.
+**On ChatGPT (web):** turn on Developer mode (Settings → Apps → Advanced settings), then Plugins → **+** → Add custom MCP server (older menu: Settings → Apps → Create) → paste the URL → OAuth, client ID/secret empty → create and sign in → type `@` in a chat to use it. Per OpenAI's help center, custom MCP servers with write actions (needed for logging) are available on Business, Enterprise and Edu; Pro gets read-only access; Free, Go and Plus cannot add them, so use Codex there.
 
-On first connect you sign in with Google or with a one-time code sent to your email; that first sign-in creates your MyFinance account. Your data persists across reconnections.
+**On Cursor:** [Add to Cursor](https://cursor.com/install-mcp?name=MyFinance&config=eyJ1cmwiOiJodHRwczovL215ZmluYW5jZS1tY3AuY29tL21jcCJ9), or add `"myfinance": { "url": "https://myfinance-mcp.com/mcp" }` under `mcpServers` in `~/.cursor/mcp.json`, then click Connect next to MyFinance in Customize.
+
+**On Codex** (included in every ChatGPT plan, Free too):
+
+```bash
+codex mcp add myfinance --url https://myfinance-mcp.com/mcp
+codex mcp login myfinance
+```
+
+On first connect you sign in with Google or with a one-time code sent to your email; that first sign-in creates your MyFinance account. Your data persists across reconnections. Step-by-step guides per client: [myfinance-mcp.com/install](https://myfinance-mcp.com/install).
 
 ## Why
 
 - **No app, no forms, no spreadsheet.** "Spent 24.50 eur on groceries at Lidl" is the whole workflow.
 - **Every number is computed in SQL.** The server owns the data and the math; the AI reads the results, it never guesses arithmetic.
 - **150+ currencies.** Transactions keep their original currency (ECB and National Bank of Ukraine rates, plus a public daily snapshot for every other ISO currency from March 2024); the FX rate to your base currency is frozen at transaction date, so history never rewrites itself.
-- **Statements in one message.** Drop a CSV/PDF export; hundreds of rows import in one call with idempotent deduplication, hand-logged twins merged, totals reconciled.
+- **Any bank, by statement.** Drop a CSV/PDF export or a screenshot from your banking app; hundreds of rows import in one call with idempotent deduplication, hand-logged twins merged, totals reconciled. ZenMoney users can sync read-only instead.
 - **Personal vs business.** Entity tag on accounts and transactions, filterable everywhere, included in CSV export for your accountant.
 - **Dashboards in the chat.** Budgets, trends, summaries and accounts render as interactive panels (MCP Apps) right in the conversation.
 
@@ -62,8 +71,8 @@ On first connect you sign in with Google or with a one-time code sent to your em
 | `update_settings`     | Change base currency or timezone                                                                   |
 | `export_transactions` | CSV export, 2000 rows per page: account, transfer counterpart, entity and receipt items on every row |
 | `export_profile`      | Everything but the transactions as JSON: settings, accounts with balance history, budgets, merchant rules, bank links |
-| `connect_bank`        | Link a real bank via open banking (Enable Banking, EU/UK): list banks, start consent, status, per-account sync toggle, disconnect |
-| `sync_bank`           | Pull booked transactions and balances from the connected bank; incremental, transfer pairing, dedup-safe. Healthy connections also auto-sync server-side roughly daily |
+| `connect_bank`        | _Closed beta, invited accounts only._ Link a real bank via open banking (Enable Banking, EU/UK): list banks, start consent, status, per-account sync toggle, disconnect |
+| `sync_bank`           | _Closed beta, invited accounts only._ Pull booked transactions and balances from the connected bank; incremental, transfer pairing, dedup-safe. Healthy connections also auto-sync server-side roughly daily |
 | `connect_zenmoney`    | Link a ZenMoney account (international and .ru backends auto-detected) for read-only sync          |
 | `sync_zenmoney`       | Pull ZenMoney accounts and transactions; incremental, dedup-safe, keeps your manual edits          |
 | `delete_all_data`     | Permanently delete the user profile and ALL data (GDPR erasure)                                    |
@@ -79,7 +88,7 @@ Four tools return an interactive dashboard (`ui://myfinancemcp/dashboard`) rende
 - Amounts, merchants and notes are never written to server logs (blind logs); usage events keep tool names, timings, error classes and coded argument values, keyed to the account and deleted with it.
 - OAuth 2.1 with PKCE, rotating refresh tokens, rate-limited sign-in.
 - All 28 tools carry MCP annotations (read-only and destructive ops flagged, connector tools marked open-world), so clients can gate confirmations correctly.
-- Bank access is strictly read-only: open banking consent via Enable Banking (the bank authenticates the user; we never see credentials), ZenMoney via the user's own API token. Session ids and tokens are stored AES-256-GCM encrypted.
+- Bank access is strictly read-only: ZenMoney via the user's own API token, and, in the closed beta, open banking consent via Enable Banking (the bank authenticates the user; we never see credentials). Session ids and tokens are stored AES-256-GCM encrypted.
 - CSV export and instant full deletion are tools, not support tickets.
 - Hosted instance: EU data residency (Supabase, eu-central-1), TLS to the database with a pinned CA. Every query is scoped to your account by the server; the database's own API is closed to everyone (row-level security, deny-all).
 - 206 automated end-to-end checks (full OAuth flow for public and confidential clients incl. browser binding and audience checks, every tool, import dedup semantics, GDPR deletion) run as a hard deploy gate; CI runs lint and typecheck on every push.
