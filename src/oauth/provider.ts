@@ -1,4 +1,4 @@
-import { createHash, randomBytes, randomInt, randomUUID, timingSafeEqual } from "node:crypto";
+import { randomBytes, randomInt, randomUUID, timingSafeEqual } from "node:crypto";
 import { setTimeout as sleep } from "node:timers/promises";
 import { Router, urlencoded, type Request, type Response } from "express";
 import type {
@@ -24,6 +24,8 @@ import {
 } from "@modelcontextprotocol/sdk/server/auth/errors.js";
 import { OAuthStore, secretKey, type IssuedTokens } from "./store";
 import { codePage, destinationLabel, loginPage, type LoginClient, type Notice } from "./login";
+import { GOOGLE_CALLBACK_PATH, googleConsentUrl, googleIdentityFromCode } from "./google";
+import { pruneMap, readCookie, sha256 } from "../httpUtil";
 import {
   verifyLogin,
   findOrCreateGoogleUser,
@@ -142,23 +144,10 @@ type RepeatContext =
   /** Only the Google sign-in that finished the request is answered. */
   | { step: "google"; state: string };
 
-const GOOGLE_TIMEOUT_MS = 10_000;
 const REDEMPTION_POLL_MS = 250;
 
 function newSecret(bytes = 32): string {
   return randomBytes(bytes).toString("base64url");
-}
-
-function sha256(value: string): Buffer {
-  return createHash("sha256").update(value).digest();
-}
-
-function readCookie(req: Request, name: string): string | undefined {
-  for (const part of (req.headers.cookie ?? "").split(";")) {
-    const eq = part.indexOf("=");
-    if (eq > 0 && part.slice(0, eq).trim() === name) return part.slice(eq + 1).trim();
-  }
-  return undefined;
 }
 
 /** An error for the log: its class and code, never its message (a query error can quote an address). */
@@ -168,21 +157,6 @@ function errorLabel(err: unknown): string {
   return typeof code === "string" ? `${err.name} ${code}` : err.name;
 }
 
-/** Drops expired entries, then the oldest past the cap (Map order is insertion order). */
-function pruneMap<T extends { expiresAt: number }>(map: Map<string, T>, max = PENDING_MAX): void {
-  const now = Date.now();
-  for (const [key, entry] of map) if (entry.expiresAt < now) map.delete(key);
-  for (const key of map.keys()) {
-    if (map.size < max) break;
-    map.delete(key);
-  }
-}
-
-function decodeJwtPayload(jwt: string): Record<string, unknown> {
-  const parts = jwt.split(".");
-  if (parts.length !== 3) throw new Error("malformed jwt");
-  return JSON.parse(Buffer.from(parts[1]!, "base64url").toString("utf8"));
-}
 
 /** Origin + path without trailing slash; undefined for anything that is not a plain URL. */
 function canonicalResource(value: string | URL): string | undefined {
@@ -354,7 +328,7 @@ export class FinanceOAuthProvider implements OAuthServerProvider {
       name: client.client_name?.slice(0, MAX_CLIENT_NAME),
       redirectUri: params.redirectUri,
     };
-    pruneMap(this.pending);
+    pruneMap(this.pending, PENDING_MAX);
     this.pending.set(requestId, {
       clientId: client.client_id,
       client: loginClient,
@@ -617,21 +591,13 @@ export class FinanceOAuthProvider implements OAuthServerProvider {
         res.status(400).type("html").send(loginPage("", undefined, DIFFERENT_BROWSER));
         return;
       }
-      pruneMap(this.googleStates);
+      pruneMap(this.googleStates, PENDING_MAX);
       const state = newSecret();
       this.googleStates.set(state, { requestId, expiresAt: Date.now() + AUTH_REQUEST_TTL_MS });
-
-      const url = new URL("https://accounts.google.com/o/oauth2/v2/auth");
-      url.searchParams.set("client_id", config.googleClientId);
-      url.searchParams.set("redirect_uri", `${config.baseUrl}/auth/google/callback`);
-      url.searchParams.set("response_type", "code");
-      url.searchParams.set("scope", "openid email");
-      url.searchParams.set("state", state);
-      url.searchParams.set("prompt", "select_account");
-      res.redirect(302, url.href);
+      res.redirect(302, googleConsentUrl(state));
     });
 
-    router.get("/auth/google/callback", async (req, res) => {
+    router.get(GOOGLE_CALLBACK_PATH, async (req, res) => {
       if (!config.googleClientId || !config.googleClientSecret) {
         res.status(404).send("Google sign-in is not configured");
         return;
@@ -691,37 +657,8 @@ export class FinanceOAuthProvider implements OAuthServerProvider {
 
   /** Exchange the Google authorization code and provision/find the user. */
   private async googleUserFromCode(code: string): Promise<SessionUser> {
-    const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
-      method: "POST",
-      headers: { "content-type": "application/x-www-form-urlencoded" },
-      body: new URLSearchParams({
-        code,
-        client_id: config.googleClientId,
-        client_secret: config.googleClientSecret,
-        redirect_uri: `${config.baseUrl}/auth/google/callback`,
-        grant_type: "authorization_code",
-      }),
-      // Sign-in steps of one request run one at a time; a hung call must not hold the rest.
-      signal: AbortSignal.timeout(GOOGLE_TIMEOUT_MS),
-    });
-    if (!tokenRes.ok) throw new Error(`google token endpoint returned ${tokenRes.status}`);
-    const tokens = (await tokenRes.json()) as { id_token?: string };
-    if (!tokens.id_token) throw new Error("google response missing id_token");
-
-    // The id_token arrived directly from Google's token endpoint over TLS,
-    // so claim validation (not signature verification) is what matters here.
-    const claims = decodeJwtPayload(tokens.id_token) as {
-      iss?: string; aud?: string; exp?: number; sub?: string; email?: string; email_verified?: boolean;
-    };
-    if (claims.iss !== "https://accounts.google.com" && claims.iss !== "accounts.google.com") {
-      throw new Error("id_token issuer mismatch");
-    }
-    if (claims.aud !== config.googleClientId) throw new Error("id_token audience mismatch");
-    if (typeof claims.exp !== "number" || claims.exp * 1000 < Date.now()) throw new Error("id_token expired");
-    if (!claims.sub) throw new Error("id_token missing sub");
-    if (!claims.email || claims.email_verified !== true) throw new Error("google email not verified");
-
-    return findOrCreateGoogleUser(claims.email, claims.sub);
+    const { email, sub } = await googleIdentityFromCode(code);
+    return findOrCreateGoogleUser(email, sub);
   }
 
   /**
@@ -753,7 +690,7 @@ export class FinanceOAuthProvider implements OAuthServerProvider {
     redirect.searchParams.set("code", code);
     if (pendingReq.params.state) redirect.searchParams.set("state", pendingReq.params.state);
     this.pending.delete(requestId);
-    pruneMap(this.finished);
+    pruneMap(this.finished, PENDING_MAX);
     this.finished.set(requestId, {
       browserHash: pendingReq.browserHash,
       expiresAt,

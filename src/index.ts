@@ -1,4 +1,4 @@
-import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
+import { randomBytes, timingSafeEqual } from "node:crypto";
 import express from "express";
 import { mcpAuthRouter } from "@modelcontextprotocol/sdk/server/auth/router.js";
 import { requireBearerAuth } from "@modelcontextprotocol/sdk/server/auth/middleware/bearerAuth.js";
@@ -15,6 +15,9 @@ import { instrumentTransport, pruneOldEvents } from "./telemetry";
 import { ebCreateSession } from "./enablebanking/client";
 import { runAutoSync } from "./autosync";
 import { decryptToken, encryptToken } from "./zenmoney/crypto";
+import { GOOGLE_CALLBACK_PATH } from "./oauth/google";
+import { adminGoogleCallback, adminRouter } from "./admin/router";
+import { readCookie, sha256 } from "./httpUtil";
 
 assertConfig();
 
@@ -216,6 +219,10 @@ app.use(
     revocationOptions: { rateLimit: { windowMs: 15 * 60 * 1000, max: 1000 } },
   })
 );
+// The operator overview shares the Google callback: its handler goes first
+// and passes on every state it did not issue.
+app.get(GOOGLE_CALLBACK_PATH, adminGoogleCallback);
+app.use(adminRouter());
 app.use(provider.loginRouter());
 
 // RFC 9728 root variant. The SDK router mounts protected-resource metadata at
@@ -373,16 +380,6 @@ const confirmPage = (state: string, bank: string, account: string) =>
       `<form method="post" action="${BANK_PATH}/confirm"><input type="hidden" name="state" value="${escapeHtml(state)}">` +
       `<button class="go" name="decision" value="connect">Connect</button><button class="stop" name="decision" value="cancel">Cancel</button></form>`
   );
-
-const sha256 = (value: string) => createHash("sha256").update(value).digest();
-
-function readCookie(req: express.Request, name: string): string | undefined {
-  for (const part of (req.headers.cookie ?? "").split(";")) {
-    const eq = part.indexOf("=");
-    if (eq > 0 && part.slice(0, eq).trim() === name) return part.slice(eq + 1).trim();
-  }
-  return undefined;
-}
 
 type BankLinkMeta = Record<string, unknown> & {
   state?: string;

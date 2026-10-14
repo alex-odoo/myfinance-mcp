@@ -191,12 +191,12 @@ for d in "$DOMAIN" "$LEGACY_DOMAIN"; do
   fi
 done
 
-# The sign-in steps through nginx, as a browser sends them: each must reach the
+# The sign-in steps (and the /admin pages) through nginx, as a browser sends them: each must reach the
 # app, whose answers carry X-Powered-By (nginx's own 301, 404 and 5xx pages do
 # not). The e2e talks to the app port, so twice a release went live with one of
 # them broken (/login/email 404, /login 301). Empty ids cost no sign-in budget.
 for d in $reachable; do
-  for step in "POST /login" "POST /login/email" "POST /login/email/verify" "GET /auth/google?request_id=" "GET /auth/google/callback?state="; do
+  for step in "POST /login" "POST /login/email" "POST /login/email/verify" "GET /auth/google?request_id=" "GET /auth/google/callback?state=" "GET /admin" "POST /admin/logout"; do
     method=${step%% *}
     route=${step#* }
     if [ "$method" = POST ]; then
@@ -210,6 +210,6 @@ for d in $reachable; do
     fi
   done
 done
-echo "    sign-in steps reach the app through nginx"
+echo "    sign-in steps and /admin reach the app through nginx"
 
 echo "==> Done: $MSG"

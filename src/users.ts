@@ -78,7 +78,8 @@ export class NoEmailSignInError extends Error {
   }
 }
 
-const otherSignIn = (u: { googleSub: string | null; passwordHash: string | null }): OtherSignIn | null =>
+/** How an account signs in when it is not by email code; null for an email-code account. */
+export const otherSignIn = (u: { googleSub: string | null; passwordHash: string | null }): OtherSignIn | null =>
   u.googleSub ? "google" : u.passwordHash ? "password" : null;
 
 /**

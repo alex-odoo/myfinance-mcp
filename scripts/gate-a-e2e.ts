@@ -106,6 +106,41 @@ const sentMail: Array<{ to: string; subject: string; text: string }> = [];
 let mailStub: { stop: (closeActiveConnections?: boolean) => void } | null = null;
 /** Users this run created besides the gate-a test user; spawn mode deletes them on exit. */
 const createdUserEmails: string[] = [];
+const GOOGLE_CLIENT_ID = "e2e-google-client.apps.googleusercontent.com";
+/** The only address the spawned server lets into /admin. */
+const ADMIN_EMAIL = "admin@test.local";
+let googleStub: { port?: number; stop: (closeActiveConnections?: boolean) => void } | null = null;
+const runStartedAt = new Date();
+
+/**
+ * Google token endpoint stub, on a free port. A code "e2e-email:<address>[#n]"
+ * comes back once as an id_token for that verified address; any other code,
+ * or one already exchanged, is refused, as Google refuses them.
+ */
+function startGoogleStub() {
+  const spent = new Set<string>();
+  return Bun.serve({
+    port: 0,
+    hostname: "127.0.0.1",
+    async fetch(req) {
+      if (new URL(req.url).pathname !== "/token" || req.method !== "POST") return new Response("not found", { status: 404 });
+      const code = new URLSearchParams(await req.text()).get("code") ?? "";
+      if (!code.startsWith("e2e-email:") || spent.has(code)) return Response.json({ error: "invalid_grant" }, { status: 400 });
+      spent.add(code);
+      const email = code.slice("e2e-email:".length).split("#")[0]!;
+      const part = (o: object) => Buffer.from(JSON.stringify(o)).toString("base64url");
+      const claims = {
+        iss: "https://accounts.google.com",
+        aud: GOOGLE_CLIENT_ID,
+        exp: Math.floor(Date.now() / 1000) + 300,
+        sub: `e2e-sub-${email}`,
+        email,
+        email_verified: true,
+      };
+      return Response.json({ id_token: `${part({ alg: "none" })}.${part(claims)}.sig` });
+    },
+  });
+}
 
 function startMailStub() {
   return Bun.serve({
@@ -325,6 +360,7 @@ async function main(): Promise<void> {
     zenStub = startZenStub();
     ebStub = startEbStub();
     mailStub = startMailStub();
+    googleStub = startGoogleStub();
     serverProc = Bun.spawn(["bun", "run", "src/index.ts"], {
       env: {
         ...process.env,
@@ -334,8 +370,10 @@ async function main(): Promise<void> {
         MYFINANCE_MCP_PASSWORD_HASH: hash,
         // Fake Google OAuth client: enables the button + start/callback routes
         // so the redirect and CSRF-state negative paths are testable offline.
-        GOOGLE_CLIENT_ID: "e2e-google-client.apps.googleusercontent.com",
+        GOOGLE_CLIENT_ID,
         GOOGLE_CLIENT_SECRET: "e2e-google-secret",
+        GOOGLE_TOKEN_URL: `http://127.0.0.1:${googleStub.port}/token`,
+        ADMIN_EMAILS: ADMIN_EMAIL,
         ZENMONEY_API_BASE: `http://localhost:${ZEN_PORT}`,
         TOKEN_ENC_KEY: "ab".repeat(32),
         REFRESH_REUSE_GRACE_MS: String(E2E_REFRESH_GRACE_MS),
@@ -2195,6 +2233,135 @@ async function main(): Promise<void> {
     ok("prod smoke revokes its own tokens", afterRevoke.status === 400);
   }
 
+  // 13b. Operator overview (/admin): Google sign-in for ADMIN_EMAILS only,
+  // never creates an account, counts only. Spawn mode: needs the Google stub.
+  if (!externalBase) {
+    const get = (path: string, cookie = "", ip = "") =>
+      fetch(`${BASE}${path}`, {
+        redirect: "manual",
+        headers: { ...(cookie ? { cookie } : {}), ...(ip ? { "x-forwarded-for": ip } : {}) },
+      });
+    const setCookie = (res: Response, name: string) => res.headers.getSetCookie().find((c) => c.startsWith(`${name}=`)) ?? "";
+    // The state cookie's name carries the head of its nonce (one per sign-in).
+    const stateCookieOf = (res: Response) => res.headers.getSetCookie().find((c) => c.startsWith("mf_admin_st_")) ?? "";
+    const pair = (raw: string) => raw.split(";")[0] ?? "";
+    // One admin sign-in attempt: start, then Google's redirect back with `code`.
+    const adminSignIn = async (code: string, opts: { withBrowser?: boolean; ip?: string } = {}) => {
+      const start = await get("/admin/login", "", opts.ip);
+      const state = new URL(start.headers.get("location") ?? "http://invalid/").searchParams.get("state") ?? "";
+      const browser = pair(stateCookieOf(start));
+      const url = `/auth/google/callback?state=${encodeURIComponent(state)}&code=${encodeURIComponent(code)}`;
+      const back = await get(url, opts.withBrowser === false ? "" : browser, opts.ip);
+      return { start, state, browser, url, back, html: await back.text() };
+    };
+
+    const anon = await get("/admin");
+    const anonHtml = await anon.text();
+    ok("admin without a session -> 401 sign-in page", anon.status === 401 && anonHtml.includes(`href="/admin/login"`));
+    ok(
+      "admin pages are never cached, framed or scripted",
+      anon.headers.get("cache-control") === "no-store" &&
+        anon.headers.get("x-frame-options") === "DENY" &&
+        (anon.headers.get("content-security-policy") ?? "").includes("default-src 'none'") &&
+        !anonHtml.includes("<script")
+    );
+
+    const first = await adminSignIn(`e2e-email:${ADMIN_EMAIL}#first`, { withBrowser: false });
+    ok(
+      "admin login -> 302 to Google with an adm. state, browser cookie scoped to the callback",
+      first.start.status === 302 &&
+        (first.start.headers.get("location") ?? "").startsWith("https://accounts.google.com/o/oauth2/v2/auth") &&
+        first.state.startsWith("adm.") &&
+        /Path=\/auth\/google\/callback/i.test(stateCookieOf(first.start)) &&
+        /HttpOnly/i.test(stateCookieOf(first.start))
+    );
+    ok(
+      "admin callback from another browser -> 400, no session",
+      first.back.status === 400 && first.html.includes("different browser") && !setCookie(first.back, "mf_admin")
+    );
+    const nonce = randomBytes(32).toString("base64url");
+    const stale = await get(
+      `/auth/google/callback?state=adm.${(Date.now() - 11 * 60 * 1000).toString(36)}.${nonce}&code=e2e-email:${ADMIN_EMAIL}%23stale`,
+      `mf_admin_st_${nonce.slice(0, 12)}=${nonce}`
+    );
+    const staleHtml = await stale.text();
+    ok(
+      "an expired admin state gets the admin page's own answer, not the connector's",
+      stale.status === 400 && staleHtml.includes("MyFinance Admin") && staleHtml.includes("expired") && !setCookie(stale, "mf_admin")
+    );
+
+    const stranger = `stranger-${randomBytes(4).toString("hex")}@test.local`;
+    createdUserEmails.push(stranger);
+    const refused = await adminSignIn(`e2e-email:${stranger}`);
+    const { db: adb } = await import("../src/db");
+    ok(
+      "a Google account outside ADMIN_EMAILS -> 403, no session, no MyFinance account created",
+      refused.back.status === 403 &&
+        !setCookie(refused.back, "mf_admin") &&
+        (await adb.user.count({ where: { email: stranger } })) === 0
+    );
+    const bad = await adminSignIn("not-a-google-code");
+    ok("a code Google refuses -> 401, no session", bad.back.status === 401 && !setCookie(bad.back, "mf_admin"));
+
+    // Google returns the address as the account has it: the allowlist ignores case.
+    const admitted = await adminSignIn(`e2e-email:${ADMIN_EMAIL.toUpperCase()}`);
+    const sessionRaw = setCookie(admitted.back, "mf_admin");
+    ok(
+      "allowed admin -> 303 to /admin with an HttpOnly, Lax session cookie scoped to /admin",
+      admitted.back.status === 303 &&
+        admitted.back.headers.get("location") === "/admin" &&
+        /Path=\/admin/i.test(sessionRaw) &&
+        /HttpOnly/i.test(sessionRaw) &&
+        /SameSite=Lax/i.test(sessionRaw),
+      `${admitted.back.status} ${sessionRaw}`
+    );
+    ok("admin sign-in creates no MyFinance account", (await adb.user.count({ where: { email: ADMIN_EMAIL } })) === 0);
+    // Two sign-ins in flight in one browser (two tabs): each finds its own cookie.
+    const tabA = await get("/admin/login");
+    const tabB = await get("/admin/login");
+    const cookiesAB = `${pair(stateCookieOf(tabA))}; ${pair(stateCookieOf(tabB))}`;
+    const stateA = new URL(tabA.headers.get("location") ?? "http://invalid/").searchParams.get("state") ?? "";
+    const backA = await get(`/auth/google/callback?state=${encodeURIComponent(stateA)}&code=e2e-email:${ADMIN_EMAIL}%23tabA`, cookiesAB);
+    ok("an admin sign-in still completes after a second one started in another tab", backA.status === 303 && !!setCookie(backA, "mf_admin"));
+    const replay = await get(admitted.url, admitted.browser);
+    ok("a replayed admin callback gets no session (the Google code is spent)", replay.status === 401 && !setCookie(replay, "mf_admin"));
+    const session = pair(sessionRaw);
+
+    const dash = await get("/admin", session);
+    const dashHtml = await dash.text();
+    ok("admin dashboard renders for the session", dash.status === 200 && dashHtml.includes("MyFinance Admin") && dashHtml.includes("Funnel"));
+    ok(
+      "operator account listed and marked; external users listed",
+      dashHtml.includes(EMAIL) &&
+        dashHtml.includes(`<span class="chip">operator</span>`) &&
+        createdUserEmails.some((addr) => addr !== stranger && dashHtml.includes(addr))
+    );
+    ok("admin dashboard shows counts, never merchants", !dashHtml.includes("Silpo") && !dashHtml.includes("<script"));
+
+    // Five failed sign-ins from one address shut it out for 15 minutes; others are untouched.
+    const noisy = "198.51.100.77";
+    for (let i = 0; i < 5; i++) await adminSignIn(`not-a-google-code-${i}`, { ip: noisy });
+    ok("five failed admin sign-ins from one address -> 429 there", (await get("/admin/login", "", noisy)).status === 429);
+    ok("another address can still start an admin sign-in", (await get("/admin/login")).status === 302);
+
+    const foreign = await fetch(`${BASE}/admin/logout`, {
+      method: "POST",
+      redirect: "manual",
+      headers: { cookie: session, origin: "https://evil.example" },
+    });
+    ok("admin logout from a foreign origin -> 403", foreign.status === 403);
+    ok("the session survives a refused logout", (await get("/admin", session)).status === 200);
+    // A browser sends the page's own origin with the Sign out form (Referrer-Policy same-origin).
+    ok("admin pages set Referrer-Policy same-origin", anon.headers.get("referrer-policy") === "same-origin");
+    const logout = await fetch(`${BASE}/admin/logout`, {
+      method: "POST",
+      redirect: "manual",
+      headers: { cookie: session, origin: new URL(BASE).origin },
+    });
+    ok("admin logout -> 303 /admin, cookie cleared", logout.status === 303 && /mf_admin=;/.test(setCookie(logout, "mf_admin")));
+    ok("a signed-out session no longer opens /admin", (await get("/admin", session)).status === 401);
+  }
+
   // 14. GDPR wipe (spawn mode only) - last, since it also revokes all tokens
   if (!externalBase) {
     const wipeRes = await mcpCall(refreshed.access_token, {
@@ -2235,6 +2402,8 @@ try {
       await db.oauthCode.deleteMany({ where: { userId: { in: ids } } });
       await db.event.deleteMany({ where: { userId: { in: ids } } });
       await db.user.deleteMany({ where: { id: { in: ids } } });
+      // The /admin checks' sign-in events carry no user id.
+      await db.event.deleteMany({ where: { type: "admin_signin", createdAt: { gte: runStartedAt } } });
     } catch (e) {
       console.error("WARN: e2e user cleanup failed:", e instanceof Error ? e.message : String(e));
     }
@@ -2267,4 +2436,5 @@ try {
   (zenStub as { stop: (closeActiveConnections?: boolean) => void } | null)?.stop(true);
   (ebStub as { stop: (closeActiveConnections?: boolean) => void } | null)?.stop(true);
   (mailStub as { stop: (closeActiveConnections?: boolean) => void } | null)?.stop(true);
+  (googleStub as { stop: (closeActiveConnections?: boolean) => void } | null)?.stop(true);
 }

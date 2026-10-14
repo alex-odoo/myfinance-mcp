@@ -1,3 +1,6 @@
+const GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token";
+const LOOPBACK = new Set(["localhost", "127.0.0.1", "[::1]"]);
+
 /** A duration setting: anything but a non-negative number falls back to the default. */
 function milliseconds(value: string | undefined, fallback: number): number {
   const n = value === undefined || value.trim() === "" ? fallback : Number(value);
@@ -20,6 +23,15 @@ export const config = {
   // only when both values are set.
   googleClientId: process.env.GOOGLE_CLIENT_ID ?? "",
   googleClientSecret: process.env.GOOGLE_CLIENT_SECRET ?? "",
+  // Google's token endpoint. The override lets e2e finish a Google sign-in
+  // against a local stub; assertConfig refuses it anywhere else.
+  googleTokenUrl: process.env.GOOGLE_TOKEN_URL || GOOGLE_TOKEN_URL,
+  // Operator overview at /admin: Google sign-in, only these addresses
+  // (comma-separated). Empty = the page does not exist.
+  adminEmails: (process.env.ADMIN_EMAILS ?? "")
+    .split(",")
+    .map((email) => email.trim().toLowerCase())
+    .filter(Boolean),
   // Resend: signup notifications (off unless key + recipient are set) and
   // email sign-in codes (off unless key + sender are set).
   resendApiKey: process.env.RESEND_API_KEY ?? "",
@@ -61,6 +73,24 @@ export function assertConfig(): void {
       "MYFINANCE_MCP_EMAIL and MYFINANCE_MCP_PASSWORD_HASH are required. " +
         "Generate the hash with: bun -e \"console.log(await Bun.password.hash(process.argv[1]))\" 'your-password'"
     );
+  }
+  // The id_token is trusted for arriving from this URL (its signature is not
+  // checked), so whoever answers here decides who signs in, admin included.
+  // Only a local test setup, both ends on loopback, may point it elsewhere.
+  if (config.googleTokenUrl !== GOOGLE_TOKEN_URL) {
+    const host = (url: string) => {
+      try {
+        return new URL(url).hostname;
+      } catch {
+        return "";
+      }
+    };
+    if (!LOOPBACK.has(host(config.googleTokenUrl)) || !LOOPBACK.has(host(config.baseUrl))) {
+      throw new Error("GOOGLE_TOKEN_URL may differ from Google's only in a local test setup (it and BASE_URL on loopback).");
+    }
+  }
+  if (config.adminEmails.length && !(config.googleClientId && config.googleClientSecret)) {
+    console.warn("[admin] ADMIN_EMAILS is set, but Google sign-in is not configured: /admin stays off.");
   }
   if (!config.databaseUrl) {
     throw new Error("DATABASE_URL is required (Supabase Postgres, session pooler URL).");

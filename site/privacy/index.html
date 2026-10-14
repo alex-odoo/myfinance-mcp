@@ -13,7 +13,7 @@
 <link rel="icon" href="/favicon.ico" sizes="48x48">
 <link rel="apple-touch-icon" href="/apple-touch-icon.png">
 <link rel="stylesheet" href="/styles.css">
-<script type="application/ld+json">{"@context": "https://schema.org", "@type": "WebPage", "url": "https://myfinance-mcp.com/privacy", "datePublished": "2026-07-16", "dateModified": "2026-10-01", "publisher": {"@type": "Organization", "name": "Rteam", "url": "https://rteam.agency"}}</script>
+<script type="application/ld+json">{"@context": "https://schema.org", "@type": "WebPage", "url": "https://myfinance-mcp.com/privacy", "datePublished": "2026-07-16", "dateModified": "2026-10-14", "publisher": {"@type": "Organization", "name": "Rteam", "url": "https://rteam.agency"}}</script>
 </head>
 <body>
 
@@ -38,7 +38,7 @@
 
 <main class="wrap doc">
   <h1>Privacy &amp; Terms</h1>
-  <span class="updated num">Last updated: 2026-10-01</span>
+  <span class="updated num">Last updated: 2026-10-14</span>
 
   <h2>The short version</h2>
   <p>Your financial records belong to you. We store what you log, import or sync (amounts, categories, merchants, dates, accounts) so the server can compute your summaries, and we do not sell or share it for advertising. The product has no third-party analytics; these marketing pages use Google Analytics only if you allow it (details below). Export your transactions as CSV or delete your whole account from the chat at any time.</p>
@@ -50,7 +50,7 @@
     <li><strong>Bank connections, only if you create one:</strong> through <strong>Enable Banking</strong> (a licensed EU open-banking provider) we store the encrypted session id, the consent expiry, your bank's name and the list of accounts your bank returns (names, account identifiers such as IBAN, currencies). While the consent is valid (at most 90 days) the server pulls booked transactions and balances about once a day, including counterparty names and payment descriptions. Through <strong>ZenMoney</strong> we store your API token, encrypted, and sync your accounts and transactions. A bank link binds only after you confirm, on our page, which MyFinance account receives the access. Disconnecting revokes the bank session and erases the token; imported transactions stay until you delete them.</li>
     <li><strong>Sign-in tokens:</strong> access tokens (24 hours) and refresh tokens (replaced on every use; they lapse after 60 days without use and a year after you signed in) for the AI clients you connect, stored only as a one-way hash.</li>
     <li><strong>Exchange rates:</strong> daily reference rates (ECB, the National Bank of Ukraine, and for other currencies the public fawazahmed0 currency snapshot), shared by everyone and not tied to you. Fetching them sends only a date, never anything about you.</li>
-    <li><strong>Usage events:</strong> which tool was called, how long it took, which arguments were present, coded values such as a category, currency or period, an error code, and the name of your AI client. They are keyed to your account id, never contain amounts, merchants or notes, and are kept for 90 days (import and deletion counters longer). All of them are deleted with your account.</li>
+    <li><strong>Usage events:</strong> which tool was called, how long it took, which arguments were present, coded values such as a category, currency or period, an error code, and the name of your AI client. They are keyed to your account id, never contain amounts, merchants or notes, and are kept for 90 days (import and deletion counters longer). All of them are deleted with your account. The operator reviews them on a private overview page, next to each account's email, sign-up date, sign-in method, base currency, timezone, connected bank services and their status, when it last stored a record, and its numbers of records, accounts and budgets; amounts, merchants and notes never appear there.</li>
   </ul>
 
   <h2>What we never store</h2>
@@ -93,7 +93,7 @@
 
   <h2>Contact</h2>
   <p>Questions about privacy or your data: <a id="mailLink" href="#contact">show email</a><noscript>alex [at] a-systems.pro</noscript>. Operated by Rteam FZE LLC.</p>
-<p class="fineprint">Last updated: October 1, 2026.</p>
+<p class="fineprint">Last updated: October 14, 2026.</p>
 </main>
 
 <footer class="site">
