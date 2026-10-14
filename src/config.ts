@@ -26,6 +26,9 @@ export const config = {
   // Google's token endpoint. The override lets e2e finish a Google sign-in
   // against a local stub; assertConfig refuses it anywhere else.
   googleTokenUrl: process.env.GOOGLE_TOKEN_URL || GOOGLE_TOKEN_URL,
+  // Client ID Metadata Documents served over http from loopback: e2e only (a
+  // local stub publishes the document). assertConfig refuses it elsewhere.
+  cimdAllowLoopback: process.env.CIMD_ALLOW_LOOPBACK === "1",
   // Operator overview at /admin: Google sign-in, only these addresses
   // (comma-separated). Empty = the page does not exist.
   adminEmails: (process.env.ADMIN_EMAILS ?? "")
@@ -98,6 +101,17 @@ export function assertConfig(): void {
     if (!LOOPBACK.has(host(config.googleTokenUrl)) || !LOOPBACK.has(host(config.baseUrl))) {
       throw new Error("GOOGLE_TOKEN_URL may differ from Google's only in a local test setup (it and BASE_URL on loopback).");
     }
+  }
+  // A client_id on http://127.0.0.1 is any local process: only a local test
+  // setup may accept one.
+  if (config.cimdAllowLoopback) {
+    let baseHost = "";
+    try {
+      baseHost = new URL(config.baseUrl).hostname;
+    } catch {
+      /* refused below */
+    }
+    if (!LOOPBACK.has(baseHost)) throw new Error("CIMD_ALLOW_LOOPBACK is for a local test setup only (BASE_URL on loopback).");
   }
   if (config.adminEmails.length && !(config.googleClientId && config.googleClientSecret)) {
     console.warn("[admin] ADMIN_EMAILS is set, but Google sign-in is not configured: /admin stays off.");

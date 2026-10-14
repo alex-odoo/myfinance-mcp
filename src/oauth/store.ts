@@ -3,6 +3,7 @@ import type { OAuthClientInformationFull } from "@modelcontextprotocol/sdk/share
 import { InvalidGrantError } from "@modelcontextprotocol/sdk/server/auth/errors.js";
 import type { Prisma } from "../generated/prisma/client";
 import { db, logEvent } from "../db";
+import { cimdClient, isCimdClientId } from "./cimd";
 
 export interface AuthCodeRecord {
   clientId: string;
@@ -83,6 +84,8 @@ function hasSdkDefaultSecretStamp(client: OAuthClientInformationFull): boolean {
  */
 export class OAuthStore {
   async getClient(clientId: string): Promise<OAuthClientInformationFull | undefined> {
+    // A URL client_id is a published document, never a registration row.
+    if (isCimdClientId(clientId)) return cimdClient(clientId);
     const row = await db.oauthClient.findUnique({ where: { clientId } });
     if (!row) return undefined;
     const client = row.data as unknown as OAuthClientInformationFull;

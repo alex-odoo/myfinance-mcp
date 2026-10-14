@@ -111,6 +111,55 @@ const GOOGLE_CLIENT_ID = "e2e-google-client.apps.googleusercontent.com";
 const ADMIN_EMAIL = "admin@test.local";
 let googleStub: { port?: number; stop: (closeActiveConnections?: boolean) => void } | null = null;
 const runStartedAt = new Date();
+let cimdStub: { port?: number; stop: (closeActiveConnections?: boolean) => void } | null = null;
+/** What /flaky.json answers: its document, 503 (host down) or 404 (withdrawn). */
+let cimdMode: "ok" | "down" | "gone" = "ok";
+let cimdFlakyHits = 0;
+
+/**
+ * Published client documents (CIMD) on a free loopback port. /client.json is
+ * a valid one; the others each break one rule; /flaky.json is steered by
+ * cimdMode.
+ */
+function startCimdStub() {
+  return Bun.serve({
+    port: 0,
+    hostname: "127.0.0.1",
+    fetch(req) {
+      const url = new URL(req.url);
+      const doc = (extra: object = {}) => ({
+        client_id: `http://127.0.0.1:${url.port}${url.pathname}`,
+        client_name: "E2E Published Client",
+        redirect_uris: [REDIRECT_URI],
+        grant_types: ["authorization_code", "refresh_token"],
+        response_types: ["code"],
+        token_endpoint_auth_method: "none",
+        ...extra,
+      });
+      switch (url.pathname) {
+        case "/client.json":
+          return Response.json(doc(), { headers: { "cache-control": "public, max-age=300" } });
+        case "/wrong-id.json":
+          return Response.json(doc({ client_id: "http://127.0.0.1:1/other.json" }));
+        case "/secret.json":
+          return Response.json(doc({ client_secret: "e2e-secret" }));
+        case "/jwt.json":
+          return Response.json(doc({ token_endpoint_auth_method: "private_key_jwt" }));
+        case "/moved.json":
+          return new Response(null, { status: 302, headers: { location: "/client.json" } });
+        case "/big.json":
+          return Response.json(doc({ padding: "x".repeat(20_000) }));
+        case "/flaky.json":
+          cimdFlakyHits++;
+          if (cimdMode === "down") return new Response("unavailable", { status: 503 });
+          if (cimdMode === "gone") return new Response("not found", { status: 404 });
+          return Response.json(doc({ client_name: "E2E Flaky Client" }));
+        default:
+          return new Response("not found", { status: 404 });
+      }
+    },
+  });
+}
 
 /**
  * Google token endpoint stub, on a free port. A code "e2e-email:<address>[#n]"
@@ -367,6 +416,8 @@ async function main(): Promise<void> {
     process.env.FROM_EMAIL = "noreply@test.local";
     // The run's own account keeps direct bank sync (12eb); new accounts do not.
     process.env.BANK_SYNC_EMAILS = EMAIL;
+    // Published client documents come from a local http stub (2c).
+    process.env.CIMD_ALLOW_LOOPBACK = "1";
     // Idempotency: a previously crashed run may have left the test user behind
     if (!EMAIL.endsWith("@test.local")) throw new Error(`refusing to wipe non-test user ${EMAIL}`);
     const { db } = await import("../src/db");
@@ -383,6 +434,7 @@ async function main(): Promise<void> {
     ebStub = startEbStub();
     mailStub = startMailStub();
     googleStub = startGoogleStub();
+    cimdStub = startCimdStub();
     serverProc = Bun.spawn(["bun", "run", "src/index.ts"], {
       env: {
         ...process.env,
@@ -452,6 +504,21 @@ async function main(): Promise<void> {
   ok("protected resource metadata", prm.resource?.endsWith("/mcp"));
   const prmRoot: any = await (await fetch(`${BASE}/.well-known/oauth-protected-resource`)).json();
   ok("protected resource metadata (root variant)", prmRoot.resource?.endsWith("/mcp"));
+  // claude.ai picks its published identity (CIMD) only when both are listed
+  ok(
+    "AS metadata advertises client ID metadata documents for public clients",
+    asMeta.client_id_metadata_document_supported === true && asMeta.token_endpoint_auth_methods_supported?.includes("none")
+  );
+  ok(
+    "AS metadata lists offline_access next to finance",
+    asMeta.scopes_supported?.includes("offline_access") && asMeta.scopes_supported?.includes("finance"),
+    JSON.stringify(asMeta.scopes_supported)
+  );
+  ok(
+    "resource metadata keeps the resource's own scopes",
+    JSON.stringify(prm.scopes_supported) === JSON.stringify(["finance"]),
+    JSON.stringify(prm.scopes_supported)
+  );
 
   const form = (url: string, params: Record<string, string>) =>
     fetch(url, {
@@ -681,6 +748,166 @@ async function main(): Promise<void> {
       "stored past secret expiry is enforced",
       (await oauthError(await tokenPost({ ...fakeRefresh, ...auth }))) === "invalid_client"
     );
+  }
+
+  // 2c. Published client identity (CIMD), claude.ai's "Use Claude's
+  // published identity": the client_id is the URL of a document the client
+  // serves. The server fetches and checks it; nothing is registered. Spawn
+  // mode only: the documents come from a local stub.
+  if (!externalBase && cimdStub) {
+    const docUrl = (name: string) => `http://127.0.0.1:${cimdStub!.port}/${name}`;
+    const published = docUrl("client.json");
+    const flaky = docUrl("flaky.json");
+    createdClients.push(published, flaky);
+    const authorizeAs = async (clientId: string, scope?: string, redirectUri = REDIRECT_URI) => {
+      const verifier = b64url(randomBytes(48));
+      const url = new URL(asMeta.authorization_endpoint);
+      url.searchParams.set("response_type", "code");
+      url.searchParams.set("client_id", clientId);
+      url.searchParams.set("redirect_uri", redirectUri);
+      url.searchParams.set("code_challenge", b64url(createHash("sha256").update(verifier).digest()));
+      url.searchParams.set("code_challenge_method", "S256");
+      if (scope) url.searchParams.set("scope", scope);
+      const res = await fetch(url, { redirect: "manual" });
+      return { res, verifier, html: await res.text() };
+    };
+    const pub = await authorizeAs(published, "finance offline_access");
+    const pubRid = pub.html.match(/name="request_id" value="([^"]+)"/)?.[1] ?? "";
+    ok(
+      "published client: /authorize shows the sign-in page with its published name",
+      pub.res.status === 200 && !!pubRid && pub.html.includes("E2E Published Client"),
+      String(pub.res.status)
+    );
+    const pubLogin = await loginPost(pubRid, PASSWORD, browserCookie(pub.res));
+    const pubCode = new URL(pubLogin.headers.get("location") ?? "http://invalid/").searchParams.get("code") ?? "";
+    const pubTokRes = await tokenPost({
+      grant_type: "authorization_code",
+      code: pubCode,
+      code_verifier: pub.verifier,
+      redirect_uri: REDIRECT_URI,
+      client_id: published,
+    });
+    const pubTok: any = await pubTokRes.json();
+    ok(
+      "published client: code -> tokens without a secret, refresh token included",
+      pubTokRes.status === 200 && !!pubTok.access_token && !!pubTok.refresh_token,
+      JSON.stringify({ status: pubTokRes.status, error: pubTok.error, desc: pubTok.error_description })
+    );
+    ok("offline_access asked for -> granted back in scope", String(pubTok.scope ?? "").split(" ").includes("offline_access"), String(pubTok.scope));
+    ok(
+      "published client: access token works",
+      (await mcpCall(pubTok.access_token, { jsonrpc: "2.0", id: 91, method: "tools/call", params: { name: "ping", arguments: {} } })).status === 200
+    );
+    const pubRef = await tokenPost({ grant_type: "refresh_token", refresh_token: pubTok.refresh_token, client_id: published });
+    const pubRefJson: any = await pubRef.json();
+    ok(
+      "published client: refresh rotates",
+      pubRef.status === 200 && !!pubRefJson.refresh_token && pubRefJson.refresh_token !== pubTok.refresh_token,
+      JSON.stringify({ status: pubRef.status, error: pubRefJson.error })
+    );
+    const { db: cdb } = await import("../src/db");
+    const keptRow = await cdb.oauthClient.findUnique({ where: { clientId: published } });
+    ok(
+      "published client keeps a copy of its document after a sign-in",
+      typeof (keptRow?.data as { cimd_fetched_at?: unknown } | undefined)?.cimd_fetched_at === "number"
+    );
+    const elsewhere = await authorizeAs(published, undefined, "https://elsewhere.example/callback");
+    ok(
+      "published client: a redirect_uri its document does not list -> 400, no redirect",
+      elsewhere.res.status === 400 && !elsewhere.res.headers.get("location"),
+      String(elsewhere.res.status)
+    );
+    const refusals: Array<[string, string]> = [
+      ["wrong-id.json", "different client_id"],
+      ["secret.json", "client secret"],
+      ["jwt.json", "public clients only"],
+      ["moved.json", "redirects"],
+      ["big.json", "too large"],
+      ["missing.json", "no client metadata"],
+    ];
+    for (const [name, why] of refusals) {
+      const bad = await authorizeAs(docUrl(name));
+      ok(
+        `published client ${name} -> 400 page naming the reason`,
+        bad.res.status === 400 && bad.html.includes("could not verify") && bad.html.includes(why),
+        `${bad.res.status} ${bad.html.match(/could not verify[^<]*/)?.[0] ?? bad.html.slice(0, 160)}`
+      );
+    }
+    await form(asMeta.revocation_endpoint, { token: pubRefJson.refresh_token, client_id: published });
+
+    // In-process (the server's cache lives in the other process): URL and
+    // address rules, the cache, the kept copy.
+    const cimd = await import("../src/oauth/cimd");
+    const urlCases: Array<[string, string | undefined]> = [
+      ["https://claude.ai/oauth/mcp-oauth-client-metadata", undefined],
+      ["https://10.0.0.1/client.json", "must name a host, not an IP address"],
+      ["https://example.com/", "must have a path"],
+      ["https://example.com", "is not in canonical form"],
+      ["https://Example.com/client.json", "is not in canonical form"],
+      ["https://example.com/a/../client.json", "is not in canonical form"],
+      ["https://example.com:8443/client.json", "must use the default https port"],
+      ["https://user:pw@example.com/client.json", "must not carry credentials"],
+      ["https://example.com/client.json#x", "must not have a fragment"],
+      ["http://example.com/client.json", "must use https"],
+      ["https://intranet/client.json", "must name a public host"],
+    ];
+    const urlMisses = urlCases
+      .filter(([u, want]) => cimd.cimdUrlProblem(u) !== want)
+      .map(([u]) => `${u} -> ${cimd.cimdUrlProblem(u)}`);
+    ok("CIMD client_id URL rules", urlMisses.length === 0, urlMisses.join("; "));
+    const addressCases: Array<[string, boolean]> = [
+      ["8.8.8.8", true],
+      ["160.79.104.10", true],
+      ["10.1.2.3", false],
+      ["172.20.0.1", false],
+      ["192.168.1.1", false],
+      ["127.0.0.1", false],
+      ["169.254.169.254", false],
+      ["100.64.0.1", false],
+      ["0.0.0.0", false],
+      ["224.0.0.1", false],
+      ["2607:6bc0::10", true],
+      ["::1", false],
+      ["::", false],
+      ["fe80::1", false],
+      ["fd00::1", false],
+      ["ff02::1", false],
+      ["::ffff:127.0.0.1", false],
+      ["::ffff:8.8.8.8", true],
+      ["2002:a00:1::", false],
+      ["64:ff9b::a00:1", false],
+      ["2001:db8::1", false],
+    ];
+    const addressMisses = addressCases.filter(([a, want]) => cimd.cimdPublicAddress(a) !== want).map(([a]) => a);
+    ok("CIMD fetch reaches public addresses only", addressMisses.length === 0, addressMisses.join(", "));
+    const builtIn = Object.entries(cimd.CIMD_BUILT_IN).map(([id, doc]) => cimd.clientFromDocument(id, doc));
+    ok(
+      "built-in copies of Claude's documents pass the document checks",
+      builtIn.length === 2 && builtIn[0]!.redirect_uris[0] === "https://claude.ai/api/mcp/auth_callback"
+    );
+
+    const errorCode = (e: unknown) => (e as { errorCode?: string }).errorCode ?? String(e);
+    cimdMode = "ok";
+    const read = await cimd.cimdClient(flaky);
+    ok("in-process: document read", read.client_name === "E2E Flaky Client" && read.token_endpoint_auth_method === "none");
+    await cimd.keepCimdClient(flaky);
+    const hits = cimdFlakyHits;
+    cimdMode = "down";
+    const cached = await cimd.cimdClient(flaky);
+    ok("a fresh document comes from the cache, no refetch", cached.client_name === "E2E Flaky Client" && cimdFlakyHits === hits);
+    cimd.forgetCimdCache();
+    const stale = await cimd.cimdClient(flaky).then((c) => c.client_name, errorCode);
+    ok("host down: the copy kept at sign-in stands in", stale === "E2E Flaky Client" && cimdFlakyHits === hits + 1, String(stale));
+    cimd.forgetCimdCache();
+    cimdMode = "gone";
+    const withdrawn = await cimd.cimdClient(flaky).then(() => "accepted", errorCode);
+    ok("document withdrawn (404): refused even with a kept copy", withdrawn === "invalid_client", withdrawn);
+    await cdb.oauthClient.deleteMany({ where: { clientId: flaky } });
+    cimd.forgetCimdCache();
+    cimdMode = "down";
+    const noCopy = await cimd.cimdClient(flaky).then(() => "accepted", errorCode);
+    ok("host down and no copy: a server error (retry), not a refusal", noCopy === "server_error", noCopy);
+    cimdMode = "ok";
   }
 
   // 3. Authorize -> login form
@@ -2539,6 +2766,9 @@ async function main(): Promise<void> {
     widenRes.status === 200 && !String(widened.scope ?? "").includes("admin"),
     JSON.stringify({ status: widenRes.status, scope: widened.scope })
   );
+  // offline_access widens nothing: a grant made without it may name it on refresh
+  const offlineRes = await tokenPost({ ...refreshGrant, scope: "finance offline_access" });
+  ok("refresh naming offline_access on a grant made without it -> 200", offlineRes.status === 200, String(offlineRes.status));
   // (After the grace window a reuse revokes the whole grant: section 2b.)
   const refreshRes = await tokenPost(refreshGrant);
   const refreshed: any = await refreshRes.json();
@@ -2764,4 +2994,5 @@ try {
   (ebStub as { stop: (closeActiveConnections?: boolean) => void } | null)?.stop(true);
   (mailStub as { stop: (closeActiveConnections?: boolean) => void } | null)?.stop(true);
   (googleStub as { stop: (closeActiveConnections?: boolean) => void } | null)?.stop(true);
+  (cimdStub as { stop: (closeActiveConnections?: boolean) => void } | null)?.stop(true);
 }

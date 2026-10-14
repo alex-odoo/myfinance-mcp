@@ -23,6 +23,7 @@ import {
   UnsupportedResponseTypeError,
 } from "@modelcontextprotocol/sdk/server/auth/errors.js";
 import { OAuthStore, secretKey, type IssuedTokens } from "./store";
+import { isCimdClientId, keepCimdClient } from "./cimd";
 import { codePage, destinationLabel, loginPage, type LoginClient, type Notice } from "./login";
 import { GOOGLE_CALLBACK_PATH, googleConsentUrl, googleIdentityFromCode } from "./google";
 import { pruneMap, readCookie, sha256 } from "../httpUtil";
@@ -73,6 +74,14 @@ const SEND_REPEAT_MS = 5000;
 const EMAIL_SHAPE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 export const SUPPORTED_SCOPES = ["finance"];
+/**
+ * The OpenID way to ask for a refresh token. Every grant here gets one
+ * anyway; the authorization server metadata lists it because ChatGPT and
+ * Claude look for it there before they count on refreshing, and a grant that
+ * asked for it gets it back in `scope`.
+ */
+export const OFFLINE_ACCESS = "offline_access";
+const GRANTABLE_SCOPES = [...SUPPORTED_SCOPES, OFFLINE_ACCESS];
 
 // /authorize is unauthenticated and parks each request in memory until
 // sign-in, so what one request may hold is capped.
@@ -193,7 +202,7 @@ function isAllowedResource(value: string | URL): boolean {
 
 /** Scopes this server knows; anything else is dropped, never stored. */
 function knownScopes(scopes: string[] | undefined): string[] {
-  return [...new Set(scopes ?? [])].filter((s) => SUPPORTED_SCOPES.includes(s));
+  return [...new Set(scopes ?? [])].filter((s) => GRANTABLE_SCOPES.includes(s));
 }
 
 /**
@@ -743,6 +752,13 @@ export class FinanceOAuthProvider implements OAuthServerProvider {
       { id: randomUUID(), issuedAt: Date.now() }
     );
     await this.store.redeemCode(authorizationCode, client.client_id, tokens);
+    // A published client keeps a copy of its document from here on: its
+    // refreshes then outlast a short outage of the host that serves it.
+    if (isCimdClientId(client.client_id)) {
+      await keepCimdClient(client.client_id).catch((e: unknown) => {
+        console.error("[oauth] keeping the client metadata copy failed:", e instanceof Error ? e.message : String(e));
+      });
+    }
     return tokenResponse(tokens);
   }
 
@@ -769,9 +785,11 @@ export class FinanceOAuthProvider implements OAuthServerProvider {
     // A grant stored without scopes predates scope checks and meant all of
     // this server (prod holds such grants); refusing "finance" on it would
     // drop those connectors on their next refresh.
+    // offline_access widens nothing (every grant refreshes), so a grant from
+    // before it was listed may name it too.
     const requested = knownScopes(scopes);
     const granted = record.scopes.length ? record.scopes : SUPPORTED_SCOPES;
-    if (requested.some((s) => !granted.includes(s))) {
+    if (requested.some((s) => s !== OFFLINE_ACCESS && !granted.includes(s))) {
       throw new InvalidScopeError("Requested scope exceeds the original grant");
     }
     // A narrower request applies to the access token; the refresh token keeps

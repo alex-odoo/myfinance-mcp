@@ -1,12 +1,14 @@
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import express from "express";
-import { mcpAuthRouter } from "@modelcontextprotocol/sdk/server/auth/router.js";
+import { createOAuthMetadata, mcpAuthRouter } from "@modelcontextprotocol/sdk/server/auth/router.js";
+import { metadataHandler } from "@modelcontextprotocol/sdk/server/auth/handlers/metadata.js";
 import { requireBearerAuth } from "@modelcontextprotocol/sdk/server/auth/middleware/bearerAuth.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { config, assertConfig } from "./config";
 import { db, logEvent } from "./db";
 import { OAuthStore } from "./oauth/store";
-import { FinanceOAuthProvider, SUPPORTED_SCOPES, authorizeRequestProblem } from "./oauth/provider";
+import { FinanceOAuthProvider, OFFLINE_ACCESS, SUPPORTED_SCOPES, authorizeRequestProblem } from "./oauth/provider";
+import { cimdHost, isCimdClientId } from "./oauth/cimd";
 import { escapeHtml, loginPage, maskEmail } from "./oauth/login";
 import { bootstrapUser, markSettledCurrencies } from "./users";
 import { buildMcpServer, SERVER_NAME, SERVER_VERSION } from "./mcp";
@@ -133,8 +135,28 @@ app.use(
     // answers an unknown client_id with bare JSON in the sign-in window; say
     // what to do instead. Not a redirect: the client cannot be trusted.
     const json = res.json.bind(res);
+    const clientParam = typeof params?.client_id === "string" ? params.client_id : "";
     res.json = (body: unknown) => {
-      if (res.statusCode !== 400 || (body as { error?: unknown } | null)?.error !== "invalid_client") return json(body);
+      const error = (body as { error?: unknown; error_description?: unknown } | null) ?? {};
+      // A published client (CIMD) whose document could not be used: name its
+      // host and the reason; retrying helps when the host was only down.
+      if (isCimdClientId(clientParam) && (error.error === "invalid_client" || error.error === "server_error")) {
+        const why = typeof error.error_description === "string" ? error.error_description.slice(0, 200) : "";
+        return res
+          .set("Cache-Control", "no-store")
+          .type("html")
+          .send(
+            loginPage(
+              "",
+              undefined,
+              `MyFinance could not verify the app published at ${cimdHost(clientParam)}${why ? ` (${why})` : ""}. ` +
+                (error.error === "server_error"
+                  ? "Try again from your AI client in a minute. If it keeps failing, add MyFinance again and choose Register automatically as the OAuth client."
+                  : "In your AI client, add MyFinance again and choose Register automatically as the OAuth client.")
+            )
+          );
+      }
+      if (res.statusCode !== 400 || error.error !== "invalid_client") return json(body);
       return res
         .set("Cache-Control", "no-store")
         .type("html")
@@ -150,7 +172,7 @@ app.use(
     if (!problem) return next();
     // A pruned client whose request is also malformed: retrying cannot help,
     // re-adding the connector does. Read only on this error path.
-    if (typeof params?.client_id === "string" && !(await store.getClient(params.client_id))) {
+    if (clientParam && !(await store.getClient(clientParam).catch(() => undefined))) {
       return res.status(400).json({ error: "invalid_client" }); // rendered by the res.json hook above
     }
     // Leave the same trace as the oauth_error middleware below, so a client
@@ -212,6 +234,23 @@ app.use(["/token", "/revoke", "/register"], (req, res, next) => {
   next();
 });
 
+// Authorization server metadata: the SDK's, plus two facts it has no option
+// for. client_id_metadata_document_supported: claude.ai's "Use Claude's
+// published identity" (CIMD, src/oauth/cimd.ts) is chosen only when this is
+// true and "none" is an auth method (the SDK lists it). offline_access:
+// ChatGPT and Claude look for it before they count on refresh tokens.
+// Mounted ahead of the SDK router, which serves the same path.
+app.use(
+  "/.well-known/oauth-authorization-server",
+  metadataHandler({
+    ...createOAuthMetadata({
+      provider,
+      issuerUrl: new URL(config.baseUrl),
+      scopesSupported: [...SUPPORTED_SCOPES, OFFLINE_ACCESS],
+    }),
+    client_id_metadata_document_supported: true,
+  })
+);
 app.use(
   mcpAuthRouter({
     provider,

@@ -41,7 +41,7 @@ On first connect you sign in with Google or with a one-time code sent to your em
 - **Bun** - runtime and package manager
 - **Express** - HTTP layer
 - **MCP SDK** - Model Context Protocol over Streamable HTTP (stateless)
-- **OAuth 2.1** - PKCE + dynamic client registration; sign-in with Google or an emailed one-time code (each optional)
+- **OAuth 2.1** - PKCE, dynamic client registration and client ID metadata documents (Claude's published identity); sign-in with Google or an emailed one-time code (each optional)
 - **Prisma + PostgreSQL** - all money as `numeric`, all stats as SQL aggregates
 - **Docker** - single container deployment
 
@@ -86,7 +86,7 @@ Four tools return an interactive dashboard (`ui://myfinancemcp/dashboard`) rende
 
 - Receipt photos are parsed by YOUR AI client; images never reach this server.
 - Amounts, merchants and notes are never written to server logs (blind logs); usage events keep tool names, timings, error classes and coded argument values, keyed to the account and deleted with it.
-- OAuth 2.1 with PKCE, rotating refresh tokens, rate-limited sign-in.
+- OAuth 2.1 with PKCE, rotating refresh tokens (`offline_access` advertised), rate-limited sign-in.
 - All 28 tools carry MCP annotations (read-only and destructive ops flagged, connector tools marked open-world), so clients can gate confirmations correctly.
 - Bank access is strictly read-only: ZenMoney via the user's own API token, and, in the closed beta, open banking consent via Enable Banking (the bank authenticates the user; we never see credentials). Session ids and tokens are stored AES-256-GCM encrypted.
 - CSV export and instant full deletion are tools, not support tickets.
@@ -164,7 +164,7 @@ bun run e2e            # end-to-end suite (spawns its own server; WRITES to the 
 bun run lint
 ```
 
-The e2e suite (206 checks) covers the full OAuth flow (discovery, dynamic registration, PKCE, refresh rotation, revocation; public and confidential clients), every tool, statement-import dedup semantics, ZenMoney sync against a stubbed Diff API, and GDPR deletion.
+The e2e suite (346 checks) covers the full OAuth flow (discovery, dynamic registration, client ID metadata documents, PKCE, refresh rotation, revocation; public and confidential clients), every tool, statement-import dedup semantics, ZenMoney sync against a stubbed Diff API, and GDPR deletion.
 
 ## API Endpoints
 
@@ -174,7 +174,7 @@ The e2e suite (206 checks) covers the full OAuth flow (discovery, dynamic regist
 | `GET /health`                                  | Health check                             |
 | `GET /.well-known/oauth-authorization-server`  | OAuth metadata discovery                 |
 | `GET /.well-known/oauth-protected-resource/mcp`| Protected resource metadata              |
-| `POST /register`                               | Dynamic client registration              |
+| `POST /register`                               | Dynamic client registration (clients may instead use an https client_id: a client ID metadata document) |
 | `GET /authorize`                               | OAuth authorization (sign-in page)       |
 | `POST /token`                                  | Token exchange                           |
 | `GET /auth/google`                             | Google sign-in start (when configured)   |
