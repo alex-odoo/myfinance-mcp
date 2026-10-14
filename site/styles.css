@@ -44,6 +44,13 @@
   }
 }
 
+/* Switzer has no Cyrillic: the Russian pages use the system stack throughout
+   (and do not preload Switzer), so one line never mixes two typefaces. */
+html[lang="ru"] {
+  --display: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --body: var(--display);
+}
+
 * { box-sizing: border-box; margin: 0; padding: 0; }
 html { scroll-behavior: smooth; -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
 /* Safety net: nothing may cause sideways scroll on phones. `clip` (not `hidden`)
@@ -133,6 +140,26 @@ nav.main + .gh-link { margin-left: 0; }
   .foot-inner { gap: 8px 22px; }
   .foot-inner a { padding: 9px 0; }
 }
+/* Language switcher (EN / ES / RU): last in the header row, and again in the
+   footer. Phones drop the header copy (no room next to Connect); the footer
+   one stays on every width. */
+.lang-sw { display: flex; align-items: center; gap: 2px; font-family: var(--mono); font-size: 12.5px; letter-spacing: .04em; }
+.lang-sw a { text-decoration: none; color: var(--muted); padding: 6px 6px; border-radius: 6px; }
+.lang-sw a:hover { color: var(--ink); }
+.lang-sw a[aria-current="page"] { color: var(--accent); font-weight: 700; }
+header.site .lang-sw { margin-right: -6px; }
+@media (max-width: 480px) { header.site .lang-sw { display: none; } }
+/* Room for the switcher: GitHub (also in the footer and the final CTA) steps
+   aside where it would push the row past the edge, and with the nav folded
+   the controls sit on the right instead of trailing the logo. */
+@media (min-width: 1001px) and (max-width: 1180px) { header.site .gh-link { display: none; } }
+@media (max-width: 1000px) { nav.main + .gh-link { margin-left: auto; } }
+@media (max-width: 640px) { header.site .gh-link { display: none; } .hd-cta { margin-left: auto; } }
+.foot-inner .lang-sw { flex-basis: 100%; gap: 4px; margin-bottom: 4px; }
+.foot-inner .lang-sw a { padding: 6px 4px; }
+.foot-inner .lang-sw a[aria-current="page"] { color: var(--accent); }
+.foot-inner .lang-sw a:first-child { padding-left: 0; }
+@media (max-width: 600px) { .foot-inner .lang-sw a { padding: 9px 10px; } .foot-inner .lang-sw a:first-child { padding-left: 0; } }
 /* Touch feedback where hover does not exist: instant, subtle. */
 @media (hover: none) {
   .hd-cta:active, .gh-link:active, .btn-ghost:active { border-color: var(--accent); color: var(--accent); }
@@ -337,6 +364,12 @@ h2 {
 .tab[aria-selected="true"] { background: var(--accent); color: var(--paper); }
 .panel { display: none; border: 1px solid var(--rule); border-radius: 14px; background: var(--surface); padding: 30px 32px; }
 .panel.on { display: block; }
+/* Install tabs: the full-width segmented control from 560px down, so a longer
+   translated label ("Другие") is never clipped. */
+@media (max-width: 560px) {
+  .tabs { display: flex; width: 100%; }
+  .tab { flex: 1 1 0; padding: 12px 6px; text-align: center; }
+}
 /* Phones: tabs become a full-width segmented control; cards trade oversized
    padding for content width (32px sides eat ~20% of a 360px screen). */
 @media (max-width: 480px) {

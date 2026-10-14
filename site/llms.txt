@@ -2,7 +2,7 @@
 
 > A free, open-source (MIT) AI expense tracker that runs as a remote MCP server. Users connect it to Claude, ChatGPT, Codex, Cursor or any MCP client with OAuth 2.0 + PKCE, then track expenses, income, budgets and net worth in any currency by talking in plain language, or by dropping receipt photos and statements from any bank (CSV, PDF or a screenshot from the banking app).
 
-Server URL: https://myfinance-mcp.com/mcp (Streamable HTTP, OAuth 2.0 with PKCE and dynamic client registration). In a Claude custom connector choose OAuth client "Register automatically" and leave any Client ID/Secret empty. ChatGPT needs Developer mode on the web (logging on Business, Enterprise and Edu; read-only on Pro; Free, Go and Plus cannot add custom MCP servers); on those plans Codex, included in every ChatGPT plan, connects with `codex mcp add myfinance --url https://myfinance-mcp.com/mcp` then `codex mcp login myfinance`. Step-by-step guides: https://myfinance-mcp.com/install
+Server URL: https://myfinance-mcp.com/mcp (Streamable HTTP, OAuth 2.0 with PKCE and dynamic client registration). In a Claude custom connector choose Sign in now and keep the default OAuth client "Use Claude's published identity (Recommended)" (the server supports Client ID Metadata Documents; "Register automatically" works too), and leave any Client ID/Secret empty. ChatGPT needs Developer mode on the web (logging on Business, Enterprise and Edu; read-only on Pro; Free, Go and Plus cannot add custom MCP servers); on those plans Codex, included in every ChatGPT plan, connects with `codex mcp add myfinance --url https://myfinance-mcp.com/mcp` then `codex mcp login myfinance`. Step-by-step guides: https://myfinance-mcp.com/install
 
 ## Key facts
 
@@ -24,6 +24,7 @@ Server URL: https://myfinance-mcp.com/mcp (Streamable HTTP, OAuth 2.0 with PKCE 
 
 - https://myfinance-mcp.com/ : main landing (AI expense tracker for Claude, ChatGPT and Cursor) with install tabs for Claude, ChatGPT, Cursor, Codex and other MCP clients
 - https://myfinance-mcp.com/install : hub of step-by-step install guides
+- Spanish and Russian versions of the landing and the install guides: https://myfinance-mcp.com/es/ and https://myfinance-mcp.com/ru/ (guides under /es/install and /ru/install)
 - https://myfinance-mcp.com/install/claude : Claude custom connector setup (every plan; Free allows one custom connector), sign-in, first prompts, troubleshooting
 - https://myfinance-mcp.com/install/chatgpt : ChatGPT setup with Developer mode, plan availability (Business/Enterprise/Edu full, Pro read-only, Free/Go/Plus not available), troubleshooting
 - https://myfinance-mcp.com/install/cursor : Cursor one-click install link and ~/.cursor/mcp.json config, sign-in, troubleshooting

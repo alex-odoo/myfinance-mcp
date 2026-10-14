@@ -7,6 +7,10 @@
 <title>Expense Tracker for Claude - Set Up MyFinance MCP in 1 Minute</title>
 <meta name="description" content="Turn Claude into an AI expense tracker: add MyFinance MCP as a custom connector, sign in with Google or an email code and log spending by chat. Free.">
 <link rel="canonical" href="https://myfinance-mcp.com/install/claude">
+<link rel="alternate" hreflang="en" href="https://myfinance-mcp.com/install/claude">
+<link rel="alternate" hreflang="es" href="https://myfinance-mcp.com/es/install/claude">
+<link rel="alternate" hreflang="ru" href="https://myfinance-mcp.com/ru/install/claude">
+<link rel="alternate" hreflang="x-default" href="https://myfinance-mcp.com/install/claude">
 <meta name="theme-color" content="#FAF8F3" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#181712" media="(prefers-color-scheme: dark)">
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
@@ -15,6 +19,9 @@
 <link rel="preload" href="/fonts/Switzer-Variable.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="/styles.css">
 <meta property="og:type" content="website">
+<meta property="og:locale" content="en_US">
+<meta property="og:locale:alternate" content="es_419">
+<meta property="og:locale:alternate" content="ru_RU">
 <meta property="og:url" content="https://myfinance-mcp.com/install/claude">
 <meta property="og:title" content="Expense Tracker for Claude - Set Up MyFinance MCP in 1 Minute">
 <meta property="og:description" content="Turn Claude into an AI expense tracker: add MyFinance MCP as a custom connector, sign in with Google or an email code and log spending by chat. Free.">
@@ -23,8 +30,8 @@
 <meta name="twitter:title" content="Expense Tracker for Claude - Set Up MyFinance MCP in 1 Minute">
 <meta name="twitter:description" content="Turn Claude into an AI expense tracker: add MyFinance MCP as a custom connector, sign in with Google or an email code and log spending by chat. Free.">
 <script type="application/ld+json">{"@context": "https://schema.org", "@type": "BreadcrumbList", "itemListElement": [{"@type": "ListItem", "position": 1, "name": "Home", "item": "https://myfinance-mcp.com/"}, {"@type": "ListItem", "position": 2, "name": "Install", "item": "https://myfinance-mcp.com/install"}, {"@type": "ListItem", "position": 3, "name": "Claude", "item": "https://myfinance-mcp.com/install/claude"}]}</script>
-<script type="application/ld+json">{"@context": "https://schema.org", "@type": "HowTo", "name": "How to add MyFinance MCP to Claude", "description": "Turn Claude into an AI expense tracker: add MyFinance MCP as a custom connector, sign in with Google or an email code and log spending by chat. Free.", "totalTime": "PT1M", "url": "https://myfinance-mcp.com/install/claude#steps", "estimatedCost": {"@type": "MonetaryAmount", "currency": "USD", "value": "0"}, "step": [{"@type": "HowToStep", "position": 1, "name": "Step 1", "text": "Open Claude on the web or in the desktop app and go to Customize, then Connectors"}, {"@type": "HowToStep", "position": 2, "name": "Step 2", "text": "Click + Add, then Add custom connector"}, {"@type": "HowToStep", "position": 3, "name": "Step 3", "text": "Name it MyFinance, paste https://myfinance-mcp.com/mcp as the remote MCP server URL and click Continue"}, {"@type": "HowToStep", "position": 4, "name": "Step 4", "text": "Under Authentication choose Sign in now, and under OAuth client choose Register automatically"}, {"@type": "HowToStep", "position": 5, "name": "Step 5", "text": "Click Add, then sign in with Google or an email code"}, {"@type": "HowToStep", "position": 6, "name": "Step 6", "text": "In a chat, click +, then Connectors, and check that MyFinance is switched on"}]}</script>
-<script type="application/ld+json">{"@context": "https://schema.org", "@type": "FAQPage", "mainEntity": [{"@type": "Question", "name": "The connector shows no tools", "acceptedAnswer": {"@type": "Answer", "text": "Remove the connector (Customize, Connectors, the three dots next to MyFinance, Remove) and add it again with the same URL. Claude reads the tool list when you connect, so a fresh connection fixes most cases."}}, {"@type": "Question", "name": "Sign-in fails right after I click Add", "acceptedAnswer": {"@type": "Answer", "text": "The connector was probably added with a different OAuth client option or with a Client ID filled in. Remove it and add it again with Sign in now and Register automatically, leaving any Client ID and Secret fields empty."}}, {"@type": "Question", "name": "Claude does not use MyFinance in a chat", "acceptedAnswer": {"@type": "Answer", "text": "Click + in the chat, then Connectors, and switch MyFinance on for that conversation. Then ask directly, for example: use MyFinance to log 20 EUR for lunch."}}, {"@type": "Question", "name": "Something broke after a MyFinance update", "acceptedAnswer": {"@type": "Answer", "text": "Reconnect: remove MyFinance in Customize, Connectors and add it again with the same URL. Claude keeps the tool list from your last connection, so new or changed tools appear only after you reconnect. Your data stays: it is tied to your sign-in, not to the connector."}}]}</script>
+<script type="application/ld+json">{"@context": "https://schema.org", "@type": "HowTo", "inLanguage": "en", "name": "How to add MyFinance MCP to Claude", "description": "Turn Claude into an AI expense tracker: add MyFinance MCP as a custom connector, sign in with Google or an email code and log spending by chat. Free.", "totalTime": "PT1M", "url": "https://myfinance-mcp.com/install/claude#steps", "estimatedCost": {"@type": "MonetaryAmount", "currency": "USD", "value": "0"}, "step": [{"@type": "HowToStep", "position": 1, "name": "Step 1", "text": "Open Claude on the web or in the desktop app and go to Customize, then Connectors"}, {"@type": "HowToStep", "position": 2, "name": "Step 2", "text": "Click + Add, then Add custom connector"}, {"@type": "HowToStep", "position": 3, "name": "Step 3", "text": "Name it MyFinance, paste https://myfinance-mcp.com/mcp as the remote MCP server URL and click Continue"}, {"@type": "HowToStep", "position": 4, "name": "Step 4", "text": "Under Authentication choose Sign in now; under OAuth client keep the default, Use Claude's published identity (Recommended). Register automatically works too"}, {"@type": "HowToStep", "position": 5, "name": "Step 5", "text": "Click Add, then sign in with Google or an email code"}, {"@type": "HowToStep", "position": 6, "name": "Step 6", "text": "In a chat, click +, then Connectors, and check that MyFinance is switched on"}]}</script>
+<script type="application/ld+json">{"@context": "https://schema.org", "@type": "FAQPage", "inLanguage": "en", "mainEntity": [{"@type": "Question", "name": "The connector shows no tools", "acceptedAnswer": {"@type": "Answer", "text": "Remove the connector (Customize, Connectors, the three dots next to MyFinance, Remove) and add it again with the same URL. Claude reads the tool list when you connect, so a fresh connection fixes most cases."}}, {"@type": "Question", "name": "Sign-in fails right after I click Add", "acceptedAnswer": {"@type": "Answer", "text": "The connector was probably added with a different OAuth client option or with a Client ID filled in. Remove it and add it again with Sign in now and either Use Claude's published identity or Register automatically, leaving any Client ID and Secret fields empty. If the published identity option keeps failing, choose Register automatically."}}, {"@type": "Question", "name": "Claude does not use MyFinance in a chat", "acceptedAnswer": {"@type": "Answer", "text": "Click + in the chat, then Connectors, and switch MyFinance on for that conversation. Then ask directly, for example: use MyFinance to log 20 EUR for lunch."}}, {"@type": "Question", "name": "Something broke after a MyFinance update", "acceptedAnswer": {"@type": "Answer", "text": "Reconnect: remove MyFinance in Customize, Connectors and add it again with the same URL. Claude keeps the tool list from your last connection, so new or changed tools appear only after you reconnect. Your data stays: it is tied to your sign-in, not to the connector."}}]}</script>
 </head>
 <body>
 <header class="site">
@@ -51,6 +58,7 @@
     </nav>
     <a class="gh-link" href="https://github.com/alex-odoo/myfinance-mcp" target="_blank" rel="noopener">★ GitHub</a>
     <a class="hd-cta" href="/install">Connect</a>
+    <nav class="lang-sw" aria-label="Language"><a href="/install/claude" hreflang="en" lang="en" title="English" aria-current="page">EN</a><a href="/es/install/claude" hreflang="es" lang="es" title="Español">ES</a><a href="/ru/install/claude" hreflang="ru" lang="ru" title="Русский">RU</a></nav>
   </div>
 </header>
 
@@ -79,11 +87,11 @@
         <li>Open Claude on the web or in the desktop app and go to <b>Customize</b>, then <b>Connectors</b></li>
         <li>Click <b>+ Add</b>, then <b>Add custom connector</b></li>
         <li>Name it <b>MyFinance</b>, paste <span class="srv-url">https://myfinance-mcp.com/mcp</span> as the remote MCP server URL and click <b>Continue</b></li>
-        <li>Under Authentication choose <b>Sign in now</b>, and under OAuth client choose <b>Register automatically</b></li>
+        <li>Under Authentication choose <b>Sign in now</b>; under OAuth client keep the default, <b>Use Claude's published identity (Recommended)</b>. <b>Register automatically</b> works too</li>
         <li>Click <b>Add</b>, then sign in with Google or an email code</li>
         <li>In a chat, click <b>+</b>, then <b>Connectors</b>, and check that MyFinance is switched on</li>
       </ol>
-      <div class="warn-line">Never pick "Use your own OAuth client" and never fill a Client ID or Secret (older versions of the form show these fields: leave them empty). MyFinance registers Claude by itself; your credentials go on the MyFinance sign-in page.</div>
+      <div class="warn-line">Never pick "Use your own OAuth client" and never fill a Client ID or Secret (older versions of the form show these fields: leave them empty). MyFinance recognises Claude by itself; your credentials go on the MyFinance sign-in page.</div>
       <p class="soft">Custom connectors work on every Claude plan: Free, Pro, Max, Team and Enterprise. The Free plan allows one custom connector. On Team and Enterprise an Owner adds the connector for the organization first, then each member connects it from Customize, Connectors. The connector lives in your Claude account, so the desktop and mobile apps use it too.</p>
     </div>
     <p class="soften">Using Claude Code? Run <code class="inline">claude mcp add --transport http myfinance https://myfinance-mcp.com/mcp</code>, then type <code class="inline">/mcp</code> in Claude Code to sign in.</p>
@@ -167,7 +175,7 @@
       </details>
       <details>
         <summary>Sign-in fails right after I click Add</summary>
-        <p class="fa">The connector was probably added with a different OAuth client option or with a Client ID filled in. Remove it and add it again with Sign in now and Register automatically, leaving any Client ID and Secret fields empty.</p>
+        <p class="fa">The connector was probably added with a different OAuth client option or with a Client ID filled in. Remove it and add it again with Sign in now and either Use Claude's published identity or Register automatically, leaving any Client ID and Secret fields empty. If the published identity option keeps failing, choose Register automatically.</p>
       </details>
       <details>
         <summary>Claude does not use MyFinance in a chat</summary>
@@ -211,6 +219,7 @@
 
 <footer class="site">
   <div class="wrap foot-inner">
+    <nav class="lang-sw" aria-label="Language"><a href="/install/claude" hreflang="en" lang="en" title="English" aria-current="page">EN</a><a href="/es/install/claude" hreflang="es" lang="es" title="Español">ES</a><a href="/ru/install/claude" hreflang="ru" lang="ru" title="Русский">RU</a></nav>
     <a href="/">Home</a>
     <a href="/install">Install guides</a>
     <a href="/alternatives">Alternatives</a>

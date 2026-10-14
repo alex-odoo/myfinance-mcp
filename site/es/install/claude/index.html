@@ -1,0 +1,236 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script defer src="/consent.js"></script>
+<title>Control de gastos para Claude - Configura MyFinance MCP en 1 minuto</title>
+<meta name="description" content="Convierte Claude en un control de gastos con IA: agrega MyFinance MCP como conector, inicia sesión con Google o un código por correo y registra gastos. Gratis.">
+<link rel="canonical" href="https://myfinance-mcp.com/es/install/claude">
+<link rel="alternate" hreflang="en" href="https://myfinance-mcp.com/install/claude">
+<link rel="alternate" hreflang="es" href="https://myfinance-mcp.com/es/install/claude">
+<link rel="alternate" hreflang="ru" href="https://myfinance-mcp.com/ru/install/claude">
+<link rel="alternate" hreflang="x-default" href="https://myfinance-mcp.com/install/claude">
+<meta name="theme-color" content="#FAF8F3" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#181712" media="(prefers-color-scheme: dark)">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="icon" href="/favicon.ico" sizes="48x48">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<link rel="preload" href="/fonts/Switzer-Variable.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="/styles.css">
+<meta property="og:type" content="website">
+<meta property="og:locale" content="es_419">
+<meta property="og:locale:alternate" content="en_US">
+<meta property="og:locale:alternate" content="ru_RU">
+<meta property="og:url" content="https://myfinance-mcp.com/es/install/claude">
+<meta property="og:title" content="Control de gastos para Claude - Configura MyFinance MCP en 1 minuto">
+<meta property="og:description" content="Convierte Claude en un control de gastos con IA: agrega MyFinance MCP como conector, inicia sesión con Google o un código por correo y registra gastos. Gratis.">
+<meta property="og:image" content="https://myfinance-mcp.com/og.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Control de gastos para Claude - Configura MyFinance MCP en 1 minuto">
+<meta name="twitter:description" content="Convierte Claude en un control de gastos con IA: agrega MyFinance MCP como conector, inicia sesión con Google o un código por correo y registra gastos. Gratis.">
+<script type="application/ld+json">{"@context": "https://schema.org", "@type": "BreadcrumbList", "itemListElement": [{"@type": "ListItem", "position": 1, "name": "Inicio", "item": "https://myfinance-mcp.com/es/"}, {"@type": "ListItem", "position": 2, "name": "Instalación", "item": "https://myfinance-mcp.com/es/install"}, {"@type": "ListItem", "position": 3, "name": "Claude", "item": "https://myfinance-mcp.com/es/install/claude"}]}</script>
+<script type="application/ld+json">{"@context": "https://schema.org", "@type": "HowTo", "inLanguage": "es", "name": "Cómo agregar MyFinance MCP a Claude", "description": "Convierte Claude en un control de gastos con IA: agrega MyFinance MCP como conector, inicia sesión con Google o un código por correo y registra gastos. Gratis.", "totalTime": "PT1M", "url": "https://myfinance-mcp.com/es/install/claude#steps", "estimatedCost": {"@type": "MonetaryAmount", "currency": "USD", "value": "0"}, "step": [{"@type": "HowToStep", "position": 1, "name": "Paso 1", "text": "Abre Claude en la web o en la app de escritorio y ve a Customize (Personalizar) y luego a Connectors (Conectores)"}, {"@type": "HowToStep", "position": 2, "name": "Paso 2", "text": "Haz clic en + Add y luego en Add custom connector (agregar conector personalizado)"}, {"@type": "HowToStep", "position": 3, "name": "Paso 3", "text": "Ponle de nombre MyFinance, pega https://myfinance-mcp.com/mcp como URL del servidor MCP remoto y haz clic en Continue"}, {"@type": "HowToStep", "position": 4, "name": "Paso 4", "text": "En Authentication elige Sign in now; en OAuth client deja la opción por defecto, Use Claude's published identity (Recommended). Register automatically también funciona"}, {"@type": "HowToStep", "position": 5, "name": "Paso 5", "text": "Haz clic en Add e inicia sesión con Google o con un código por correo"}, {"@type": "HowToStep", "position": 6, "name": "Paso 6", "text": "En un chat, haz clic en +, luego en Connectors, y comprueba que MyFinance esté activado"}]}</script>
+<script type="application/ld+json">{"@context": "https://schema.org", "@type": "FAQPage", "inLanguage": "es", "mainEntity": [{"@type": "Question", "name": "El conector no muestra herramientas", "acceptedAnswer": {"@type": "Answer", "text": "Quita el conector (Customize, Connectors, los tres puntos junto a MyFinance, Remove) y vuelve a agregarlo con la misma URL. Claude lee la lista de herramientas al conectarse, así que una conexión nueva resuelve la mayoría de los casos."}}, {"@type": "Question", "name": "El inicio de sesión falla justo después de hacer clic en Add", "acceptedAnswer": {"@type": "Answer", "text": "Probablemente el conector se agregó con otra opción de OAuth client o con un Client ID completado. Quítalo y vuelve a agregarlo con Sign in now y con Use Claude's published identity o Register automatically, dejando vacíos los campos Client ID y Secret. Si Use Claude's published identity sigue fallando, elige Register automatically."}}, {"@type": "Question", "name": "Claude no usa MyFinance en un chat", "acceptedAnswer": {"@type": "Answer", "text": "Haz clic en + en el chat, luego en Connectors, y activa MyFinance para esa conversación. Después pídelo directamente, por ejemplo: usa MyFinance para registrar 20 EUR del almuerzo."}}, {"@type": "Question", "name": "Algo dejó de funcionar después de una actualización de MyFinance", "acceptedAnswer": {"@type": "Answer", "text": "Vuelve a conectar: quita MyFinance en Customize, Connectors y agrégalo de nuevo con la misma URL. Claude guarda la lista de herramientas de tu última conexión, así que las herramientas nuevas o cambiadas aparecen solo después de reconectar. Tus datos se quedan: están ligados a tu inicio de sesión, no al conector."}}]}</script>
+</head>
+<body>
+<header class="site">
+  <div class="wrap site-inner">
+    <a class="logo" href="/es/">
+      <svg class="mark" width="26" height="26" viewBox="0 0 64 64" aria-hidden="true">
+        <g>
+          <polygon class="mk-top" points="18,6 52,6 46,14 27,14 27,24 40,24 40,32 18,32"/>
+          <polygon class="mk-bot" points="18,38 27,38 27,53 21,58 18,58 18,49 8,49 8,42 18,42"/>
+        </g>
+        <clipPath id="mkclip">
+          <polygon points="18,6 52,6 46,14 27,14 27,24 40,24 40,32 18,32"/>
+          <polygon points="18,38 27,38 27,53 21,58 18,58 18,49 8,49 8,42 18,42"/>
+        </clipPath>
+        <g clip-path="url(#mkclip)"><rect class="mk-sheen" x="-24" y="-12" width="14" height="88"/></g>
+      </svg>
+      MyFinance&nbsp;<b>MCP</b></a>
+    <nav class="main" aria-label="Principal">
+      <a href="/es/#how">Cómo funciona</a>
+      <a href="/es/install">Instalar</a>
+      <a href="/es/#examples">Ejemplos</a>
+      <a href="/alternatives">Alternativas</a>
+      <a href="/es/#faq">Preguntas</a>
+    </nav>
+    <a class="gh-link" href="https://github.com/alex-odoo/myfinance-mcp" target="_blank" rel="noopener">★ GitHub</a>
+    <a class="hd-cta" href="/es/install">Conectar</a>
+    <nav class="lang-sw" aria-label="Idioma"><a href="/install/claude" hreflang="en" lang="en" title="English">EN</a><a href="/es/install/claude" hreflang="es" lang="es" title="Español" aria-current="page">ES</a><a href="/ru/install/claude" hreflang="ru" lang="ru" title="Русский">RU</a></nav>
+  </div>
+</header>
+
+<main>
+
+<section class="alt-hero">
+  <div class="wrap">
+    <nav class="crumbs" aria-label="Ruta de navegación"><a href="/es/">Inicio</a> / <a href="/es/install">Instalación</a> / Claude</nav>
+    <span class="eyebrow">Guía de instalación · Claude</span>
+    <h1>Control de gastos para <span class="talk">Claude</span>, listo en un minuto</h1>
+    <p class="sec-sub">Agrega MyFinance como conector personalizado y Claude se convierte en un control de gastos: di lo que gastaste, arrastra un extracto de cualquier banco, pide presupuestos y resúmenes mensuales. Gratis, en todos los planes de Claude.</p>
+    <p class="server-url-line">URL del servidor: <span class="srv-url">https://myfinance-mcp.com/mcp</span></p>
+    <div class="cta-row">
+      <a class="btn btn-solid" href="#steps">Ver los pasos</a>
+      <a class="btn btn-ghost" href="#first">Qué decir primero</a>
+    </div>
+  </div>
+</section>
+
+<section id="steps">
+  <div class="wrap">
+    <span class="eyebrow">Configuración</span>
+    <h2>Seis pasos, alrededor de un minuto</h2>
+    <div class="panel on">
+      <ol>
+        <li>Abre Claude en la web o en la app de escritorio y ve a <b>Customize</b> (Personalizar) y luego a <b>Connectors</b> (Conectores)</li>
+        <li>Haz clic en <b>+ Add</b> y luego en <b>Add custom connector</b> (agregar conector personalizado)</li>
+        <li>Ponle de nombre <b>MyFinance</b>, pega <span class="srv-url">https://myfinance-mcp.com/mcp</span> como URL del servidor MCP remoto y haz clic en <b>Continue</b></li>
+        <li>En Authentication elige <b>Sign in now</b>; en OAuth client deja la opción por defecto, <b>Use Claude's published identity (Recommended)</b>. <b>Register automatically</b> también funciona</li>
+        <li>Haz clic en <b>Add</b> e inicia sesión con Google o con un código por correo</li>
+        <li>En un chat, haz clic en <b>+</b>, luego en <b>Connectors</b>, y comprueba que MyFinance esté activado</li>
+      </ol>
+      <div class="warn-line">Nunca elijas "Use your own OAuth client" ni completes un Client ID o un Secret (las versiones anteriores del formulario muestran esos campos: déjalos vacíos). MyFinance reconoce a Claude por sí solo; tus credenciales van en la página de inicio de sesión de MyFinance.</div>
+      <p class="soft">Los conectores personalizados funcionan en todos los planes de Claude: Free, Pro, Max, Team y Enterprise. El plan Free permite un conector personalizado. En Team y Enterprise, primero un Owner agrega el conector para la organización y luego cada miembro lo conecta desde Customize, Connectors. El conector vive en tu cuenta de Claude, así que las apps de escritorio y móvil también lo usan.</p>
+    </div>
+    <p class="soften">¿Usas Claude Code? Ejecuta <code class="inline">claude mcp add --transport http myfinance https://myfinance-mcp.com/mcp</code> y luego escribe <code class="inline">/mcp</code> en Claude Code para iniciar sesión.</p>
+  </div>
+</section>
+
+<section id="signin">
+  <div class="wrap">
+    <span class="eyebrow">Inicio de sesión</span>
+    <h2>Cómo se ve la pantalla de <span class="nobr">inicio de sesión</span></h2>
+    <div class="signin-grid">
+      <div>
+        <p class="prose">Cuando Claude se conecta, se abre una página de MyFinance MCP en myfinance-mcp.com, en inglés. Indica qué cliente estás conectando y adónde vuelves después: claude.ai. No hay un login aparte en el sitio de MyFinance; esta es la única página que verás.</p>
+        <ol class="prose">
+          <li><b>Continue with Google</b> (continuar con Google): un clic si usas una cuenta de Google.</li>
+          <li>O escribe cualquier dirección de correo y haz clic en <b>Email me a sign-in code</b> (envíame un código). Te enviamos un código de 8 dígitos que vence en 10 minutos; ingrésalo y haz clic en <b>Sign in</b>. No hace falta una cuenta de Google.</li>
+          <li>El primer inicio de sesión crea tu cuenta. La próxima vez, la misma cuenta de Google o el mismo correo te devuelven los mismos datos.</li>
+        </ol>
+      </div>
+      <div>
+        <div class="signin-mock" role="img" aria-label="Boceto de la página de inicio de sesión de MyFinance MCP: Continue with Google, o un código de inicio de sesión por correo">
+          <div class="sm-h">MyFinance MCP</div>
+          <div class="sm-p">Sign in to connect Claude to your finances.</div>
+          <div class="sm-btn sm-g">Continue with Google</div>
+          <div class="sm-or">or</div>
+          <div class="sm-l">Email</div>
+          <div class="sm-i">you@example.com</div>
+          <div class="sm-btn sm-b">Email me a sign-in code</div>
+          <div class="sm-hint">New here? The same code creates your account.</div>
+        </div>
+        <p class="signin-cap">Boceto de la página de inicio de sesión</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="first">
+  <div class="wrap">
+    <span class="eyebrow">Qué decir primero</span>
+    <h2>Cinco mensajes que rinden rápido</h2>
+    <p class="sec-sub">Empieza por tu moneda y tu ciudad, para que cada importe y cada fecha queden bien. Luego registra, importa, pregunta y fija un presupuesto. Usa tu propia moneda y tus tiendas: son ejemplos, escritos en Claude como mensajes normales.</p>
+    <div class="ledger reveal in">
+      <div class="lrow">
+        <span class="ln num">01</span>
+        <span class="say">"Mi moneda es ARS y vivo en Buenos Aires"</span>
+        <span class="res num">moneda base ARS · <b>zona horaria configurada</b></span>
+      </div>
+      <div class="lrow">
+        <span class="ln num">02</span>
+        <span class="say">"Ayer gasté 12,500 en el súper en Coto y hoy 4,000 en un taxi"</span>
+        <span class="res num">2 gastos · supermercado, transporte · <b>fechas resueltas</b></span>
+      </div>
+      <div class="lrow">
+        <span class="ln num">03</span>
+        <span class="say"><span class="ph">[captura]</span> "Aquí está mi extracto bancario"</span>
+        <span class="res num">todas las filas importadas · <b>duplicados omitidos</b></span>
+      </div>
+      <div class="lrow">
+        <span class="ln num">04</span>
+        <span class="say">"¿Cuánto gasté este mes por categoría?"</span>
+        <span class="res num">totales por categoría · <b>calculados en SQL</b></span>
+      </div>
+      <div class="lrow">
+        <span class="ln num">05</span>
+        <span class="say">"Pon un presupuesto mensual de 80,000 para entretenimiento"</span>
+        <span class="res num">tope de 80,000 ARS · <b>avisos solo si lo superas</b></span>
+      </div>
+    </div>
+    <p class="soften">Cada total viene del servidor, calculado en SQL. Claude explica los números; nunca los suma por su cuenta.</p>
+  </div>
+</section>
+
+<section id="trouble">
+  <div class="wrap">
+    <span class="eyebrow">Solución de problemas</span>
+    <h2>Si algo no anda bien</h2>
+    <div class="faq reveal in">
+      <details>
+        <summary>El conector no muestra herramientas</summary>
+        <p class="fa">Quita el conector (Customize, Connectors, los tres puntos junto a MyFinance, Remove) y vuelve a agregarlo con la misma URL. Claude lee la lista de herramientas al conectarse, así que una conexión nueva resuelve la mayoría de los casos.</p>
+      </details>
+      <details>
+        <summary>El inicio de sesión falla justo después de hacer clic en Add</summary>
+        <p class="fa">Probablemente el conector se agregó con otra opción de OAuth client o con un Client ID completado. Quítalo y vuelve a agregarlo con Sign in now y con Use Claude's published identity o Register automatically, dejando vacíos los campos Client ID y Secret. Si Use Claude's published identity sigue fallando, elige Register automatically.</p>
+      </details>
+      <details>
+        <summary>Claude no usa MyFinance en un chat</summary>
+        <p class="fa">Haz clic en + en el chat, luego en Connectors, y activa MyFinance para esa conversación. Después pídelo directamente, por ejemplo: usa MyFinance para registrar 20 EUR del almuerzo.</p>
+      </details>
+      <details>
+        <summary>Algo dejó de funcionar después de una actualización de MyFinance</summary>
+        <p class="fa">Vuelve a conectar: quita MyFinance en Customize, Connectors y agrégalo de nuevo con la misma URL. Claude guarda la lista de herramientas de tu última conexión, así que las herramientas nuevas o cambiadas aparecen solo después de reconectar. Tus datos se quedan: están ligados a tu inicio de sesión, no al conector.</p>
+      </details>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <span class="eyebrow">Otros clientes</span>
+    <h2>¿Usas otra IA?</h2>
+    <p class="sec-sub">El mismo servidor y la misma cuenta funcionan en todos los clientes: inicia sesión con la misma cuenta de Google o el mismo correo y tus datos están ahí.</p>
+    <div class="feat-grid cols3 reveal in">
+      <a class="feat alt-card" href="/es/install/chatgpt"><span class="fi num">guía de instalación</span><h3>ChatGPT <span class="arr">&rarr;</span></h3><p>Developer mode en la web. Registro de gastos en Business, Enterprise y Edu.</p></a>
+      <a class="feat alt-card" href="/es/install/cursor"><span class="fi num">guía de instalación</span><h3>Cursor <span class="arr">&rarr;</span></h3><p>Agregar a Cursor con un clic, o tres líneas en mcp.json.</p></a>
+      <a class="feat alt-card" href="/es/install/codex"><span class="fi num">guía de instalación</span><h3>Codex <span class="arr">&rarr;</span></h3><p>codex mcp add y luego codex mcp login. En todos los planes de ChatGPT, también en Free.</p></a>
+    </div>
+    <p class="soften">Windsurf, VS Code, Claude Code y cualquier cliente MCP con OAuth también funcionan: mira <a href="/es/install">todas las guías de instalación</a>.</p>
+    <p class="fineprint">Última actualización: 14 de octubre de 2026. Los pasos siguen las páginas de ayuda actuales de cada proveedor; los menús cambian, así que si una etiqueta es distinta, busca la más parecida. Claude, ChatGPT, Codex y Cursor son marcas de sus respectivos titulares. MyFinance MCP es un proyecto independiente y de código abierto, y no está afiliado a ellos ni cuenta con su respaldo.</p>
+  </div>
+</section>
+
+</main>
+
+<div class="final">
+  <div class="wrap">
+    <h2>Controla tu dinero dentro de la IA que ya usas.</h2>
+    <p>Gratis y de código abierto. Una URL, un <span class="nobr">inicio de sesión</span> y a hablar.</p>
+    <div class="cta-row center">
+      <a class="btn btn-solid" href="/es/install">Todas las guías de instalación</a>
+      <a class="btn btn-ghost" href="https://github.com/alex-odoo/myfinance-mcp" target="_blank" rel="noopener">★ Estrella en GitHub</a>
+    </div>
+  </div>
+</div>
+
+<footer class="site">
+  <div class="wrap foot-inner">
+    <nav class="lang-sw" aria-label="Idioma"><a href="/install/claude" hreflang="en" lang="en" title="English">EN</a><a href="/es/install/claude" hreflang="es" lang="es" title="Español" aria-current="page">ES</a><a href="/ru/install/claude" hreflang="ru" lang="ru" title="Русский">RU</a></nav>
+    <a href="/es/">Inicio</a>
+    <a href="/es/install">Guías de instalación</a>
+    <a href="/alternatives">Alternativas</a>
+    <a href="/blog">Blog</a>
+    <a href="https://github.com/alex-odoo/myfinance-mcp" target="_blank" rel="noopener">GitHub</a>
+    <a href="/es/#contact">Contacto</a>
+    <a href="/privacy">Privacidad y términos (en inglés)</a>
+    <a href="/privacy#cookies" data-cookie-settings>Configurar cookies</a>
+    <span class="cr">Código abierto bajo MIT. Creado por <a href="https://rteam.agency" target="_blank" rel="noopener">Rteam</a>.</span>
+  </div>
+</footer>
+
+</body>
+</html>

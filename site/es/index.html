@@ -1,0 +1,603 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script defer src="/consent.js"></script>
+<title>MyFinance MCP - Control de gastos con IA para Claude, ChatGPT y Cursor</title>
+<meta name="description" content="Control de gastos con IA gratis para Claude, ChatGPT y Cursor: registra gastos chateando, crea presupuestos e importa extractos de cualquier banco.">
+<link rel="canonical" href="https://myfinance-mcp.com/es/">
+<link rel="alternate" hreflang="en" href="https://myfinance-mcp.com/">
+<link rel="alternate" hreflang="es" href="https://myfinance-mcp.com/es/">
+<link rel="alternate" hreflang="ru" href="https://myfinance-mcp.com/ru/">
+<link rel="alternate" hreflang="x-default" href="https://myfinance-mcp.com/">
+<meta name="theme-color" content="#FAF8F3" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#181712" media="(prefers-color-scheme: dark)">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="icon" href="/favicon.ico" sizes="48x48">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<link rel="preload" href="/fonts/Switzer-Variable.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="/styles.css">
+
+<meta property="og:type" content="website">
+<meta property="og:locale" content="es_419">
+<meta property="og:locale:alternate" content="en_US">
+<meta property="og:locale:alternate" content="ru_RU">
+<meta property="og:url" content="https://myfinance-mcp.com/es/">
+<meta property="og:title" content="MyFinance MCP - Control de gastos con IA para Claude, ChatGPT y Cursor">
+<meta property="og:description" content="Control de gastos con IA, gratis y de código abierto, para Claude, ChatGPT y Cursor. Di lo que gastaste, crea presupuestos e importa extractos de cualquier banco.">
+<meta property="og:image" content="https://myfinance-mcp.com/og.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="MyFinance MCP - Control de gastos con IA para Claude, ChatGPT y Cursor">
+<meta name="twitter:description" content="Control de gastos con IA, gratis y de código abierto, para Claude, ChatGPT y Cursor. Di lo que gastaste, crea presupuestos e importa extractos de cualquier banco.">
+
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "SoftwareApplication",
+  "inLanguage": "es",
+  "name": "MyFinance MCP",
+  "url": "https://myfinance-mcp.com/es/",
+  "applicationCategory": "FinanceApplication",
+  "operatingSystem": "Web",
+  "description": "Un control de gastos con IA, gratis y de código abierto, que funciona como servidor de Model Context Protocol: lleva tus gastos, ingresos, presupuestos y patrimonio neto en cualquier moneda hablando con Claude, ChatGPT, Codex o Cursor, e importa extractos de cualquier banco.",
+  "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
+  "license": "https://opensource.org/licenses/MIT",
+  "author": { "@type": "Organization", "name": "Rteam", "url": "https://rteam.agency" },
+  "sameAs": [
+    "https://github.com/alex-odoo/myfinance-mcp",
+    "https://smithery.ai/servers/alex-k4kb/MyFinance-MCP",
+    "https://glama.ai/mcp/servers/alex-odoo/myfinance-mcp",
+    "https://registry.modelcontextprotocol.io/v0.1/servers/io.github.alex-odoo%2Fmyfinance-mcp/versions/latest"
+  ],
+  "datePublished": "2026-07-13",
+  "dateModified": "2026-10-14"
+}
+</script>
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "VideoObject",
+  "name": "Demo de MyFinance MCP: controla tu dinero hablando con tu IA",
+  "description": "Una sesión de 55 segundos: un gasto en moneda extranjera, la foto de un ticket, el resumen del mes, el desglose de ingresos, el detalle de suscripciones, presupuestos y tendencias, todo dentro de un chat con IA. Video en inglés.",
+  "thumbnailUrl": "https://myfinance-mcp.com/media/demo-poster.jpg",
+  "contentUrl": "https://myfinance-mcp.com/media/myfinance-mcp-demo.mp4",
+  "uploadDate": "2026-07-18T12:00:00+00:00",
+  "duration": "PT55S",
+  "inLanguage": "en"
+}
+</script>
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "FAQPage",
+  "inLanguage": "es",
+  "mainEntity": [
+    {
+      "@type": "Question",
+      "name": "¿Qué es MyFinance MCP?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Un control de gastos con IA, gratis, que funciona como servidor de Model Context Protocol. Llevas tus gastos, ingresos, presupuestos y patrimonio neto hablando con Claude, ChatGPT, Codex o Cursor: le dices a tu IA lo que gastaste, ella lo registra todo y el servidor hace las cuentas."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "¿Qué es el Model Context Protocol (MCP)?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Un estándar abierto que permite a los asistentes de IA conectarse con herramientas externas. Un servidor MCP aporta capacidades concretas, aquí el control de las finanzas personales, que la IA puede usar durante una conversación. Piénsalo como un sistema de plugins para asistentes de IA."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "¿Funciona con ChatGPT?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Sí, en ChatGPT en la web con Developer mode activado. El soporte completo, con registro de gastos incluido, está en ChatGPT Business, Enterprise y Edu. En Pro, OpenAI da a los servidores MCP personalizados acceso de solo lectura; su centro de ayuda no menciona Developer mode para Free, Go ni Plus, así que si no lo ves ahí, usa Codex (incluido en todos los planes de ChatGPT). En cualquier plan de ChatGPT, Free incluido, puedes usar MyFinance a través de Codex. Las dos configuraciones están en la guía de ChatGPT."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "¿Qué clientes son compatibles?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Cualquier cliente MCP con OAuth 2.0 + PKCE: Claude (web, escritorio y móvil), Claude Code, ChatGPT (Business, Enterprise y Edu, en la web), Codex, Cursor, Windsurf y VS Code. Cada uno tiene una guía paso a paso en la página de instalación."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "¿Necesito una cuenta de Google?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "No. Al conectar, inicias sesión con Google o con un código de un solo uso enviado a cualquier dirección de correo; el primer inicio de sesión crea tu cuenta."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "¿Es gratis?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Sí, gratis mientras esté en beta. Sin anuncios, sin tarjeta."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "¿Mis datos son privados?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Tus datos están vinculados a tu cuenta y solo tú puedes acceder a ellos. Alojamiento en la UE, nada compartido con terceros, ningún importe en los logs, tokens de inicio de sesión guardados solo como hash unidireccional, y puedes exportar (las transacciones en CSV, el resto de tu perfil en un archivo) o borrarlo todo en cualquier momento."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "¿Puede leer mi cuenta bancaria?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "No le hace falta: funciona con cualquier banco mediante la importación de extractos. Exporta un CSV o un PDF, o haz una captura en la app del banco, y arrástralo al chat. Tu IA lo lee, el servidor importa cada fila, omite los duplicados y compara el total con el extracto. Si usas ZenMoney, puedes vincularlo para una sincronización de solo lectura. La sincronización bancaria directa en la UE y el Reino Unido, mediante open banking con licencia, es una beta cerrada, solo por invitación."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "¿Qué pasa con los duplicados al importar un extracto?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "El importador detecta las filas que ya registraste a mano y las fusiona en lugar de duplicarlas, y volver a importar el mismo extracto es seguro: las filas ya importadas se omiten y se informan."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "¿Puedo separar lo personal del negocio?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Sí. Las cuentas y cada transacción llevan una etiqueta personal/negocio; cualquier informe se puede filtrar por ella, y la exportación CSV la incluye para tu contador."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "¿Puedo alojarlo yo mismo?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Sí. Tiene licencia MIT y se ejecuta desde un Dockerfile con tu propio Postgres (Supabase sirve). El repositorio de GitHub incluye una guía de autoalojamiento."
+      }
+    }
+  ]
+}
+</script>
+</head>
+<body>
+
+<a class="skip" href="#how">Saltar al contenido</a>
+
+<header class="site">
+  <div class="wrap site-inner">
+    <a class="logo" href="/es/">
+      <svg class="mark" width="26" height="26" viewBox="0 0 64 64" aria-hidden="true">
+        <g>
+          <polygon class="mk-top" points="18,6 52,6 46,14 27,14 27,24 40,24 40,32 18,32"/>
+          <polygon class="mk-bot" points="18,38 27,38 27,53 21,58 18,58 18,49 8,49 8,42 18,42"/>
+        </g>
+        <clipPath id="mkclip">
+          <polygon points="18,6 52,6 46,14 27,14 27,24 40,24 40,32 18,32"/>
+          <polygon points="18,38 27,38 27,53 21,58 18,58 18,49 8,49 8,42 18,42"/>
+        </clipPath>
+        <g clip-path="url(#mkclip)"><rect class="mk-sheen" x="-24" y="-12" width="14" height="88"/></g>
+      </svg>
+      MyFinance&nbsp;<b>MCP</b></a>
+    <nav class="main" aria-label="Principal">
+      <a href="#how">Cómo funciona</a>
+      <a href="#install">Instalar</a>
+      <a href="#examples">Ejemplos</a>
+      <a href="#security">Seguridad</a>
+      <a href="#faq">Preguntas</a>
+    </nav>
+    <a class="gh-link" href="https://github.com/alex-odoo/myfinance-mcp" target="_blank" rel="noopener">★ GitHub</a>
+    <a class="hd-cta" href="#install">Conectar</a>
+    <nav class="lang-sw" aria-label="Idioma"><a href="/" hreflang="en" lang="en" title="English">EN</a><a href="/es/" hreflang="es" lang="es" title="Español" aria-current="page">ES</a><a href="/ru/" hreflang="ru" lang="ru" title="Русский">RU</a></nav>
+  </div>
+</header>
+
+<div class="hero">
+  <div class="hero-wm" aria-hidden="true">€</div>
+  <div class="wrap hero-grid">
+    <div>
+      <div class="chip-row">
+        <span class="chip acc">Gratis</span>
+        <span class="chip acc">Código abierto · MIT</span>
+        <span class="chip">OAuth 2.0</span>
+        <span class="chip">150+ monedas</span>
+      </div>
+      <h1>Controla tu dinero <span class="talk">hablando</span> con tu IA.</h1>
+      <p class="hero-sub">Un control de gastos con IA que vive en Claude, ChatGPT o Cursor: solo di lo que gastaste. Gastos, ingresos, presupuestos y patrimonio neto se registran y se calculan solos, en más de 150 monedas. ¿Tienes un extracto de cualquier banco? <a href="#import">Arrástralo al chat</a>.</p>
+      <div class="cta-row">
+        <a class="btn btn-solid" href="#install">Instalación rápida</a>
+        <a class="btn btn-ghost" href="#video">Verlo en acción</a>
+      </div>
+      <p class="hero-note">Sin app. Sin formularios. Sin hojas de cálculo. Cada número se calcula en SQL.</p>
+    </div>
+
+    <div class="demo" aria-label="Demo del producto en vivo">
+      <div class="demo-bar">
+        <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+        <span class="demo-title">Claude · MyFinance conectado</span>
+        <span class="live"><span class="live-dot"></span>demo en vivo</span>
+      </div>
+      <div class="demo-body" id="demoBody"></div>
+      <div class="demo-foot">
+        <div class="demo-chips" id="demoChips" aria-label="Prueba una pregunta de la demo">
+          <button data-s="1">Importar un extracto</button>
+          <button data-s="2">¿Restaurantes en junio?</button>
+          <button data-s="3">¿Patrimonio neto?</button>
+        </div>
+        <div class="demo-inputbar" aria-hidden="true"><span class="ph">Pregunta lo que quieras sobre tu dinero…</span><span class="send">↑</span></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<main>
+
+<section id="video">
+  <div class="wrap">
+    <span class="eyebrow">Demo</span>
+    <h2>Una sesión completa en 55 segundos.</h2>
+    <p class="sec-sub">Datos de demo, producto real: los paneles del video son los mismos que tu IA muestra en el chat. El video está en inglés.</p>
+    <div class="video-shell reveal">
+      <button class="vplay" id="vplay" aria-label="Reproducir el video de demo">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13l11-6.5z"/></svg>
+      </button>
+      <video id="demoVideo" controls playsinline preload="none" poster="/media/demo-poster.jpg" width="1920" height="1080"
+             aria-label="Video de demo de MyFinance MCP">
+        <source src="/media/myfinance-mcp-demo.mp4" type="video/mp4">
+        <source src="/media/myfinance-mcp-demo.webm" type="video/webm">
+        <track kind="captions" src="/media/myfinance-mcp-demo.vtt" srclang="en" label="English">
+      </video>
+    </div>
+  </div>
+</section>
+
+<section id="how">
+  <span class="swm right" aria-hidden="true">$</span>
+  <div class="wrap">
+    <span class="eyebrow">Cómo funciona</span>
+    <h2>Tres pasos. Ninguna app que aprender.</h2>
+    <p class="sec-sub">Funciona en cuanto te conectas. Tu IA configura tu moneda base y tu zona horaria en la primera conversación, y te responde en español; MyFinance en sí (la página de inicio de sesión, los paneles en el chat y los correos) está en inglés.</p>
+    <div class="steps reveal">
+      <div class="step">
+        <span class="n">Paso 1 / 3</span>
+        <h3>Conéctalo una vez.</h3>
+        <p>Funciona con cualquier cliente de IA compatible con servidores MCP remotos: Claude, ChatGPT, Codex, Cursor y más. Sin instalar nada, sin claves de API.</p>
+      </div>
+      <div class="step">
+        <span class="n">Paso 2 / 3</span>
+        <h3>Solo di lo que gastaste.</h3>
+        <p>En lenguaje natural, con la foto de un ticket o con un extracto completo de cualquier banco. Categorías, monedas y duplicados se resuelven solos.</p>
+      </div>
+      <div class="step">
+        <span class="n">Paso 3 / 3</span>
+        <h3>Pregunta lo que quieras.</h3>
+        <p>Resúmenes mensuales, tendencias, presupuestos, patrimonio neto. Cada número se calcula en SQL en el servidor. La IA lee las cuentas, nunca las adivina.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="import">
+  <span class="swm left" aria-hidden="true">₴</span>
+  <div class="wrap">
+    <span class="eyebrow">Cualquier banco · importación de extractos</span>
+    <h2>Funciona con cualquier banco. Solo arrastra el extracto.</h2>
+    <p class="sec-sub">Exporta un CSV o un PDF de tu banco, o haz una captura de pantalla en la app del banco, y arrástralo al chat. Tu IA lo lee, el servidor importa cada fila, omite lo que ya tienes y compara el resultado con el total del extracto.</p>
+    <div class="feat-grid cols3 reveal">
+      <div class="feat"><span class="fi num">cualquier banco</span><h3>CSV, PDF o una captura</h3><p>Todos los bancos permiten exportar un extracto, en cualquier país y en cualquier moneda. Cientos de filas entran con un solo mensaje, cada una en la moneda en que se pagó.</p></div>
+      <div class="feat"><span class="fi num">sin dobles</span><h3>Duplicados omitidos, tus cambios intactos</h3><p>Las filas que ya registraste a mano se fusionan, no se duplican, y conservan tu categoría. Arrastrar el mismo extracto dos veces es seguro: las filas ya importadas se omiten y se informan.</p></div>
+      <div class="feat"><span class="fi num">conciliado</span><h3>Comparado con el extracto</h3><p>Cada importación termina con un total calculado en SQL y comparado con el que figura en el extracto, así una fila mal leída aparece ahora y no meses después.</p></div>
+    </div>
+    <p class="soften">¿Usas ZenMoney (popular en Ucrania, Rusia, Kazajistán y Bielorrusia)? Pega una vez en el chat tu token gratuito de la API de ZenMoney y tus cuentas y transacciones se sincronizan, en modo de solo lectura, conservando tus cambios.</p>
+  </div>
+</section>
+
+<section id="examples">
+  <span class="swm right" aria-hidden="true">£</span>
+  <div class="wrap">
+    <span class="eyebrow">Ejemplos</span>
+    <h2>Prueba a decir</h2>
+    <p class="sec-sub">Solo háblale. Cada línea es una conversación real, y cada resultado de la derecha se calculó en el servidor, no lo adivinó la IA.</p>
+    <div class="ledger reveal">
+      <div class="lrow">
+        <span class="ln num">01</span>
+        <span class="say">"Gasté 20 euros en el almuerzo"</span>
+        <span class="res num">20.00 EUR · restaurantes · <b>180 / 300 de presupuesto</b></span>
+      </div>
+      <div class="lrow">
+        <span class="ln num">02</span>
+        <span class="say"><span class="ph">[foto del ticket]</span> "Regístralo"</span>
+        <span class="res num">Lidl · 47.20 EUR · <b>12 artículos guardados</b></span>
+      </div>
+      <div class="lrow">
+        <span class="ln num">03</span>
+        <span class="say">"Aquí está mi extracto bancario de junio" <span class="ph">[CSV]</span></span>
+        <span class="res num">152 importadas · 3 fusionadas · <b>totales conciliados</b></span>
+      </div>
+      <div class="lrow">
+        <span class="ln num">04</span>
+        <span class="say">"¿Cuánto gasté en restaurantes en junio?"</span>
+        <span class="res num">412 EUR · 18 visitas · <b>+6% vs. mayo</b></span>
+      </div>
+      <div class="lrow">
+        <span class="ln num">05</span>
+        <span class="say">"Pon un presupuesto mensual de 400 euros para el súper"</span>
+        <span class="res num">310 / 400 EUR · <b>78%, quedan 9 días</b></span>
+      </div>
+      <div class="lrow">
+        <span class="ln num">06</span>
+        <span class="say">"Esa cena con la tarjeta de la empresa fue personal"</span>
+        <span class="res num">entidad → personal · <b>informe de negocio limpio</b></span>
+      </div>
+      <div class="lrow">
+        <span class="ln num">07</span>
+        <span class="say">"¿Cuál es mi patrimonio neto?"</span>
+        <span class="res num">24,300 EUR · 5 cuentas · <b>3 monedas</b></span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="install">
+  <span class="swm left" aria-hidden="true">¥</span>
+  <div class="wrap">
+    <span class="eyebrow">Instalación rápida</span>
+    <h2>Conéctalo en menos de un minuto</h2>
+    <p class="sec-sub">Funciona con cualquier cliente MCP compatible con OAuth 2.0 con PKCE. Inicias sesión una vez al conectar, con Google o con un código de un solo uso enviado a tu correo. No hay un login web aparte: tu IA es la app. ¿Quieres más detalle? Mira las <a href="/es/install">guías de instalación paso a paso</a>.</p>
+
+    <div class="tabs" role="tablist" aria-label="Instrucciones de instalación">
+      <button class="tab" role="tab" aria-selected="true" data-p="p-claude">Claude</button>
+      <button class="tab" role="tab" aria-selected="false" data-p="p-chatgpt">ChatGPT</button>
+      <button class="tab" role="tab" aria-selected="false" data-p="p-cursor">Cursor</button>
+      <button class="tab" role="tab" aria-selected="false" data-p="p-codex">Codex</button>
+      <button class="tab" role="tab" aria-selected="false" data-p="p-other">Otros</button>
+    </div>
+
+    <div class="panel on" id="p-claude" role="tabpanel">
+      <ol>
+        <li>Abre Claude y ve a <b>Customize</b> (Personalizar) y luego a <b>Connectors</b> (Conectores)</li>
+        <li>Haz clic en <b>+ Add</b> y luego en <b>Add custom connector</b> (agregar conector personalizado)</li>
+        <li>Ponle de nombre "MyFinance", pega <span class="srv-url">https://myfinance-mcp.com/mcp</span> como URL del servidor MCP remoto y haz clic en <b>Continue</b></li>
+        <li>Elige <b>Sign in now</b> y, en OAuth client, deja <b>Use Claude's published identity (Recommended)</b>; <b>Register automatically</b> también funciona</li>
+        <li>Haz clic en <b>Add</b> e inicia sesión con Google o con un código por correo</li>
+      </ol>
+      <div class="warn-line">Nunca elijas "Use your own OAuth client" ni completes un Client ID o un Secret: eso rompe el inicio de sesión. MyFinance reconoce a Claude por sí solo, y tus credenciales van en la página de inicio de sesión de MyFinance.</div>
+      <p class="soft">Funciona en todos los planes de Claude; el plan Free permite un conector personalizado. <a href="/es/install/claude">Guía completa para Claude</a> con primeros mensajes y soluciones.</p>
+    </div>
+
+    <div class="panel" id="p-chatgpt" role="tabpanel">
+      <ol>
+        <li>Activa <b>Developer mode</b> (modo de desarrollador): <b>Settings</b>, luego <b>Apps</b>, luego <b>Advanced settings</b></li>
+        <li>Abre <b>Plugins</b>, haz clic en <b>+</b> y luego en <b>Add custom MCP server</b> (en el menú anterior: <b>Settings</b>, <b>Apps</b>, <b>Create</b>)</li>
+        <li>Ponle de nombre "MyFinance" y pega <span class="srv-url">https://myfinance-mcp.com/mcp</span> como URL del servidor</li>
+        <li>Elige <b>OAuth</b> como autenticación y deja vacíos el client ID y el secret</li>
+        <li>Acepta la advertencia de riesgo, créalo e inicia sesión</li>
+        <li>En un chat nuevo, escribe <b>@</b> y elige MyFinance</li>
+      </ol>
+      <div class="warn-line">ChatGPT necesita Developer mode en la web. Registrar gastos funciona en Business, Enterprise y Edu; Pro tiene acceso de solo lectura. OpenAI no menciona Developer mode para Free, Go ni Plus: si no lo ves, usa <a href="/es/install/codex">Codex</a> (incluido en todos los planes de ChatGPT) o Claude.</div>
+      <p class="soft">Solo en la web, no en las apps móviles de ChatGPT. <a href="/es/install/chatgpt">Guía completa para ChatGPT</a> con detalles de planes y soluciones.</p>
+    </div>
+
+    <div class="panel" id="p-cursor" role="tabpanel">
+      <p class="panel-cta"><a class="btn btn-solid" href="https://cursor.com/install-mcp?name=MyFinance&amp;config=eyJ1cmwiOiJodHRwczovL215ZmluYW5jZS1tY3AuY29tL21jcCJ9">Agregar a Cursor</a></p>
+      <ol>
+        <li>Haz clic en <b>Agregar a Cursor</b> y confirma la instalación en Cursor</li>
+        <li>Abre <b>Customize</b> en la barra lateral, busca MyFinance en MCP servers y haz clic en <b>Connect</b></li>
+        <li>Inicia sesión con Google o con un código por correo y luego pregunta en el chat de Agent</li>
+      </ol>
+      <p class="soft">Configuración manual: agrega esto a <code class="inline">~/.cursor/mcp.json</code></p>
+<pre class="code">{
+  "mcpServers": {
+    "myfinance": {
+      "url": "<span class="srv-url">https://myfinance-mcp.com/mcp</span>"
+    }
+  }
+}</pre>
+      <p class="soft"><a href="/es/install/cursor">Guía completa para Cursor</a> con primeros mensajes y soluciones.</p>
+    </div>
+
+    <div class="panel" id="p-codex" role="tabpanel">
+<pre class="code">codex mcp add myfinance \
+  --url <span class="srv-url">https://myfinance-mcp.com/mcp</span>
+codex mcp login myfinance</pre>
+      <p class="soft">El segundo comando abre la página de inicio de sesión de MyFinance en tu navegador. Luego inicia <code class="inline">codex</code> y escribe <code class="inline">/mcp</code> para comprobar la conexión. En la extensión de Codex para IDE o en la app de escritorio de ChatGPT: <b>MCP servers</b>, luego <b>Add server</b>, Streamable HTTP, la misma URL y luego <b>Authenticate</b>. Codex está incluido en todos los planes de ChatGPT, también en Free y Go. <a href="/es/install/codex">Guía completa para Codex</a>.</p>
+    </div>
+
+    <div class="panel" id="p-other" role="tabpanel">
+<pre class="code">{
+  "mcpServers": {
+    "myfinance": {
+      "url": "<span class="srv-url">https://myfinance-mcp.com/mcp</span>"
+    }
+  }
+}</pre>
+      <p class="soft">En Claude Code: <code class="inline">claude mcp add --transport http myfinance <span class="srv-url">https://myfinance-mcp.com/mcp</span></code><br>Windsurf usa <code class="inline">serverUrl</code> en lugar de <code class="inline">url</code>. Tu cliente se encarga del inicio de sesión OAuth automáticamente.</p>
+    </div>
+  </div>
+</section>
+
+<section id="features">
+  <span class="swm right" aria-hidden="true">د.إ</span>
+  <div class="wrap">
+    <span class="eyebrow">Funciones</span>
+    <h2>Todo, solo chateando</h2>
+    <p class="sec-sub">Pocas herramientas, entradas flexibles, valores por defecto sensatos. Una función que necesita manual queda fuera.</p>
+    <div class="feat-grid reveal">
+      <div class="feat"><span class="fi num">registro</span><h3>Registro en lenguaje natural</h3><p>Di lo que gastaste o ganaste; la categoría, la moneda y la fecha se extraen solas.</p></div>
+      <div class="feat"><span class="fi num">foto</span><h3>Fotos de tickets</h3><p>Sácale una foto al ticket; tu IA lo lee en el chat. Las imágenes nunca llegan a nuestro servidor.</p></div>
+      <div class="feat"><span class="fi num">importar</span><h3>Cualquier banco, por extracto</h3><p>Arrastra un CSV, un PDF o una captura de la app del banco; cientos de filas en una sola llamada, duplicados detectados, totales conciliados.</p></div>
+      <div class="feat"><span class="fi num">fx</span><h3>Más de 150 monedas</h3><p>Registra en la moneda en que pagaste, de EUR y USD a RUB, KZT, GEL o TRY (tipos de cambio del BCE y del Banco Nacional de Ucrania, más una instantánea diaria para cualquier otra moneda ISO desde marzo de 2024); los resúmenes responden en tu moneda base, con el tipo congelado a la fecha de la transacción.</p></div>
+      <div class="feat"><span class="fi num">tope</span><h3>Presupuestos</h3><p>Topes mensuales por categoría o generales, con el avance en vivo. Avisos solo cuando de verdad superas uno.</p></div>
+      <div class="feat"><span class="fi num">tendencia</span><h3>Resúmenes y tendencias</h3><p>Por categoría, comercio o mes; variaciones mes a mes calculadas en el servidor.</p></div>
+      <div class="feat"><span class="fi num">separar</span><h3>Personal vs. negocio</h3><p>Etiqueta cuentas y transacciones; una vista combinada para fundadores, con un corte limpio del negocio para tu contador.</p></div>
+      <div class="feat"><span class="fi num">tuyos</span><h3>Exporta y conserva tus datos</h3><p>Cada transacción en CSV y el resto de tu perfil (cuentas con historial de saldos, presupuestos, reglas de categorías) en un solo archivo, cuando quieras; borra tu cuenta y todo lo que contiene, al instante.</p></div>
+    </div>
+  </div>
+</section>
+
+<section id="why">
+  <span class="swm left" aria-hidden="true">元</span>
+  <div class="wrap">
+    <span class="eyebrow">Por qué MyFinance MCP</span>
+    <h2>Hablar le gana a las hojas de cálculo.</h2>
+    <p class="sec-sub">Ya probaste la otra forma. Por eso estás aquí.</p>
+    <div class="cmp reveal">
+      <div class="cmp-col old">
+        <h3>La forma de siempre</h3>
+        <ul>
+          <li>La hoja de cálculo que dejaste de actualizar en marzo</li>
+          <li>La cuarta app de presupuestos: otra cuenta, otra suscripción</li>
+          <li>Anotar cada café en un formulario</li>
+          <li>Una sola moneda, totales equivocados</li>
+        </ul>
+      </div>
+      <div class="cmp-col ours">
+        <h3>MyFinance MCP</h3>
+        <ul>
+          <li>Dilo, sácale una foto o importa el extracto</li>
+          <li>Funciona dentro de Claude, ChatGPT o Cursor, gratis</li>
+          <li>Cuentas en SQL, nunca adivinadas por la IA</li>
+          <li>Más de 150 monedas, totales honestos</li>
+        </ul>
+      </div>
+    </div>
+    <p class="soften">¿Vienes de <a href="/ynab-mcp">YNAB</a>, <a href="/mint-mcp">Mint</a>, <a href="/monarch-money-mcp">Monarch Money</a>, <a href="/lunch-money-mcp">Lunch Money</a>, <a href="/copilot-money-mcp">Copilot Money</a>, <a href="/actual-budget-mcp">Actual Budget</a>, <a href="/firefly-iii-mcp">Firefly III</a> o <a href="/pocketguard-mcp">PocketGuard</a>? Mira cómo se compara cada uno (en inglés) o explora <a href="/alternatives">todas las alternativas</a>.</p>
+  </div>
+</section>
+
+<section id="security">
+  <span class="swm right" aria-hidden="true">₣</span>
+  <div class="wrap">
+    <span class="eyebrow">Seguridad</span>
+    <h2>Hecho como si tu dinero dependiera de ello</h2>
+    <p class="sec-sub">Nivel financiero por diseño, no por insignia.</p>
+    <div class="sec-grid reveal">
+      <div class="sec-item"><span class="sk num">sin imágenes guardadas</span><h3>Los tickets nunca salen del chat</h3><p>Tu IA lee las fotos en el chat; el servidor solo recibe números estructurados. No hay un almacén de imágenes que vulnerar.</p></div>
+      <div class="sec-item"><span class="sk num">datos en la ue</span><h3>Datos alojados en la UE</h3><p>Postgres en Fráncfort, con conexión TLS. El servidor limita cada consulta a tu cuenta, y la API de la base de datos está cerrada para todos.</p></div>
+      <div class="sec-item"><span class="sk num">logs ciegos</span><h3>Logs ciegos</h3><p>Los importes, comercios y notas nunca se escriben en los logs del servidor. Los eventos de uso guardan nombres de herramientas, tiempos y códigos de error, nunca importes ni comercios.</p></div>
+      <div class="sec-item"><span class="sk num">oauth 2.0 + pkce</span><h3>Autorización estándar</h3><p>OAuth 2.0 con PKCE e inicio de sesión con límite de intentos. Los tokens se guardan solo como hash unidireccional; los refresh tokens rotan en cada uso, y si uno ya usado se vuelve a presentar, se revoca toda la sesión.</p></div>
+      <div class="sec-item"><span class="sk num">licencia mit</span><h3>Código abierto</h3><p>Lee el código, audítalo o alójalo tú mismo con tu propia base de datos.</p></div>
+      <div class="sec-item"><span class="sk num">rgpd</span><h3>RGPD por diseño</h3><p>El CSV de transacciones más la exportación completa del perfil (portabilidad) y el borrado total al instante (supresión) son herramientas, no tickets de soporte.</p></div>
+    </div>
+  </div>
+</section>
+
+<section id="stats" hidden>
+  <div class="wrap">
+    <span class="eyebrow">Registrado hasta ahora, entre todos</span>
+    <h2>Cada número es dinero real de alguien.</h2>
+    <p class="sec-sub">Solo cantidades, nunca importes. Tus números son solo tuyos.</p>
+    <div class="stats reveal">
+      <div class="stat"><div class="sv num" id="stTx" data-count="0">0</div><div class="sl">transacciones registradas</div></div>
+      <div class="stat"><div class="sv num" id="stFiles" data-count="0">0</div><div class="sl">extractos y tickets procesados</div></div>
+      <div class="stat"><div class="sv num" id="stCur" data-count="0">0</div><div class="sl">monedas</div></div>
+      <div class="stat"><div class="sv num">0</div><div class="sl">hojas de cálculo dañadas</div></div>
+    </div>
+    <div class="map-block reveal">
+      <p class="map-head">Registrando desde <span class="map-count num" id="mapCount">0</span> zonas horarias del mundo</p>
+      <div class="world-map">
+        <svg id="worldSvg" viewBox="0 0 1000 500" preserveAspectRatio="xMidYMid meet" role="img" aria-label="Mapa del mundo con las zonas horarias donde se usa MyFinance MCP"></svg>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="faq">
+  <div class="wrap">
+    <span class="eyebrow">Preguntas frecuentes</span>
+    <h2>Preguntas, respondidas</h2>
+    <p class="sec-sub">La versión corta. La página de privacidad (en inglés) tiene la larga.</p>
+    <div class="faq reveal">
+      <details>
+        <summary>¿Qué es MyFinance MCP?</summary>
+        <p class="fa">Un control de gastos con IA, gratis, que funciona como servidor de Model Context Protocol. Llevas tus gastos, ingresos, presupuestos y patrimonio neto hablando con Claude, ChatGPT, Codex o Cursor: le dices a tu IA lo que gastaste, ella lo registra todo y el servidor hace las cuentas.</p>
+      </details>
+      <details>
+        <summary>¿Qué es el Model Context Protocol (MCP)?</summary>
+        <p class="fa">Un estándar abierto que permite a los asistentes de IA conectarse con herramientas externas. Un servidor MCP aporta capacidades concretas, aquí el control de las finanzas personales, que la IA puede usar durante una conversación. Piénsalo como un sistema de plugins para asistentes de IA.</p>
+      </details>
+      <details>
+        <summary>¿Funciona con ChatGPT?</summary>
+        <p class="fa">Sí, en ChatGPT en la web con Developer mode activado. El soporte completo, con registro de gastos incluido, está en ChatGPT Business, Enterprise y Edu. En Pro, OpenAI da a los servidores MCP personalizados acceso de solo lectura; su centro de ayuda no menciona Developer mode para Free, Go ni Plus, así que si no lo ves ahí, usa Codex (incluido en todos los planes de ChatGPT). En cualquier plan de ChatGPT, Free incluido, puedes usar MyFinance a través de <a href="/es/install/codex">Codex</a>. Las dos configuraciones están en la <a href="/es/install/chatgpt">guía de ChatGPT</a>.</p>
+      </details>
+      <details>
+        <summary>¿Qué clientes son compatibles?</summary>
+        <p class="fa">Cualquier cliente MCP con OAuth 2.0 + PKCE: Claude (web, escritorio y móvil), Claude Code, ChatGPT (Business, Enterprise y Edu, en la web), Codex, Cursor, Windsurf y VS Code. Cada uno tiene una guía paso a paso en la <a href="/es/install">página de instalación</a>.</p>
+      </details>
+      <details>
+        <summary>¿Necesito una cuenta de Google?</summary>
+        <p class="fa">No. Al conectar, inicias sesión con Google o con un código de un solo uso enviado a cualquier dirección de correo; el primer inicio de sesión crea tu cuenta.</p>
+      </details>
+      <details>
+        <summary>¿Es gratis?</summary>
+        <p class="fa">Sí, gratis mientras esté en beta. Sin anuncios, sin tarjeta.</p>
+      </details>
+      <details>
+        <summary>¿Mis datos son privados?</summary>
+        <p class="fa">Tus datos están vinculados a tu cuenta y solo tú puedes acceder a ellos. Alojamiento en la UE, nada compartido con terceros, ningún importe en los logs, tokens de inicio de sesión guardados solo como hash unidireccional, y puedes exportar (las transacciones en CSV, el resto de tu perfil en un archivo) o borrarlo todo en cualquier momento.</p>
+      </details>
+      <details>
+        <summary>¿Puede leer mi cuenta bancaria?</summary>
+        <p class="fa">No le hace falta: funciona con cualquier banco mediante la importación de extractos. Exporta un CSV o un PDF, o haz una captura en la app del banco, y arrástralo al chat. Tu IA lo lee, el servidor importa cada fila, omite los duplicados y compara el total con el extracto. Si usas ZenMoney, puedes vincularlo para una sincronización de solo lectura. La sincronización bancaria directa en la UE y el Reino Unido, mediante open banking con licencia, es una beta cerrada, solo por invitación.</p>
+      </details>
+      <details>
+        <summary>¿Qué pasa con los duplicados al importar un extracto?</summary>
+        <p class="fa">El importador detecta las filas que ya registraste a mano y las fusiona en lugar de duplicarlas, y volver a importar el mismo extracto es seguro: las filas ya importadas se omiten y se informan.</p>
+      </details>
+      <details>
+        <summary>¿Puedo separar lo personal del negocio?</summary>
+        <p class="fa">Sí. Las cuentas y cada transacción llevan una etiqueta personal/negocio; cualquier informe se puede filtrar por ella, y la exportación CSV la incluye para tu contador.</p>
+      </details>
+      <details>
+        <summary>¿Puedo alojarlo yo mismo?</summary>
+        <p class="fa">Sí. Tiene licencia MIT y se ejecuta desde un Dockerfile con tu propio Postgres (Supabase sirve). El repositorio de GitHub incluye una guía de autoalojamiento.</p>
+      </details>
+    </div>
+  </div>
+</section>
+
+<section id="contact">
+  <div class="wrap">
+    <span class="eyebrow">Contacto</span>
+    <h2>¿Preguntas o comentarios?</h2>
+    <p class="sec-sub">¿Encontraste un error, quieres una función o simplemente tienes una pregunta? Escríbeme directamente. Leo todos los mensajes.</p>
+    <p><a class="btn btn-ghost" id="mailLink" href="#contact">Mostrar correo</a></p>
+  </div>
+</section>
+
+</main>
+
+<div class="final">
+  <div class="wrap">
+    <h2>Empieza a registrar en menos de un minuto.</h2>
+    <p>Gratis y de código abierto. Funciona con la IA que ya usas.</p>
+    <div class="cta-row center">
+      <a class="btn btn-solid" href="#install">Instalación rápida</a>
+      <a class="btn btn-ghost" href="https://github.com/alex-odoo/myfinance-mcp" target="_blank" rel="noopener">★ Estrella en GitHub</a>
+    </div>
+    <p class="beta-line">MyFinance MCP es <b>gratis mientras esté en beta</b>, sin anuncios y sin tarjeta. Creado y operado por <a href="https://rteam.agency" target="_blank" rel="noopener">Rteam</a>.</p>
+  </div>
+</div>
+
+<footer class="site">
+  <div class="wrap foot-inner">
+    <nav class="lang-sw" aria-label="Idioma"><a href="/" hreflang="en" lang="en" title="English">EN</a><a href="/es/" hreflang="es" lang="es" title="Español" aria-current="page">ES</a><a href="/ru/" hreflang="ru" lang="ru" title="Русский">RU</a></nav>
+    <a href="/es/install">Guías de instalación</a>
+    <a href="/alternatives">Alternativas</a>
+    <a href="/blog">Blog</a>
+    <a href="https://github.com/alex-odoo/myfinance-mcp" target="_blank" rel="noopener">GitHub</a>
+    <a href="#contact">Contacto</a>
+    <a href="/privacy">Privacidad y términos (en inglés)</a>
+    <a href="/privacy#cookies" data-cookie-settings>Configurar cookies</a>
+    <span class="cr">Código abierto bajo MIT. Creado por <a href="https://rteam.agency" target="_blank" rel="noopener">Rteam</a>.</span>
+  </div>
+</footer>
+
+<script src="/app.js" defer></script>
+</body>
+</html>

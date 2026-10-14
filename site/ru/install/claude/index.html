@@ -1,0 +1,235 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script defer src="/consent.js"></script>
+<title>Учёт расходов в Claude - подключите MyFinance MCP за 1 минуту</title>
+<meta name="description" content="Превратите Claude в учёт расходов с ИИ: добавьте MyFinance MCP как коннектор, войдите через Google или по коду из письма и записывайте траты. Бесплатно.">
+<link rel="canonical" href="https://myfinance-mcp.com/ru/install/claude">
+<link rel="alternate" hreflang="en" href="https://myfinance-mcp.com/install/claude">
+<link rel="alternate" hreflang="es" href="https://myfinance-mcp.com/es/install/claude">
+<link rel="alternate" hreflang="ru" href="https://myfinance-mcp.com/ru/install/claude">
+<link rel="alternate" hreflang="x-default" href="https://myfinance-mcp.com/install/claude">
+<meta name="theme-color" content="#FAF8F3" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#181712" media="(prefers-color-scheme: dark)">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="icon" href="/favicon.ico" sizes="48x48">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<link rel="stylesheet" href="/styles.css">
+<meta property="og:type" content="website">
+<meta property="og:locale" content="ru_RU">
+<meta property="og:locale:alternate" content="en_US">
+<meta property="og:locale:alternate" content="es_419">
+<meta property="og:url" content="https://myfinance-mcp.com/ru/install/claude">
+<meta property="og:title" content="Учёт расходов в Claude - подключите MyFinance MCP за 1 минуту">
+<meta property="og:description" content="Превратите Claude в учёт расходов с ИИ: добавьте MyFinance MCP как коннектор, войдите через Google или по коду из письма и записывайте траты. Бесплатно.">
+<meta property="og:image" content="https://myfinance-mcp.com/og.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Учёт расходов в Claude - подключите MyFinance MCP за 1 минуту">
+<meta name="twitter:description" content="Превратите Claude в учёт расходов с ИИ: добавьте MyFinance MCP как коннектор, войдите через Google или по коду из письма и записывайте траты. Бесплатно.">
+<script type="application/ld+json">{"@context": "https://schema.org", "@type": "BreadcrumbList", "itemListElement": [{"@type": "ListItem", "position": 1, "name": "Главная", "item": "https://myfinance-mcp.com/ru/"}, {"@type": "ListItem", "position": 2, "name": "Установка", "item": "https://myfinance-mcp.com/ru/install"}, {"@type": "ListItem", "position": 3, "name": "Claude", "item": "https://myfinance-mcp.com/ru/install/claude"}]}</script>
+<script type="application/ld+json">{"@context": "https://schema.org", "@type": "HowTo", "inLanguage": "ru", "name": "Как подключить MyFinance MCP к Claude", "description": "Превратите Claude в учёт расходов с ИИ: добавьте MyFinance MCP как коннектор, войдите через Google или по коду из письма и записывайте траты. Бесплатно.", "totalTime": "PT1M", "url": "https://myfinance-mcp.com/ru/install/claude#steps", "estimatedCost": {"@type": "MonetaryAmount", "currency": "USD", "value": "0"}, "step": [{"@type": "HowToStep", "position": 1, "name": "Шаг 1", "text": "Откройте Claude в браузере или в десктопном приложении и перейдите в Customize (Настроить), затем в Connectors (Коннекторы)"}, {"@type": "HowToStep", "position": 2, "name": "Шаг 2", "text": "Нажмите + Add, затем Add custom connector (добавить свой коннектор)"}, {"@type": "HowToStep", "position": 3, "name": "Шаг 3", "text": "Назовите его MyFinance, вставьте https://myfinance-mcp.com/mcp как адрес удалённого MCP-сервера и нажмите Continue"}, {"@type": "HowToStep", "position": 4, "name": "Шаг 4", "text": "В разделе Authentication выберите Sign in now; в OAuth client оставьте вариант по умолчанию, Use Claude's published identity (Recommended). Register automatically тоже подойдёт"}, {"@type": "HowToStep", "position": 5, "name": "Шаг 5", "text": "Нажмите Add и войдите через Google или по коду из письма"}, {"@type": "HowToStep", "position": 6, "name": "Шаг 6", "text": "В чате нажмите +, затем Connectors, и проверьте, что MyFinance включён"}]}</script>
+<script type="application/ld+json">{"@context": "https://schema.org", "@type": "FAQPage", "inLanguage": "ru", "mainEntity": [{"@type": "Question", "name": "Коннектор не показывает инструменты", "acceptedAnswer": {"@type": "Answer", "text": "Удалите коннектор (Customize, Connectors, три точки рядом с MyFinance, Remove) и добавьте его снова с тем же URL. Claude читает список инструментов при подключении, так что новое подключение решает большинство проблем."}}, {"@type": "Question", "name": "Вход не проходит сразу после нажатия Add", "acceptedAnswer": {"@type": "Answer", "text": "Скорее всего, коннектор добавили с другим вариантом OAuth client или с заполненным Client ID. Удалите его и добавьте снова с Sign in now и с Use Claude's published identity или Register automatically, оставив поля Client ID и Secret пустыми. Если Use Claude's published identity по-прежнему не срабатывает, выберите Register automatically."}}, {"@type": "Question", "name": "Claude не использует MyFinance в чате", "acceptedAnswer": {"@type": "Answer", "text": "Нажмите + в чате, затем Connectors, и включите MyFinance для этого разговора. Потом попросите прямо, например: запиши в MyFinance 20 EUR за обед."}}, {"@type": "Question", "name": "Что-то сломалось после обновления MyFinance", "acceptedAnswer": {"@type": "Answer", "text": "Переподключитесь: удалите MyFinance в Customize, Connectors и добавьте снова с тем же URL. Claude хранит список инструментов с последнего подключения, поэтому новые или изменённые инструменты появляются только после переподключения. Данные останутся: они привязаны к вашему входу, а не к коннектору."}}]}</script>
+</head>
+<body>
+<header class="site">
+  <div class="wrap site-inner">
+    <a class="logo" href="/ru/">
+      <svg class="mark" width="26" height="26" viewBox="0 0 64 64" aria-hidden="true">
+        <g>
+          <polygon class="mk-top" points="18,6 52,6 46,14 27,14 27,24 40,24 40,32 18,32"/>
+          <polygon class="mk-bot" points="18,38 27,38 27,53 21,58 18,58 18,49 8,49 8,42 18,42"/>
+        </g>
+        <clipPath id="mkclip">
+          <polygon points="18,6 52,6 46,14 27,14 27,24 40,24 40,32 18,32"/>
+          <polygon points="18,38 27,38 27,53 21,58 18,58 18,49 8,49 8,42 18,42"/>
+        </clipPath>
+        <g clip-path="url(#mkclip)"><rect class="mk-sheen" x="-24" y="-12" width="14" height="88"/></g>
+      </svg>
+      MyFinance&nbsp;<b>MCP</b></a>
+    <nav class="main" aria-label="Основное меню">
+      <a href="/ru/#how">Как работает</a>
+      <a href="/ru/install">Установка</a>
+      <a href="/ru/#examples">Примеры</a>
+      <a href="/alternatives">Альтернативы</a>
+      <a href="/ru/#faq">Вопросы</a>
+    </nav>
+    <a class="gh-link" href="https://github.com/alex-odoo/myfinance-mcp" target="_blank" rel="noopener">★ GitHub</a>
+    <a class="hd-cta" href="/ru/install">Подключить</a>
+    <nav class="lang-sw" aria-label="Язык"><a href="/install/claude" hreflang="en" lang="en" title="English">EN</a><a href="/es/install/claude" hreflang="es" lang="es" title="Español">ES</a><a href="/ru/install/claude" hreflang="ru" lang="ru" title="Русский" aria-current="page">RU</a></nav>
+  </div>
+</header>
+
+<main>
+
+<section class="alt-hero">
+  <div class="wrap">
+    <nav class="crumbs" aria-label="Навигационная цепочка"><a href="/ru/">Главная</a> / <a href="/ru/install">Установка</a> / Claude</nav>
+    <span class="eyebrow">Инструкция · Claude</span>
+    <h1>Учёт расходов в <span class="talk">Claude</span> за минуту</h1>
+    <p class="sec-sub">Добавьте MyFinance как свой коннектор, и Claude станет учётом расходов: говорите, сколько потратили, перетаскивайте выписки любого банка, спрашивайте про бюджеты и сводки за месяц. Бесплатно, на любом тарифе Claude.</p>
+    <p class="server-url-line">Адрес сервера: <span class="srv-url">https://myfinance-mcp.com/mcp</span></p>
+    <div class="cta-row">
+      <a class="btn btn-solid" href="#steps">Показать шаги</a>
+      <a class="btn btn-ghost" href="#first">Что сказать сначала</a>
+    </div>
+  </div>
+</section>
+
+<section id="steps">
+  <div class="wrap">
+    <span class="eyebrow">Настройка</span>
+    <h2>Шесть шагов, около минуты</h2>
+    <div class="panel on">
+      <ol>
+        <li>Откройте Claude в браузере или в десктопном приложении и перейдите в <b>Customize</b> (Настроить), затем в <b>Connectors</b> (Коннекторы)</li>
+        <li>Нажмите <b>+ Add</b>, затем <b>Add custom connector</b> (добавить свой коннектор)</li>
+        <li>Назовите его <b>MyFinance</b>, вставьте <span class="srv-url">https://myfinance-mcp.com/mcp</span> как адрес удалённого MCP-сервера и нажмите <b>Continue</b></li>
+        <li>В разделе Authentication выберите <b>Sign in now</b>; в OAuth client оставьте вариант по умолчанию, <b>Use Claude's published identity (Recommended)</b>. <b>Register automatically</b> тоже подойдёт</li>
+        <li>Нажмите <b>Add</b> и войдите через Google или по коду из письма</li>
+        <li>В чате нажмите <b>+</b>, затем <b>Connectors</b>, и проверьте, что MyFinance включён</li>
+      </ol>
+      <div class="warn-line">Никогда не выбирайте «Use your own OAuth client» и не заполняйте Client ID или Secret (в старых версиях формы эти поля есть: оставьте их пустыми). MyFinance сам распознаёт Claude; ваши данные для входа вводятся на странице входа MyFinance.</div>
+      <p class="soft">Свои коннекторы работают на всех тарифах Claude: Free, Pro, Max, Team и Enterprise. На Free можно добавить один свой коннектор. В Team и Enterprise сначала Owner добавляет коннектор для организации, затем каждый участник подключает его в Customize, Connectors. Коннектор хранится в вашем аккаунте Claude, поэтому десктопное и мобильные приложения тоже им пользуются.</p>
+    </div>
+    <p class="soften">Пользуетесь Claude Code? Выполните <code class="inline">claude mcp add --transport http myfinance https://myfinance-mcp.com/mcp</code>, затем введите <code class="inline">/mcp</code> в Claude Code, чтобы войти.</p>
+  </div>
+</section>
+
+<section id="signin">
+  <div class="wrap">
+    <span class="eyebrow">Вход</span>
+    <h2>Как выглядит страница <span class="nobr">входа</span></h2>
+    <div class="signin-grid">
+      <div>
+        <p class="prose">Когда Claude подключается, открывается страница MyFinance MCP на myfinance-mcp.com, на английском. На ней указано, какой клиент вы подключаете и куда вернётесь после входа: claude.ai. Отдельного входа на сайте MyFinance нет; это единственная страница, которую вы увидите.</p>
+        <ol class="prose">
+          <li><b>Continue with Google</b> (продолжить с Google): один клик, если у вас есть аккаунт Google.</li>
+          <li>Или введите любой адрес почты и нажмите <b>Email me a sign-in code</b> (прислать код). Мы отправим 8-значный код, который действует 10 минут; введите его и нажмите <b>Sign in</b>. Аккаунт Google не нужен.</li>
+          <li>Первый вход создаёт аккаунт. В следующий раз тот же аккаунт Google или та же почта вернут те же данные.</li>
+        </ol>
+      </div>
+      <div>
+        <div class="signin-mock" role="img" aria-label="Набросок страницы входа MyFinance MCP: Continue with Google или код входа по почте">
+          <div class="sm-h">MyFinance MCP</div>
+          <div class="sm-p">Sign in to connect Claude to your finances.</div>
+          <div class="sm-btn sm-g">Continue with Google</div>
+          <div class="sm-or">or</div>
+          <div class="sm-l">Email</div>
+          <div class="sm-i">you@example.com</div>
+          <div class="sm-btn sm-b">Email me a sign-in code</div>
+          <div class="sm-hint">New here? The same code creates your account.</div>
+        </div>
+        <p class="signin-cap">Набросок страницы входа</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="first">
+  <div class="wrap">
+    <span class="eyebrow">Что сказать сначала</span>
+    <h2>Пять сообщений, которые сразу окупаются</h2>
+    <p class="sec-sub">Начните с валюты и города, чтобы все суммы и даты легли правильно. Затем запишите расход, импортируйте выписку, задайте вопрос и поставьте один бюджет. Подставьте свою валюту и свои магазины: это примеры, которые пишут в Claude обычными сообщениями.</p>
+    <div class="ledger reveal in">
+      <div class="lrow">
+        <span class="ln num">01</span>
+        <span class="say">«Моя валюта рубли, я живу в Москве»</span>
+        <span class="res num">базовая валюта RUB · <b>часовой пояс задан</b></span>
+      </div>
+      <div class="lrow">
+        <span class="ln num">02</span>
+        <span class="say">«Вчера потратил 3&nbsp;400 на продукты в Пятёрочке, а сегодня 900 на такси»</span>
+        <span class="res num">2 расхода · продукты, транспорт · <b>даты определены</b></span>
+      </div>
+      <div class="lrow">
+        <span class="ln num">03</span>
+        <span class="say"><span class="ph">[скриншот]</span> «Вот моя банковская выписка»</span>
+        <span class="res num">все строки импортированы · <b>дубли пропущены</b></span>
+      </div>
+      <div class="lrow">
+        <span class="ln num">04</span>
+        <span class="say">«Сколько я потратил в этом месяце по категориям?»</span>
+        <span class="res num">итоги по категориям · <b>посчитано в SQL</b></span>
+      </div>
+      <div class="lrow">
+        <span class="ln num">05</span>
+        <span class="say">«Поставь месячный бюджет 15&nbsp;000 на развлечения»</span>
+        <span class="res num">лимит 15&nbsp;000 RUB · <b>уведомления только при превышении</b></span>
+      </div>
+    </div>
+    <p class="soften">Все итоги приходят с сервера и посчитаны в SQL. Claude объясняет цифры, но никогда не складывает их сам.</p>
+  </div>
+</section>
+
+<section id="trouble">
+  <div class="wrap">
+    <span class="eyebrow">Решение проблем</span>
+    <h2>Если что-то не так</h2>
+    <div class="faq reveal in">
+      <details>
+        <summary>Коннектор не показывает инструменты</summary>
+        <p class="fa">Удалите коннектор (Customize, Connectors, три точки рядом с MyFinance, Remove) и добавьте его снова с тем же URL. Claude читает список инструментов при подключении, так что новое подключение решает большинство проблем.</p>
+      </details>
+      <details>
+        <summary>Вход не проходит сразу после нажатия Add</summary>
+        <p class="fa">Скорее всего, коннектор добавили с другим вариантом OAuth client или с заполненным Client ID. Удалите его и добавьте снова с Sign in now и с Use Claude's published identity или Register automatically, оставив поля Client ID и Secret пустыми. Если Use Claude's published identity по-прежнему не срабатывает, выберите Register automatically.</p>
+      </details>
+      <details>
+        <summary>Claude не использует MyFinance в чате</summary>
+        <p class="fa">Нажмите + в чате, затем Connectors, и включите MyFinance для этого разговора. Потом попросите прямо, например: запиши в MyFinance 20 EUR за обед.</p>
+      </details>
+      <details>
+        <summary>Что-то сломалось после обновления MyFinance</summary>
+        <p class="fa">Переподключитесь: удалите MyFinance в Customize, Connectors и добавьте снова с тем же URL. Claude хранит список инструментов с последнего подключения, поэтому новые или изменённые инструменты появляются только после переподключения. Данные останутся: они привязаны к вашему входу, а не к коннектору.</p>
+      </details>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <span class="eyebrow">Другие клиенты</span>
+    <h2>Пользуетесь другим ИИ?</h2>
+    <p class="sec-sub">Тот же сервер и тот же аккаунт работают в любом клиенте: войдите с тем же аккаунтом Google или той же почтой, и ваши данные на месте.</p>
+    <div class="feat-grid cols3 reveal in">
+      <a class="feat alt-card" href="/ru/install/chatgpt"><span class="fi num">инструкция</span><h3>ChatGPT <span class="arr">&rarr;</span></h3><p>Developer mode в веб-версии. Запись расходов на Business, Enterprise и Edu.</p></a>
+      <a class="feat alt-card" href="/ru/install/cursor"><span class="fi num">инструкция</span><h3>Cursor <span class="arr">&rarr;</span></h3><p>Добавить в Cursor в один клик или три строки в mcp.json.</p></a>
+      <a class="feat alt-card" href="/ru/install/codex"><span class="fi num">инструкция</span><h3>Codex <span class="arr">&rarr;</span></h3><p>codex mcp add, затем codex mcp login. Во всех тарифах ChatGPT, включая Free.</p></a>
+    </div>
+    <p class="soften">Windsurf, VS Code, Claude Code и любой MCP-клиент с OAuth тоже работают: смотрите <a href="/ru/install">все инструкции по установке</a>.</p>
+    <p class="fineprint">Обновлено: 14 октября 2026 г. Шаги соответствуют текущим справочным страницам каждого вендора; меню меняются, так что если название пункта отличается, ищите ближайшее. Claude, ChatGPT, Codex и Cursor являются товарными знаками их владельцев. MyFinance MCP является независимым проектом с открытым кодом, не связан с ними и не одобрен ими.</p>
+  </div>
+</section>
+
+</main>
+
+<div class="final">
+  <div class="wrap">
+    <h2>Учёт денег внутри ИИ, которым вы уже пользуетесь.</h2>
+    <p>Бесплатно и с открытым кодом. Один URL, один <span class="nobr">вход</span>, и просто говорите.</p>
+    <div class="cta-row center">
+      <a class="btn btn-solid" href="/ru/install">Все инструкции по установке</a>
+      <a class="btn btn-ghost" href="https://github.com/alex-odoo/myfinance-mcp" target="_blank" rel="noopener">★ Звезда на GitHub</a>
+    </div>
+  </div>
+</div>
+
+<footer class="site">
+  <div class="wrap foot-inner">
+    <nav class="lang-sw" aria-label="Язык"><a href="/install/claude" hreflang="en" lang="en" title="English">EN</a><a href="/es/install/claude" hreflang="es" lang="es" title="Español">ES</a><a href="/ru/install/claude" hreflang="ru" lang="ru" title="Русский" aria-current="page">RU</a></nav>
+    <a href="/ru/">Главная</a>
+    <a href="/ru/install">Инструкции по установке</a>
+    <a href="/alternatives">Альтернативы</a>
+    <a href="/blog">Блог</a>
+    <a href="https://github.com/alex-odoo/myfinance-mcp" target="_blank" rel="noopener">GitHub</a>
+    <a href="/ru/#contact">Контакты</a>
+    <a href="/privacy">Конфиденциальность и условия (на английском)</a>
+    <a href="/privacy#cookies" data-cookie-settings>Настройки cookie</a>
+    <span class="cr">Открытый код под лицензией MIT. Разработка: <a href="https://rteam.agency" target="_blank" rel="noopener">Rteam</a>.</span>
+  </div>
+</footer>
+
+</body>
+</html>

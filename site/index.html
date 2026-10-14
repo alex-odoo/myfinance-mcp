@@ -7,6 +7,10 @@
 <title>MyFinance MCP - AI Expense Tracker for Claude, ChatGPT &amp; Cursor</title>
 <meta name="description" content="Free AI expense tracker for Claude, ChatGPT and Cursor: log spending by chat, set budgets in any currency and import statements from any bank. Open source.">
 <link rel="canonical" href="https://myfinance-mcp.com/">
+<link rel="alternate" hreflang="en" href="https://myfinance-mcp.com/">
+<link rel="alternate" hreflang="es" href="https://myfinance-mcp.com/es/">
+<link rel="alternate" hreflang="ru" href="https://myfinance-mcp.com/ru/">
+<link rel="alternate" hreflang="x-default" href="https://myfinance-mcp.com/">
 <meta name="theme-color" content="#FAF8F3" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#181712" media="(prefers-color-scheme: dark)">
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
@@ -16,6 +20,9 @@
 <link rel="stylesheet" href="/styles.css">
 
 <meta property="og:type" content="website">
+<meta property="og:locale" content="en_US">
+<meta property="og:locale:alternate" content="es_419">
+<meta property="og:locale:alternate" content="ru_RU">
 <meta property="og:url" content="https://myfinance-mcp.com/">
 <meta property="og:title" content="MyFinance MCP - AI Expense Tracker for Claude, ChatGPT &amp; Cursor">
 <meta property="og:description" content="Free, open-source AI expense tracker for Claude, ChatGPT and Cursor. Say what you spent, set budgets in any currency, import statements from any bank.">
@@ -29,6 +36,7 @@
 {
   "@context": "https://schema.org",
   "@type": "SoftwareApplication",
+  "inLanguage": "en",
   "name": "MyFinance MCP",
   "url": "https://myfinance-mcp.com/",
   "applicationCategory": "FinanceApplication",
@@ -64,6 +72,7 @@
 {
   "@context": "https://schema.org",
   "@type": "FAQPage",
+  "inLanguage": "en",
   "mainEntity": [
     { "@type": "Question", "name": "What is MyFinance MCP?", "acceptedAnswer": { "@type": "Answer", "text": "A free AI expense tracker that runs as a Model Context Protocol server. You track expenses, income, budgets and net worth by talking to Claude, ChatGPT, Codex or Cursor: you tell your AI what you spent, it logs everything and the server does the math." } },
     { "@type": "Question", "name": "What is the Model Context Protocol (MCP)?", "acceptedAnswer": { "@type": "Answer", "text": "An open standard that lets AI assistants connect to external tools. An MCP server provides specific capabilities, here personal finance tracking, that the AI can use during a conversation. Think of it as a plugin system for AI assistants." } },
@@ -110,6 +119,7 @@
     </nav>
     <a class="gh-link" href="https://github.com/alex-odoo/myfinance-mcp" target="_blank" rel="noopener">★ GitHub</a>
     <a class="hd-cta" href="#install">Connect</a>
+    <nav class="lang-sw" aria-label="Language"><a href="/" hreflang="en" lang="en" title="English" aria-current="page">EN</a><a href="/es/" hreflang="es" lang="es" title="Español">ES</a><a href="/ru/" hreflang="ru" lang="ru" title="Русский">RU</a></nav>
   </div>
 </header>
 
@@ -279,10 +289,10 @@
         <li>Open Claude and go to <b>Customize</b>, then <b>Connectors</b></li>
         <li>Click <b>+ Add</b>, then <b>Add custom connector</b></li>
         <li>Name it "MyFinance", paste <span class="srv-url">https://myfinance-mcp.com/mcp</span> as the remote MCP server URL and click <b>Continue</b></li>
-        <li>Choose <b>Sign in now</b> and, under OAuth client, <b>Register automatically</b></li>
+        <li>Choose <b>Sign in now</b> and, under OAuth client, keep <b>Use Claude's published identity (Recommended)</b>; <b>Register automatically</b> works too</li>
         <li>Click <b>Add</b>, then sign in with Google or an email code</li>
       </ol>
-      <div class="warn-line">Never pick "Use your own OAuth client" and never fill a Client ID or Secret: that breaks sign-in. MyFinance registers Claude by itself, and your credentials go on the MyFinance sign-in page.</div>
+      <div class="warn-line">Never pick "Use your own OAuth client" and never fill a Client ID or Secret: that breaks sign-in. MyFinance recognises Claude by itself, and your credentials go on the MyFinance sign-in page.</div>
       <p class="soft">Works on every Claude plan; the Free plan allows one custom connector. <a href="/install/claude">Full Claude guide</a> with first prompts and fixes.</p>
     </div>
 
@@ -502,6 +512,7 @@ codex mcp login myfinance</pre>
 
 <footer class="site">
   <div class="wrap foot-inner">
+    <nav class="lang-sw" aria-label="Language"><a href="/" hreflang="en" lang="en" title="English" aria-current="page">EN</a><a href="/es/" hreflang="es" lang="es" title="Español">ES</a><a href="/ru/" hreflang="ru" lang="ru" title="Русский">RU</a></nav>
     <a href="/install">Install guides</a>
     <a href="/alternatives">Alternatives</a>
     <a href="/blog">Blog</a>
