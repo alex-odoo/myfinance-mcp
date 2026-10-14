@@ -78,11 +78,11 @@ export async function syncEnableBanking(userId: string, opts: SyncOptions = {}) 
     where: { userId_provider: { userId, provider: "enablebanking" } },
   });
   if (!connection) {
-    throw new Error("No bank is connected. Use connect_bank with action=start first.");
+    throw new Error("No bank is connected. Use bank action=start first.");
   }
   if (connection.status === "pending" || !connection.tokenEnc) {
     throw new Error(
-      "Bank authorization is not finished. Ask the user to open the authorization link from connect_bank action=start and approve access at their bank, then sync again."
+      "Bank authorization is not finished. Ask the user to open the authorization link from bank action=start and approve access at their bank, then sync again."
     );
   }
   const user = await db.user.findUnique({ where: { id: userId } });
@@ -92,7 +92,7 @@ export async function syncEnableBanking(userId: string, opts: SyncOptions = {}) 
   // A consent past its validUntil cannot work: flip to the reconnect state
   // without spending one of the bank's few daily accesses on a certain 401.
   if (meta.validUntil && Date.parse(meta.validUntil) <= Date.now()) {
-    const message = `Bank consent expired on ${meta.validUntil.slice(0, 10)}. Reconnect with connect_bank action=start to resume syncing.`;
+    const message = `Bank consent expired on ${meta.validUntil.slice(0, 10)}. Reconnect with bank action=start to resume syncing.`;
     await db.bankConnection.update({ where: { id: connection.id }, data: { status: "error", lastError: message } });
     throw new EbAuthError(message);
   }
@@ -124,7 +124,7 @@ async function runSync(connection: BankConnection, user: User, meta: EbConnectio
   // cannot be synced: fetching the previous session's uids only fails on
   // every tick. The user has to reconnect.
   if (meta.accountsInfo && sessionUids.size === 0) {
-    throw new EbAuthError("The bank returned no accounts for this consent. Reconnect with connect_bank.");
+    throw new EbAuthError("The bank returned no accounts for this consent. Reconnect with bank action=start.");
   }
   // Entries from an older session stay in the map (re-keyed if their account
   // comes back) but are never fetched: their uids died with that session.
@@ -224,7 +224,7 @@ async function runSync(connection: BankConnection, user: User, meta: EbConnectio
     } catch {
       throw new Error(
         `Cannot create account "${name}" for bank sub-account ${iban ?? acc.uid}: the name is already taken. ` +
-          `Rename or delete the clashing account (update_account / delete_account), then sync again.`
+          `Rename or delete the clashing account (manage_account action=update or action=delete), then sync again.`
       );
     }
     for (const o of crossProviderOverlaps(created, ourAccounts)) {
@@ -618,7 +618,7 @@ async function runSync(connection: BankConnection, user: User, meta: EbConnectio
       ? {
           truncated: true,
           truncated_hint:
-            "The bank returned more pages than one sync fetches. The rest is resumed on the next sync (automatic daily, or run sync_bank again).",
+            "The bank returned more pages than one sync fetches. The rest is resumed on the next sync (automatic daily, or run bank action=sync again).",
         }
       : {}),
     ...(pricer.unpriced.size

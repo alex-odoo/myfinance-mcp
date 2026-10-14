@@ -1,5 +1,6 @@
 import { z } from "zod";
-import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { McpServer, RegisteredTool } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { db, logEvent } from "./db";
 import { assertConvertible, convert, round2, UnknownCurrencyError } from "./fx";
 import { EXPENSE_CATEGORIES, INCOME_CATEGORIES } from "./categories";
@@ -31,7 +32,7 @@ function fitsType(category: string | undefined, type: TxType): category is strin
 
 /** What a model offers when direct bank sync cannot help: it works for every bank. */
 const STATEMENT_PATH =
-  "Any bank works without a connection: ask the user to export a statement (CSV or PDF from the bank's app or website, or screenshots of the transaction list), send it in this chat, and import every row with ONE import_transactions call. ZenMoney users can sync with connect_zenmoney.";
+  "Any bank works without a connection: ask the user to export a statement (CSV or PDF from the bank's app or website, or screenshots of the transaction list), send it in this chat, and import every row with ONE import_transactions call. ZenMoney users can sync with the zenmoney tool.";
 
 // Bank directory searches per user per hour: one script searched 146 times in a day.
 const BANK_SEARCHES_PER_HOUR = 20;
@@ -167,6 +168,28 @@ function whereItWent(
       (user.digest === null && digestAvailable() ? ", or a monthly summary by email (update_settings email_digest=monthly)." : "."),
   };
 }
+
+/**
+ * Tools merged into others in 0.18.0. They stay registered and callable (a
+ * client keeps the tool list of its last connection, and a call to a name
+ * that is gone fails), but tools/list leaves them out (hideTools, mcp.ts).
+ */
+export const LEGACY_TOOLS: ReadonlySet<string> = new Set([
+  "ping", // get_settings
+  "get_trends", // get_summary trend_months
+  "delete_transaction", // delete_transactions
+  "create_account", // manage_account
+  "update_account",
+  "delete_account",
+  "merge_accounts",
+  "log_balance",
+  "export_profile", // export_data
+  "export_transactions",
+  "connect_zenmoney", // zenmoney
+  "sync_zenmoney",
+  "connect_bank", // bank
+  "sync_bank",
+]);
 
 export interface FinanceToolOptions {
   /** Offer connect_bank and sync_bank (see bankSyncOffered). */
@@ -399,7 +422,28 @@ export function registerFinanceTools(server: McpServer, userId: string, options:
     (...args: A): Promise<R> =>
       asBaseWriter(userId, () => handler(...args));
 
-  server.registerTool(
+  // Every tool by name, so the merged tools at the bottom run the original
+  // handlers. Tools in LEGACY_TOOLS stay registered (and callable) but are
+  // not listed: see hideTools in mcp.ts.
+  const defs = new Map<string, RegisteredTool>();
+  const define = ((name: string, config: never, handler: never) => {
+    const tool = server.registerTool(name, config, handler);
+    defs.set(name, tool);
+    return tool;
+  }) as typeof server.registerTool;
+  /** Runs a tool by name with its own input checks, as a call to it would. */
+  const delegate = async (name: string, args: Record<string, unknown>, extra: unknown): Promise<CallToolResult> => {
+    const tool = defs.get(name);
+    if (!tool) throw new Error(`${name} is not available for this account.`);
+    const parsed = await (tool.inputSchema as z.ZodTypeAny | undefined)?.safeParseAsync(args);
+    if (parsed && !parsed.success) {
+      throw new Error(`Invalid arguments: ${parsed.error.issues.map((i) => `${i.path.join(".") || "input"}: ${i.message}`).join("; ")}`);
+    }
+    const run = tool.handler as unknown as (input: unknown, extra: unknown) => Promise<CallToolResult>;
+    return run(parsed ? parsed.data : {}, extra);
+  };
+
+  define(
     "ping",
     {
       title: "Ping",
@@ -414,7 +458,7 @@ export function registerFinanceTools(server: McpServer, userId: string, options:
     }
   );
 
-  server.registerTool(
+  define(
     "log_expense",
     {
       title: "Log expense",
@@ -442,7 +486,7 @@ export function registerFinanceTools(server: McpServer, userId: string, options:
     }
   );
 
-  server.registerTool(
+  define(
     "log_income",
     {
       title: "Log income",
@@ -468,7 +512,7 @@ export function registerFinanceTools(server: McpServer, userId: string, options:
     }
   );
 
-  server.registerTool(
+  define(
     "create_account",
     {
       title: "Create account",
@@ -497,7 +541,7 @@ export function registerFinanceTools(server: McpServer, userId: string, options:
     }
   );
 
-  server.registerTool(
+  define(
     "update_account",
     {
       title: "Update account",
@@ -539,7 +583,7 @@ export function registerFinanceTools(server: McpServer, userId: string, options:
     }
   );
 
-  server.registerTool(
+  define(
     "delete_account",
     {
       title: "Delete one account",
@@ -560,7 +604,7 @@ export function registerFinanceTools(server: McpServer, userId: string, options:
       if (txCount > 0 && delete_transactions !== true) {
         throw new Error(
           `Account "${acc.name}" still has ${txCount} transaction(s). Pass delete_transactions=true to delete them ` +
-            `together with the account, or move them first: merge_accounts for all of them, update_transaction account=... for single rows.`
+            `together with the account, or move them first: manage_account action=merge for all of them, update_transaction account=... for single rows.`
         );
       }
       const counterLegs = await db.transaction.count({ where: { userId, counterAccountId: acc.id } });
@@ -591,7 +635,7 @@ export function registerFinanceTools(server: McpServer, userId: string, options:
     }
   );
 
-  server.registerTool(
+  define(
     "merge_accounts",
     {
       title: "Merge accounts",
@@ -809,12 +853,12 @@ export function registerFinanceTools(server: McpServer, userId: string, options:
         ...(counterRefs ? { transfer_refs_rewritten: counterRefs } : {}),
         ...(snapshotsDropped ? { snapshots_dropped: snapshotsDropped } : {}),
         ...(dryRun ? {} : { source_deleted: true }),
-        note: "Target keeps its own balance snapshots; source snapshots are dropped (two accounts' absolute balances cannot be merged). Anchor with log_balance if the balance looks off.",
+        note: "Target keeps its own balance snapshots; source snapshots are dropped (two accounts' absolute balances cannot be merged). Anchor with manage_account action=set_balance if the balance looks off.",
       });
     }
   );
 
-  server.registerTool(
+  define(
     "get_accounts",
     {
       _meta: DASHBOARD_TOOL_META,
@@ -870,7 +914,7 @@ export function registerFinanceTools(server: McpServer, userId: string, options:
       }
       const hints = [
         ...(out.some((a) => a.balance !== null && !a.anchored_at)
-          ? ["Accounts without a snapshot show tracked flows only. Anchor real balances with log_balance."]
+          ? ["Accounts without a snapshot show tracked flows only. Anchor real balances with manage_account action=set_balance."]
           : []),
         ...(unpriced.length ? [`Not in net worth (no FX rate available): ${unpriced.join(", ")}.`] : []),
       ];
@@ -884,7 +928,7 @@ export function registerFinanceTools(server: McpServer, userId: string, options:
     }
   );
 
-  server.registerTool(
+  define(
     "log_transfer",
     {
       title: "Log transfer",
@@ -954,7 +998,7 @@ export function registerFinanceTools(server: McpServer, userId: string, options:
     })
   );
 
-  server.registerTool(
+  define(
     "log_balance",
     {
       title: "Log balance snapshot",
@@ -986,7 +1030,7 @@ export function registerFinanceTools(server: McpServer, userId: string, options:
     }
   );
 
-  server.registerTool(
+  define(
     "import_transactions",
     {
       title: "Bulk import",
@@ -1400,7 +1444,7 @@ export function registerFinanceTools(server: McpServer, userId: string, options:
     }
   );
 
-  server.registerTool(
+  define(
     "get_summary",
     {
       _meta: DASHBOARD_TOOL_META,
@@ -1434,9 +1478,17 @@ export function registerFinanceTools(server: McpServer, userId: string, options:
           .optional()
           .describe("Drop these categories from totals and groups, e.g. ['business'] for personal stats without business-categorized records."),
         entity: entitySchema.optional().describe("personal or business only. Omit for everything."),
+        trend_months: z
+          .number()
+          .int()
+          .min(2)
+          .max(24)
+          .optional()
+          .describe("Month-by-month expense and income for the last N months instead of one period (optionally one expense category or one entity): 'how did my spending change since spring'."),
       },
     },
-    async ({ period, from, to, type, group_by, category, exclude_categories, entity, compare, currency }) => {
+    async ({ period, from, to, type, group_by, category, exclude_categories, entity, compare, currency, trend_months }, extra) => {
+      if (trend_months !== undefined) return delegate("get_trends", { months: trend_months, category, entity }, extra);
       const user = await getUser(userId);
       const range = periodRange(user.timezone, period, from, to);
       const target = currency?.toUpperCase();
@@ -1586,7 +1638,7 @@ export function registerFinanceTools(server: McpServer, userId: string, options:
     }
   );
 
-  server.registerTool(
+  define(
     "get_transactions",
     {
       title: "List transactions",
@@ -1661,7 +1713,7 @@ export function registerFinanceTools(server: McpServer, userId: string, options:
     }
   );
 
-  server.registerTool(
+  define(
     "update_transaction",
     {
       title: "Update transaction",
@@ -1925,7 +1977,7 @@ export function registerFinanceTools(server: McpServer, userId: string, options:
     })
   );
 
-  server.registerTool(
+  define(
     "delete_transaction",
     {
       title: "Delete transaction",
@@ -1940,13 +1992,13 @@ export function registerFinanceTools(server: McpServer, userId: string, options:
     }
   );
 
-  server.registerTool(
+  define(
     "delete_transactions",
     {
-      title: "Bulk delete",
+      title: "Delete transactions",
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
       description:
-        "Delete MANY transactions in ONE call by ids (from get_transactions). Always prefer this over repeated delete_transaction calls - one-by-one deletion hits the per-turn tool limit.",
+        "Delete wrongly logged transactions by id (from get_transactions): one, or many in ONE call with every id in ids. Never one call per row: one-by-one deletion hits the per-turn tool limit.",
       inputSchema: {
         ids: z.array(z.string().uuid()).min(1).max(500),
       },
@@ -1958,7 +2010,7 @@ export function registerFinanceTools(server: McpServer, userId: string, options:
     }
   );
 
-  server.registerTool(
+  define(
     "get_trends",
     {
       _meta: DASHBOARD_TOOL_META,
@@ -2010,7 +2062,7 @@ export function registerFinanceTools(server: McpServer, userId: string, options:
     }
   );
 
-  server.registerTool(
+  define(
     "set_budget",
     {
       title: "Set budget",
@@ -2035,7 +2087,7 @@ export function registerFinanceTools(server: McpServer, userId: string, options:
     })
   );
 
-  server.registerTool(
+  define(
     "get_budget_progress",
     {
       _meta: DASHBOARD_TOOL_META,
@@ -2078,7 +2130,7 @@ export function registerFinanceTools(server: McpServer, userId: string, options:
     }
   );
 
-  server.registerTool(
+  define(
     "get_recurring",
     {
       title: "Recurring payments",
@@ -2102,7 +2154,7 @@ export function registerFinanceTools(server: McpServer, userId: string, options:
     }
   );
 
-  server.registerTool(
+  define(
     "set_recurring",
     {
       title: "Save a recurring payment",
@@ -2188,18 +2240,19 @@ export function registerFinanceTools(server: McpServer, userId: string, options:
     }
   );
 
-  server.registerTool(
+  define(
     "get_settings",
     {
       title: "Get settings",
       annotations: { readOnlyHint: true, openWorldHint: false },
-      description: "Signed-in account email, base currency, timezone and the email summary choice.",
+      description: "Signed-in account email (which account is connected), base currency, timezone, the email summary choice and the server version.",
       inputSchema: {},
     },
     async () => {
       const user = await getUser(userId);
       return text({
         email: user.email,
+        server_version: SERVER_VERSION,
         base_currency: user.baseCurrency,
         timezone: user.timezone,
         email_digest: user.digest ?? "not_chosen",
@@ -2216,7 +2269,7 @@ export function registerFinanceTools(server: McpServer, userId: string, options:
     }
   );
 
-  server.registerTool(
+  define(
     "update_settings",
     {
       title: "Update settings",
@@ -2352,7 +2405,7 @@ export function registerFinanceTools(server: McpServer, userId: string, options:
     }
   );
 
-  server.registerTool(
+  define(
     "export_transactions",
     {
       title: "Export CSV",
@@ -2433,7 +2486,7 @@ export function registerFinanceTools(server: McpServer, userId: string, options:
     }
   );
 
-  server.registerTool(
+  define(
     "export_profile",
     {
       title: "Export profile",
@@ -2507,12 +2560,12 @@ export function registerFinanceTools(server: McpServer, userId: string, options:
             };
           })
         ),
-        transactions: { count: transactions, export: "export_transactions (CSV, paged)" },
+        transactions: { count: transactions, export: "export_data what=transactions (CSV, paged)" },
       });
     }
   );
 
-  server.registerTool(
+  define(
     "connect_zenmoney",
     {
       title: "Connect ZenMoney",
@@ -2581,12 +2634,12 @@ export function registerFinanceTools(server: McpServer, userId: string, options:
       logEvent("bank_connected", userId, { provider: "zenmoney" });
       return text({
         connected: true,
-        next: "Run sync_zenmoney to import accounts and transaction history. Use months_back to limit history, or dry_run for a preview.",
+        next: "Run zenmoney action=sync to import accounts and transaction history. Use months_back to limit history, or dry_run for a preview.",
       });
     }
   );
 
-  server.registerTool(
+  define(
     "sync_zenmoney",
     {
       title: "Sync ZenMoney",
@@ -2613,7 +2666,7 @@ export function registerFinanceTools(server: McpServer, userId: string, options:
   // Direct bank sync only for accounts that can use it (bankSyncOffered):
   // for everyone else these two tools led to a dead end.
   if (options.bankSync) {
-    server.registerTool(
+    define(
       "connect_bank",
       {
         title: "Connect a bank",
@@ -2672,7 +2725,7 @@ export function registerFinanceTools(server: McpServer, userId: string, options:
             total: matches.length,
             banks: matches.slice(0, 30).map((a) => a.name),
             ...(matches.length > 30 ? { hint: "More than 30 matches; narrow with the search parameter." } : {}),
-            next: "Call connect_bank action=start with the exact bank_name and country.",
+            next: "Call bank action=start with the exact bank_name and country.",
           });
         }
 
@@ -2719,7 +2772,7 @@ export function registerFinanceTools(server: McpServer, userId: string, options:
         // action=start
         if (!country || !bank_name) throw new Error("action=start requires bank_name and country.");
         if (existing && existing.status === "active") {
-          throw new Error("A bank is already connected. Run connect_bank action=disconnect first to replace it.");
+          throw new Error("A bank is already connected. Run bank action=disconnect first to replace it.");
         }
         const banks = await ebAspsps(country);
         const bank = banks.find((b) => b.name.toLowerCase() === bank_name.toLowerCase());
@@ -2761,7 +2814,7 @@ export function registerFinanceTools(server: McpServer, userId: string, options:
       }
     );
 
-    server.registerTool(
+    define(
       "sync_bank",
       {
         title: "Sync bank",
@@ -2787,13 +2840,13 @@ export function registerFinanceTools(server: McpServer, userId: string, options:
     );
   }
 
-  server.registerTool(
+  define(
     "delete_all_data",
     {
       title: "Delete all data",
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
       description:
-        "Erase the user profile and ALL financial data permanently (GDPR). For removing a single money account use delete_account instead. Requires confirm='DELETE'.",
+        "Erase the user profile and ALL financial data permanently (GDPR). For removing a single money account use manage_account action=delete instead. Requires confirm='DELETE'.",
       inputSchema: { confirm: z.literal("DELETE") },
     },
     async () => {
@@ -2817,4 +2870,106 @@ export function registerFinanceTools(server: McpServer, userId: string, options:
       return text({ deleted: true, note: "All data erased. The connector is now disconnected." });
     }
   );
+
+  // ---- Merged tools (0.18.0). Each runs the original tools' handlers, which
+  // stay callable under their old names for clients that kept an old tool
+  // list (LEGACY_TOOLS). Reads and writes are never merged: a client asks
+  // before every call of a tool that is not read-only.
+
+  define(
+    "manage_account",
+    {
+      title: "Manage accounts",
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
+      description:
+        "Money accounts (bank, card, cash, investment), one action per call. create: name, type, currency (entity optional). update: account plus new_name, type, currency or entity (history stays; an entity change affects future rows). set_balance: account, amount, optional currency and date: the REAL balance from the bank app at the end of that date; balances are this snapshot plus later flows. merge: source into target, moving every row, dropping duplicates (same type, currency, amount, date within dedup_window_days; the row with a bank reference wins) and deleting source; typical for a statement-import account and a bank-sync account of the same bank; run dry_run=true first and show the counts. delete: account with its snapshots; delete_transactions=true when it still has rows; delete_all_data erases everything. Transfers between own accounts never count as spending.",
+      inputSchema: {
+        action: z.enum(["create", "update", "set_balance", "merge", "delete"]),
+        account: z.string().min(1).optional().describe("update, set_balance, delete: the account's name (see get_accounts)."),
+        name: z.string().min(1).max(40).optional().describe("create: short name, e.g. 'Revolut', 'Mono black', 'IBKR'."),
+        new_name: z.string().min(1).max(40).optional().describe("update: the new name."),
+        type: z.enum(ACCOUNT_TYPES).optional().describe("create (required), update: cash | bank | card | investment."),
+        currency: currencySchema
+          .optional()
+          .describe("create (required): main currency. update: main currency the balance is shown in. set_balance: default the account's."),
+        entity: entitySchema.optional().describe("create, update: personal (default) or business, the default scope of the account's rows."),
+        amount: z.number().optional().describe("set_balance: the balance shown by the bank or broker."),
+        date: dateSchema.optional().describe("set_balance: balance as of the end of this date. Default: today."),
+        source: z.string().min(1).optional().describe("merge: account to merge FROM (deleted afterwards)."),
+        target: z.string().min(1).optional().describe("merge: account to merge INTO (kept)."),
+        dry_run: z.boolean().optional().describe("merge: preview counts without changing anything."),
+        dedup_window_days: z.number().int().min(0).max(14).optional().describe("merge: duplicate match window in days, default 3; 0 = bank-reference duplicates only."),
+        delete_transactions: z.boolean().optional().describe("delete: must be true when the account still has transactions."),
+      },
+    },
+    async ({ action, ...rest }, extra) =>
+      delegate(
+        { create: "create_account", update: "update_account", set_balance: "log_balance", merge: "merge_accounts", delete: "delete_account" }[action],
+        rest,
+        extra
+      )
+  );
+
+  define(
+    "export_data",
+    {
+      title: "Export data",
+      annotations: { readOnlyHint: true, openWorldHint: false },
+      description: `The user's data, for portability (GDPR) or a backup. what=profile: everything except the transactions as one JSON (settings, accounts with balance snapshots, budgets, saved recurring payments, the merchant category rules learned from the user's fixes, bank and ZenMoney links without tokens). what=transactions: all transactions as CSV, oldest first, with the account and the other side of transfers, up to ${EXPORT_PAGE_ROWS} rows per call: when a second text block reports has_more, call again with offset=next_offset and the same filters.`,
+      inputSchema: {
+        what: z.enum(["profile", "transactions"]),
+        from: dateSchema.optional().describe("transactions: from this date."),
+        to: dateSchema.optional().describe("transactions: up to this date."),
+        entity: entitySchema.optional().describe("transactions: one scope only, e.g. business rows for the accountant."),
+        offset: z.number().int().min(0).optional().describe("transactions: skip this many rows (paging). Default 0."),
+      },
+    },
+    async ({ what, ...rest }, extra) => delegate(what === "profile" ? "export_profile" : "export_transactions", what === "profile" ? {} : rest, extra)
+  );
+
+  define(
+    "zenmoney",
+    {
+      title: "ZenMoney sync",
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+      description:
+        "Read-only sync with a ZenMoney account (zenmoney.app international and zenmoney.ru both work; the backend is detected). action=paste_token stores the user's personal ZenMoney API token: free at zerro.app (log in choosing YOUR ZenMoney version, then open zerro.app/token and copy it). action=sync pulls transactions, accounts and balances (incremental, safe to re-run; the first sync takes the full history unless months_back is set; dry_run previews; unmapped ZenMoney tags land in 'other' for the user to review). action=status: connection health and synced accounts. action=set_account_sync with account + enabled turns ONE account on or off, e.g. when the same bank also syncs from another source (relay any overlap_warnings). action=disconnect removes the link and token; imported rows stay.",
+      inputSchema: {
+        action: z.enum(["paste_token", "sync", "status", "set_account_sync", "disconnect"]),
+        token: z.string().min(10).optional().describe("paste_token: the ZenMoney API token."),
+        account: z.string().optional().describe("set_account_sync: account name or id (see action=status)."),
+        enabled: z.boolean().optional().describe("set_account_sync: true = resume syncing this account, false = stop."),
+        dry_run: z.boolean().optional().describe("sync: preview transaction changes without writing them."),
+        months_back: z.number().int().positive().max(240).optional().describe("sync, first run only: import history no older than this many months."),
+      },
+    },
+    async ({ action, dry_run, months_back, ...rest }, extra) =>
+      action === "sync" ? delegate("sync_zenmoney", { dry_run, months_back }, extra) : delegate("connect_zenmoney", { action, ...rest }, extra)
+  );
+
+  // Direct bank sync only for accounts that can use it (bankSyncOffered).
+  if (options.bankSync) {
+    define(
+      "bank",
+      {
+        title: "Bank sync",
+        // Not idempotent: each start opens a new consent link.
+        annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+        description:
+          "Read-only sync with a real bank via open banking (Enable Banking, EU/UK/EEA). If the user's country or bank is not listed, stop and import a statement instead (import_transactions). Flow: action=list_banks with the country (and optional search) for the exact bank name; action=start with bank_name + country returns an authorize_url the user opens and approves at the bank; when they are done, action=sync (first sync takes months_back of history, default 3; later ones are incremental; the server also syncs healthy connections daily). action=status: health, consent expiry, synced accounts. action=set_account_sync with account + enabled turns ONE account on or off (relay any overlap_warnings: the same bank via ZenMoney duplicates). action=disconnect revokes the session; imported rows stay. One bank connection at a time.",
+        inputSchema: {
+          action: z.enum(["list_banks", "start", "sync", "status", "set_account_sync", "disconnect"]),
+          country: z.string().length(2).optional().describe("2-letter country code (FI, DE, FR, ...). Required for list_banks and start."),
+          search: z.string().optional().describe("list_banks: case-insensitive filter on bank names."),
+          bank_name: z.string().optional().describe("start: exact bank name as list_banks returned it."),
+          account: z.string().optional().describe("set_account_sync: account name or id (see action=status)."),
+          enabled: z.boolean().optional().describe("set_account_sync: true = resume syncing this account, false = stop."),
+          dry_run: z.boolean().optional().describe("sync: preview changes without writing them."),
+          months_back: z.number().int().positive().max(24).optional().describe("sync, first run only: months of history to request. Default 3."),
+        },
+      },
+      async ({ action, dry_run, months_back, ...rest }, extra) =>
+        action === "sync" ? delegate("sync_bank", { dry_run, months_back }, extra) : delegate("connect_bank", { action, ...rest }, extra)
+    );
+  }
 }

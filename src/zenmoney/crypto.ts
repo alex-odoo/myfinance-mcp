@@ -23,9 +23,9 @@ const TAG_BYTES = 16;
 
 export function decryptToken(enc: string): string {
   const [iv, ct, tag] = enc.split(".");
-  if (!iv || !ct || !tag) throw new Error("Stored token is malformed. Reconnect with connect_zenmoney.");
+  if (!iv || !ct || !tag) throw new Error("Stored token is malformed. Reconnect with zenmoney action=paste_token.");
   const tagBuf = Buffer.from(tag, "base64");
-  if (tagBuf.length !== TAG_BYTES) throw new Error("Stored token is malformed. Reconnect with connect_zenmoney.");
+  if (tagBuf.length !== TAG_BYTES) throw new Error("Stored token is malformed. Reconnect with zenmoney action=paste_token.");
   const decipher = createDecipheriv("aes-256-gcm", key(), Buffer.from(iv, "base64"), { authTagLength: TAG_BYTES });
   decipher.setAuthTag(tagBuf);
   return Buffer.concat([decipher.update(Buffer.from(ct, "base64")), decipher.final()]).toString("utf8");

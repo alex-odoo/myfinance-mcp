@@ -70,7 +70,7 @@ export async function syncZenMoney(userId: string, opts: SyncOptions = {}) {
     where: { userId_provider: { userId, provider: "zenmoney" } },
   });
   if (!connection) {
-    throw new Error("ZenMoney is not connected. Use connect_zenmoney with action=paste_token first.");
+    throw new Error("ZenMoney is not connected. Use zenmoney action=paste_token first.");
   }
   const user = await db.user.findUnique({ where: { id: userId } });
   if (!user) throw new Error("Account not found.");
@@ -160,7 +160,7 @@ async function runSync(connection: BankConnection, user: User, opts: SyncOptions
     } catch {
       throw new Error(
         `Cannot create account "${name}" for ZenMoney account "${zen.title}": the name is already taken. ` +
-          `Rename or delete the clashing account (update_account / delete_account), then sync again.`
+          `Rename or delete the clashing account (manage_account action=update or action=delete), then sync again.`
       );
     }
     for (const o of crossProviderOverlaps(created, ourAccounts)) {
@@ -458,7 +458,7 @@ async function runSync(connection: BankConnection, user: User, opts: SyncOptions
       ? {
           skipped_unpriced: Object.fromEntries(pricer.unpriced),
           skipped_unpriced_hint:
-            "Not imported: no exchange-rate source covers these currencies yet. Tell the user. A full re-sync (connect_zenmoney disconnect, then paste_token again) imports them once covered, without duplicating rows already imported.",
+            "Not imported: no exchange-rate source covers these currencies yet. Tell the user. A full re-sync (zenmoney action=disconnect, then action=paste_token again) imports them once covered, without duplicating rows already imported.",
         }
       : {}),
     balances_anchored: balancesAnchored,

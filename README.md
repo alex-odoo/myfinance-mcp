@@ -52,46 +52,40 @@ On first connect you sign in with Google or with a one-time code sent to your em
 | `log_expense`         | Record one purchase, bill or receipt (negative amount = refund)                                    |
 | `log_income`          | Record income: salary, invoice, refund, interest                                                   |
 | `log_transfer`        | Move money between accounts, cross-currency supported; never counts as spending                    |
-| `log_balance`         | Anchor an account's balance at a date; later flows compute from the snapshot                       |
-| `import_transactions` | Bulk statement import (up to 500 rows/call): dedup by bank reference or derived key, twin merge, reconciliation check |
-| `create_account`      | Create a bank / card / cash / investment account with currency and personal/business entity        |
-| `update_account`      | Rename an account or change its type, entity or main currency                                      |
-| `delete_account`      | Delete one money account (with its transactions after explicit confirmation)                       |
-| `merge_accounts`      | Fold one account into another: move rows, de-duplicate both sides, rewrite transfers               |
-| `get_accounts`        | All accounts with balances and net worth, converted to base currency                               |
-| `get_summary`         | Period totals by category, merchant or month; expense or income breakdown, category drill-down and exclusions |
+| `import_transactions` | Bulk statement import (up to 500 rows/call): dedup by bank reference or derived key, twin merge, reconciliation check; names the recurring payments it finds |
+| `get_summary`         | Period totals by category, merchant, month or week; expense or income breakdown, comparison with the period before, any report currency; `trend_months` for month-by-month trends |
 | `get_transactions`    | List and filter transactions, paged (total, has_more, offset)                                      |
-| `get_trends`          | Month-over-month spending trends and deltas                                                        |
+| `update_transaction`  | Fix any field of an existing transaction, including its type or account; category fixes are remembered per merchant |
+| `delete_transactions` | Delete one or many transactions by id in one call                                                  |
+| `get_accounts`        | All accounts with balances and net worth, converted to base currency                               |
+| `manage_account`      | Accounts: create, update, set_balance (anchor the real balance at a date), merge (fold one into another, de-duplicating), delete |
 | `set_budget`          | Monthly cap per category or overall; a log or import that crosses it says so                       |
 | `get_budget_progress` | Live budget progress with days left; renders as a dashboard                                        |
-| `update_transaction`  | Fix any field of an existing transaction, including its type (e.g. turn a cash withdrawal into a transfer) or its account; category fixes are remembered per merchant for future syncs |
-| `delete_transaction`  | Delete one transaction by id                                                                       |
-| `delete_transactions` | Bulk delete by ids                                                                                 |
-| `get_settings`        | Base currency and timezone                                                                         |
-| `update_settings`     | Change base currency or timezone                                                                   |
-| `export_transactions` | CSV export, 2000 rows per page: account, transfer counterpart, entity and receipt items on every row |
-| `export_profile`      | Everything but the transactions as JSON: settings, accounts with balance history, budgets, merchant rules, bank links |
-| `connect_bank`        | _Closed beta, invited accounts only._ Link a real bank via open banking (Enable Banking, EU/UK): list banks, start consent, status, per-account sync toggle, disconnect |
-| `sync_bank`           | _Closed beta, invited accounts only._ Pull booked transactions and balances from the connected bank; incremental, transfer pairing, dedup-safe. Healthy connections also auto-sync server-side roughly daily |
-| `connect_zenmoney`    | Link a ZenMoney account (international and .ru backends auto-detected) for read-only sync          |
-| `sync_zenmoney`       | Pull ZenMoney accounts and transactions; incremental, dedup-safe, keeps your manual edits          |
+| `get_recurring`       | Subscriptions, rent and bills: saved ones and the ones found in the records, monthly and yearly total, what is coming up in 30 days |
+| `set_recurring`       | Save, change or remove a recurring payment; `auto_log` writes it on its date for people who log by hand |
+| `get_settings`        | Signed-in account, base currency, timezone, email summary choice, server version                   |
+| `update_settings`     | Change base currency, timezone or the email summary                                                |
+| `export_data`         | `profile`: everything but the transactions as JSON; `transactions`: CSV, 2000 rows per page        |
+| `zenmoney`            | ZenMoney (international and .ru backends auto-detected): paste_token, sync, status, per-account toggle, disconnect; read-only, incremental, keeps manual edits |
+| `bank`                | _Closed beta, invited accounts only._ Open banking (Enable Banking, EU/UK): list_banks, start consent, sync, status, per-account toggle, disconnect; healthy connections also auto-sync daily |
 | `delete_all_data`     | Permanently delete the user profile and ALL data (GDPR erasure)                                    |
-| `ping`                | Health and auth check                                                                              |
+
+Tools merged in 0.18.0 (`ping`, `get_trends`, `delete_transaction`, `create_account`, `update_account`, `delete_account`, `merge_accounts`, `log_balance`, `export_profile`, `export_transactions`, `connect_zenmoney`, `sync_zenmoney`, `connect_bank`, `sync_bank`) are no longer listed but still answer under their old names, so a client that kept an older tool list keeps working.
 
 ## MCP Apps
 
-Four tools return an interactive dashboard (`ui://myfinancemcp/dashboard`) rendered directly in the chat on clients that support MCP Apps: budget rings, monthly trends, category summaries and the accounts/net-worth panel. Light and dark theme aware.
+Three tools return an interactive dashboard (`ui://myfinancemcp/dashboard`) rendered directly in the chat on clients that support MCP Apps: budget rings (`get_budget_progress`), category summaries and monthly trends (`get_summary`) and the accounts/net-worth panel (`get_accounts`). Light and dark theme aware.
 
 ## Security & Privacy
 
 - Receipt photos are parsed by YOUR AI client; images never reach this server.
 - Amounts, merchants and notes are never written to server logs (blind logs); usage events keep tool names, timings, error classes and coded argument values, keyed to the account and deleted with it.
 - OAuth 2.1 with PKCE, rotating refresh tokens (`offline_access` advertised), rate-limited sign-in.
-- All 28 tools carry MCP annotations (read-only and destructive ops flagged, connector tools marked open-world), so clients can gate confirmations correctly.
+- All 20 tools carry MCP annotations (read-only and destructive ops flagged, connector tools marked open-world), so clients can gate confirmations correctly.
 - Bank access is strictly read-only: ZenMoney via the user's own API token, and, in the closed beta, open banking consent via Enable Banking (the bank authenticates the user; we never see credentials). Session ids and tokens are stored AES-256-GCM encrypted.
 - CSV export and instant full deletion are tools, not support tickets.
 - Hosted instance: EU data residency (Supabase, eu-central-1), TLS to the database with a pinned CA. Every query is scoped to your account by the server; the database's own API is closed to everyone (row-level security, deny-all).
-- 206 automated end-to-end checks (full OAuth flow for public and confidential clients incl. browser binding and audience checks, every tool, import dedup semantics, GDPR deletion) run as a hard deploy gate; CI runs lint and typecheck on every push.
+- 388 automated end-to-end checks (full OAuth flow for public and confidential clients incl. browser binding and audience checks, every tool, import dedup semantics, GDPR deletion) run as a hard deploy gate; CI runs lint and typecheck on every push.
 
 See [SECURITY.md](SECURITY.md) for the disclosure policy.
 

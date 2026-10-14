@@ -29,7 +29,7 @@ export async function resolveAccount(userId: string, name?: string) {
   const found = accounts.find((a) => a.name.toLowerCase() === name.toLowerCase());
   if (!found) {
     const names = accounts.map((a) => a.name).join(", ") || "(none)";
-    throw new Error(`Account "${name}" not found. Existing accounts: ${names}. Create it with create_account first.`);
+    throw new Error(`Account "${name}" not found. Existing accounts: ${names}. Create it with manage_account action=create first.`);
   }
   return found;
 }
@@ -67,8 +67,8 @@ export interface OverlapWarning {
 
 export const OVERLAP_HINT =
   "These may be the SAME real bank account arriving from two sources, which will duplicate every transaction. " +
-  "Ask the user; if confirmed, disable one side with connect_zenmoney or connect_bank action=set_account_sync enabled=false, " +
-  "or unify history with merge_accounts.";
+  "Ask the user; if confirmed, disable one side with zenmoney or bank action=set_account_sync enabled=false, " +
+  "or unify history with manage_account action=merge.";
 
 interface MapEntry {
   accountId: string;

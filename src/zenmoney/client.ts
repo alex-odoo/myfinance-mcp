@@ -111,7 +111,7 @@ export async function zenDiff(token: string, serverTimestamp: number, apiBase?: 
         signal: AbortSignal.timeout(30_000),
       });
       if (res.status === 401 || res.status === 403) {
-        throw new ZenAuthError("ZenMoney rejected the token. Get a fresh one and reconnect with connect_zenmoney.");
+        throw new ZenAuthError("ZenMoney rejected the token. Get a fresh one and reconnect with zenmoney action=paste_token.");
       }
       if (!res.ok) {
         lastError = `ZenMoney API returned ${res.status}`;

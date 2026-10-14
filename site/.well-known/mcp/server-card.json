@@ -1,7 +1,7 @@
 {
   "serverInfo": {
     "name": "myfinancemcp",
-    "version": "0.17.0"
+    "version": "0.18.0"
   },
   "authentication": {
     "required": true,
@@ -10,20 +10,6 @@
     ]
   },
   "tools": [
-    {
-      "name": "ping",
-      "title": "Ping",
-      "description": "Health check for the MyFinance MCP connection. Returns the signed-in account email - call this when the user asks which account is connected.",
-      "inputSchema": {
-        "type": "object",
-        "properties": {},
-        "$schema": "http://json-schema.org/draft-07/schema#"
-      },
-      "annotations": {
-        "readOnlyHint": true,
-        "openWorldHint": false
-      }
-    },
     {
       "name": "log_expense",
       "title": "Log expense",
@@ -198,186 +184,6 @@
       }
     },
     {
-      "name": "create_account",
-      "title": "Create account",
-      "description": "Add a money account: bank, card, cash, or investment (brokerage). Transfers between own accounts are then tracked without counting as spending.",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "name": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 40,
-            "description": "Short name, e.g. 'Revolut', 'Mono black', 'IBKR'."
-          },
-          "type": {
-            "type": "string",
-            "enum": [
-              "cash",
-              "bank",
-              "card",
-              "investment",
-              "manual"
-            ],
-            "description": "cash | bank | card | investment"
-          },
-          "currency": {
-            "type": "string",
-            "minLength": 3,
-            "maxLength": 3,
-            "description": "Main currency of this account."
-          },
-          "entity": {
-            "type": "string",
-            "enum": [
-              "personal",
-              "business"
-            ],
-            "description": "Whose money: personal (default) or business. Sets the default scope for this account's transactions."
-          }
-        },
-        "required": [
-          "name",
-          "type",
-          "currency"
-        ],
-        "additionalProperties": false,
-        "$schema": "http://json-schema.org/draft-07/schema#"
-      },
-      "annotations": {
-        "readOnlyHint": false,
-        "destructiveHint": false,
-        "idempotentHint": false,
-        "openWorldHint": false
-      }
-    },
-    {
-      "name": "update_account",
-      "title": "Update account",
-      "description": "Rename an account or change its type, entity or main currency. Transactions keep their history; an entity change only affects future transactions.",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "account": {
-            "type": "string",
-            "minLength": 1,
-            "description": "Current account name (see get_accounts)."
-          },
-          "new_name": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 40
-          },
-          "type": {
-            "type": "string",
-            "enum": [
-              "cash",
-              "bank",
-              "card",
-              "investment",
-              "manual"
-            ]
-          },
-          "entity": {
-            "type": "string",
-            "enum": [
-              "personal",
-              "business"
-            ]
-          },
-          "currency": {
-            "type": "string",
-            "minLength": 3,
-            "maxLength": 3,
-            "description": "Main currency the balance is shown in."
-          }
-        },
-        "required": [
-          "account"
-        ],
-        "additionalProperties": false,
-        "$schema": "http://json-schema.org/draft-07/schema#"
-      },
-      "annotations": {
-        "readOnlyHint": false,
-        "destructiveHint": false,
-        "idempotentHint": false,
-        "openWorldHint": false
-      }
-    },
-    {
-      "name": "delete_account",
-      "title": "Delete one account",
-      "description": "Delete ONE money account (see get_accounts) together with its balance snapshots. If it still holds transactions, pass delete_transactions=true to confirm deleting them too. To erase the whole profile use delete_all_data instead.",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "account": {
-            "type": "string",
-            "minLength": 1,
-            "description": "Account name to delete."
-          },
-          "delete_transactions": {
-            "type": "boolean",
-            "description": "Must be true when the account still has transactions."
-          }
-        },
-        "required": [
-          "account"
-        ],
-        "additionalProperties": false,
-        "$schema": "http://json-schema.org/draft-07/schema#"
-      },
-      "annotations": {
-        "readOnlyHint": false,
-        "destructiveHint": true,
-        "idempotentHint": false,
-        "openWorldHint": false
-      }
-    },
-    {
-      "name": "merge_accounts",
-      "title": "Merge accounts",
-      "description": "Merge one account into another: moves all transactions to the target, de-duplicates rows present on both sides (same type, currency, amount and date within dedup_window_days; the row with a bank reference wins and absorbs the other's category), rewrites transfer references, then deletes the source account. Typical use: a hand-made statement-import account and a live bank sync account tracking the same real bank. Run with dry_run=true first and show the counts to the user.",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "source": {
-            "type": "string",
-            "minLength": 1,
-            "description": "Account to merge FROM (deleted afterwards)."
-          },
-          "target": {
-            "type": "string",
-            "minLength": 1,
-            "description": "Account to merge INTO (kept)."
-          },
-          "dry_run": {
-            "type": "boolean",
-            "description": "Preview counts without changing anything."
-          },
-          "dedup_window_days": {
-            "type": "integer",
-            "minimum": 0,
-            "maximum": 14,
-            "description": "Fuzzy duplicate match window, default 3. 0 = drop only exact bank-reference duplicates."
-          }
-        },
-        "required": [
-          "source",
-          "target"
-        ],
-        "additionalProperties": false,
-        "$schema": "http://json-schema.org/draft-07/schema#"
-      },
-      "annotations": {
-        "readOnlyHint": false,
-        "destructiveHint": true,
-        "idempotentHint": false,
-        "openWorldHint": false
-      }
-    },
-    {
       "name": "get_accounts",
       "title": "Accounts & net worth",
       "description": "All accounts with computed balances (latest snapshot + tracked flows) and total net worth in the base currency. Optionally filtered to personal or business scope.",
@@ -447,46 +253,6 @@
           "amount",
           "from_account",
           "to_account"
-        ],
-        "additionalProperties": false,
-        "$schema": "http://json-schema.org/draft-07/schema#"
-      },
-      "annotations": {
-        "readOnlyHint": false,
-        "destructiveHint": false,
-        "idempotentHint": false,
-        "openWorldHint": false
-      }
-    },
-    {
-      "name": "log_balance",
-      "title": "Log balance snapshot",
-      "description": "Anchor an account's REAL balance at end of a date (from the bank app). Balances are then snapshot + later flows.",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "account": {
-            "type": "string"
-          },
-          "amount": {
-            "type": "number",
-            "description": "Actual balance shown by the bank/broker."
-          },
-          "currency": {
-            "type": "string",
-            "minLength": 3,
-            "maxLength": 3,
-            "description": "Default: account currency."
-          },
-          "date": {
-            "type": "string",
-            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
-            "description": "Balance as of end of this date. Default: today."
-          }
-        },
-        "required": [
-          "account",
-          "amount"
         ],
         "additionalProperties": false,
         "$schema": "http://json-schema.org/draft-07/schema#"
@@ -690,6 +456,12 @@
               "business"
             ],
             "description": "personal or business only. Omit for everything."
+          },
+          "trend_months": {
+            "type": "integer",
+            "minimum": 2,
+            "maximum": 24,
+            "description": "Month-by-month expense and income for the last N months instead of one period (optionally one expense category or one entity): 'how did my spending change since spring'."
           }
         },
         "additionalProperties": false,
@@ -889,34 +661,9 @@
       }
     },
     {
-      "name": "delete_transaction",
-      "title": "Delete transaction",
-      "description": "Remove ONE wrongly logged record. For 3+ records use delete_transactions (bulk) with the ids array.",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "string",
-            "format": "uuid"
-          }
-        },
-        "required": [
-          "id"
-        ],
-        "additionalProperties": false,
-        "$schema": "http://json-schema.org/draft-07/schema#"
-      },
-      "annotations": {
-        "readOnlyHint": false,
-        "destructiveHint": true,
-        "idempotentHint": true,
-        "openWorldHint": false
-      }
-    },
-    {
       "name": "delete_transactions",
-      "title": "Bulk delete",
-      "description": "Delete MANY transactions in ONE call by ids (from get_transactions). Always prefer this over repeated delete_transaction calls - one-by-one deletion hits the per-turn tool limit.",
+      "title": "Delete transactions",
+      "description": "Delete wrongly logged transactions by id (from get_transactions): one, or many in ONE call with every id in ids. Never one call per row: one-by-one deletion hits the per-turn tool limit.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -940,61 +687,6 @@
         "readOnlyHint": false,
         "destructiveHint": true,
         "idempotentHint": true,
-        "openWorldHint": false
-      }
-    },
-    {
-      "name": "get_trends",
-      "title": "Monthly trends",
-      "description": "Month-over-month expense/income dynamics, optionally for one category or scope.",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "months": {
-            "type": "integer",
-            "minimum": 2,
-            "maximum": 24,
-            "description": "How many months back. Default 6."
-          },
-          "category": {
-            "type": "string",
-            "enum": [
-              "groceries",
-              "restaurants",
-              "transport",
-              "fuel",
-              "housing",
-              "utilities",
-              "health",
-              "pharmacy",
-              "clothing",
-              "electronics",
-              "entertainment",
-              "subscriptions",
-              "education",
-              "travel",
-              "gifts",
-              "family",
-              "personal_care",
-              "business",
-              "fees",
-              "other"
-            ]
-          },
-          "entity": {
-            "type": "string",
-            "enum": [
-              "personal",
-              "business"
-            ],
-            "description": "personal or business only. Omit for everything."
-          }
-        },
-        "additionalProperties": false,
-        "$schema": "http://json-schema.org/draft-07/schema#"
-      },
-      "annotations": {
-        "readOnlyHint": true,
         "openWorldHint": false
       }
     },
@@ -1064,9 +756,120 @@
       }
     },
     {
+      "name": "get_recurring",
+      "title": "Recurring payments",
+      "description": "Subscriptions, rent, bills and other payments that repeat: the ones the user saved (set_recurring) and the ones found in their records (charges at one merchant that repeat weekly, monthly, quarterly or yearly at a steady amount, and single recent charges from known subscription services). Each with amount, cadence, next expected date and monthly cost in the base currency; plus the monthly and yearly total and what is coming up in the next 30 days. Call it for 'what subscriptions do I pay', 'my fixed costs', 'what bills are coming'. Found ones are suggestions: offer to save the ones the user confirms (set_recurring).",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "include_stopped": {
+            "type": "boolean",
+            "description": "Also list found series that seem to have stopped (no charge since the expected date)."
+          }
+        },
+        "additionalProperties": false,
+        "$schema": "http://json-schema.org/draft-07/schema#"
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "openWorldHint": false
+      }
+    },
+    {
+      "name": "set_recurring",
+      "title": "Save a recurring payment",
+      "description": "Save, change or remove a payment the user expects again (a subscription, rent, a bill). Saved ones show in get_recurring and in the email summary's 'Coming up'. With auto_log=true the expense is written on each date automatically: only for a fixed amount, and only for users who log by hand (refused while a bank or ZenMoney sync is connected: the sync brings the charge). A statement import later merges an auto-logged row with the bank's row. Saving again under the same name changes it; remove=true deletes it (expenses already logged stay).",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 60,
+            "description": "The payment as the user calls it, e.g. Netflix, Rent."
+          },
+          "amount": {
+            "type": "number",
+            "exclusiveMinimum": 0,
+            "description": "Amount per charge. Required for a new one."
+          },
+          "currency": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 3,
+            "description": "3-letter ISO currency code (EUR, USD, UAH, AED, ...). Omit to use the user's base currency."
+          },
+          "cadence": {
+            "type": "string",
+            "enum": [
+              "weekly",
+              "monthly",
+              "quarterly",
+              "yearly"
+            ],
+            "description": "How often it is charged. Required for a new one."
+          },
+          "next_date": {
+            "type": "string",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+            "description": "Next expected charge, YYYY-MM-DD. Required for a new one. A past date moves to the next one on or after today; nothing is logged for past dates."
+          },
+          "category": {
+            "type": "string",
+            "enum": [
+              "groceries",
+              "restaurants",
+              "transport",
+              "fuel",
+              "housing",
+              "utilities",
+              "health",
+              "pharmacy",
+              "clothing",
+              "electronics",
+              "entertainment",
+              "subscriptions",
+              "education",
+              "travel",
+              "gifts",
+              "family",
+              "personal_care",
+              "business",
+              "fees",
+              "other"
+            ],
+            "description": "Default: subscriptions."
+          },
+          "account": {
+            "type": "string",
+            "description": "Account the auto-logged expense goes to. Default: Manual."
+          },
+          "auto_log": {
+            "type": "boolean",
+            "description": "Write the expense automatically on each date."
+          },
+          "remove": {
+            "type": "boolean",
+            "description": "Delete the saved payment with this name."
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "additionalProperties": false,
+        "$schema": "http://json-schema.org/draft-07/schema#"
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true,
+        "idempotentHint": true,
+        "openWorldHint": false
+      }
+    },
+    {
       "name": "get_settings",
       "title": "Get settings",
-      "description": "Signed-in account email, base currency, timezone and the email summary choice.",
+      "description": "Signed-in account email (which account is connected), base currency, timezone, the email summary choice and the server version.",
       "inputSchema": {
         "type": "object",
         "properties": {},
@@ -1115,212 +918,9 @@
       }
     },
     {
-      "name": "export_transactions",
-      "title": "Export CSV",
-      "description": "All transactions as CSV (GDPR portability), oldest first, including the account and the other side of transfers. Up to 2000 rows per call: when a second text block reports has_more, call again with offset=next_offset and the same filters. Optionally one scope only, e.g. business rows for the accountant.",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "from": {
-            "type": "string",
-            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
-            "description": "Date as YYYY-MM-DD. Omit for today."
-          },
-          "to": {
-            "$ref": "#/properties/from",
-            "description": "Date as YYYY-MM-DD. Omit for today."
-          },
-          "entity": {
-            "type": "string",
-            "enum": [
-              "personal",
-              "business"
-            ]
-          },
-          "offset": {
-            "type": "integer",
-            "minimum": 0,
-            "description": "Skip this many rows (paging). Default 0."
-          }
-        },
-        "additionalProperties": false,
-        "$schema": "http://json-schema.org/draft-07/schema#"
-      },
-      "annotations": {
-        "readOnlyHint": true,
-        "openWorldHint": false
-      }
-    },
-    {
-      "name": "export_profile",
-      "title": "Export profile",
-      "description": "Everything except the transactions, as one JSON (GDPR portability, or a backup before moving): settings, accounts with their balance snapshots, budgets, the per-merchant category rules learned from the user's fixes, and bank/ZenMoney links (status and synced accounts; never tokens). Transactions come from export_transactions.",
-      "inputSchema": {
-        "type": "object",
-        "properties": {},
-        "$schema": "http://json-schema.org/draft-07/schema#"
-      },
-      "annotations": {
-        "readOnlyHint": true,
-        "openWorldHint": false
-      }
-    },
-    {
-      "name": "connect_zenmoney",
-      "title": "Connect ZenMoney",
-      "description": "Link a ZenMoney account (both zenmoney.app international and zenmoney.ru work; the right backend is auto-detected) for read-only transaction sync. action=paste_token stores the user's personal ZenMoney API token: get it free at zerro.app - log in choosing YOUR ZenMoney version on the login screen, then open zerro.app/token and copy it. action=status shows connection health and the synced accounts list. action=set_account_sync with account + enabled turns syncing of ONE account on or off, for example when the same bank is also connected via connect_bank. action=disconnect removes the link and stored token; already-imported transactions stay. After connecting, run sync_zenmoney.",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "action": {
-            "type": "string",
-            "enum": [
-              "paste_token",
-              "status",
-              "disconnect",
-              "set_account_sync"
-            ]
-          },
-          "token": {
-            "type": "string",
-            "minLength": 10,
-            "description": "ZenMoney API token. Required for action=paste_token."
-          },
-          "account": {
-            "type": "string",
-            "description": "set_account_sync: account name or id (see action=status)."
-          },
-          "enabled": {
-            "type": "boolean",
-            "description": "set_account_sync: true = resume syncing this account, false = stop."
-          }
-        },
-        "required": [
-          "action"
-        ],
-        "additionalProperties": false,
-        "$schema": "http://json-schema.org/draft-07/schema#"
-      },
-      "annotations": {
-        "readOnlyHint": false,
-        "destructiveHint": false,
-        "idempotentHint": true,
-        "openWorldHint": true
-      }
-    },
-    {
-      "name": "sync_zenmoney",
-      "title": "Sync ZenMoney",
-      "description": "Pull transactions, accounts and balances from the linked ZenMoney account (read-only, incremental after the first run, safe to re-run). First sync imports full history unless months_back is set. dry_run previews transaction changes (account mapping is still saved). Report includes unmapped ZenMoney tags: those rows land in category 'other' for the user to review. If the same real bank account is also connected via connect_bank its transactions WILL duplicate: relay any overlap_warnings from the response to the user and offer to disable one side (action=set_account_sync).",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "dry_run": {
-            "type": "boolean",
-            "description": "Preview transaction changes without writing them."
-          },
-          "months_back": {
-            "type": "integer",
-            "exclusiveMinimum": 0,
-            "maximum": 240,
-            "description": "First sync only: import history no older than this many months. Default: everything."
-          }
-        },
-        "additionalProperties": false,
-        "$schema": "http://json-schema.org/draft-07/schema#"
-      },
-      "annotations": {
-        "readOnlyHint": false,
-        "destructiveHint": false,
-        "idempotentHint": true,
-        "openWorldHint": true
-      }
-    },
-    {
-      "name": "connect_bank",
-      "title": "Connect a bank",
-      "description": "Link a real bank account via open banking (Enable Banking, EU/UK/EEA coverage) for read-only transaction sync. If the user's country or bank is not listed, stop here and import a statement instead (import_transactions). Flow: action=list_banks with the user's country (and optional search) to find the exact bank name -> action=start with bank_name + country -> give the user the returned authorize_url to open and approve at their bank -> after they confirm they are done, run sync_bank. action=status shows connection health, consent expiry and the synced accounts list. action=set_account_sync with account + enabled turns syncing of ONE account on or off, for example when the same bank is also connected via another source. action=disconnect revokes the session and removes the link; imported transactions stay. Only one bank connection at a time for now; connecting a different bank replaces the previous one after disconnect.",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "action": {
-            "type": "string",
-            "enum": [
-              "list_banks",
-              "start",
-              "status",
-              "disconnect",
-              "set_account_sync"
-            ]
-          },
-          "country": {
-            "type": "string",
-            "minLength": 2,
-            "maxLength": 2,
-            "description": "2-letter country code (FI, DE, FR, ...). Required for list_banks and start."
-          },
-          "search": {
-            "type": "string",
-            "description": "list_banks: case-insensitive substring filter on bank names."
-          },
-          "bank_name": {
-            "type": "string",
-            "description": "start: exact bank name as returned by list_banks. Required for action=start."
-          },
-          "account": {
-            "type": "string",
-            "description": "set_account_sync: account name or id (see action=status)."
-          },
-          "enabled": {
-            "type": "boolean",
-            "description": "set_account_sync: true = resume syncing this account, false = stop."
-          }
-        },
-        "required": [
-          "action"
-        ],
-        "additionalProperties": false,
-        "$schema": "http://json-schema.org/draft-07/schema#"
-      },
-      "annotations": {
-        "readOnlyHint": false,
-        "destructiveHint": false,
-        "idempotentHint": false,
-        "openWorldHint": true
-      }
-    },
-    {
-      "name": "sync_bank",
-      "title": "Sync bank",
-      "description": "Pull booked transactions and balances from the connected bank (via connect_bank; read-only, incremental, safe to re-run). First sync imports months_back of history (default 3; banks may return less). Equal-amount same-day debit/credit pairs across the user's own synced accounts are merged into transfers. Categories come from the user's remembered per-merchant fixes first, then MCC; the rest land in 'other'. The server also auto-syncs healthy connections roughly daily; run this only for immediate freshness or right after connecting. If the same real bank account is also connected via ZenMoney its transactions WILL duplicate: relay any overlap_warnings from the response to the user and offer to disable one side (action=set_account_sync).",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "dry_run": {
-            "type": "boolean",
-            "description": "Preview changes without writing them."
-          },
-          "months_back": {
-            "type": "integer",
-            "exclusiveMinimum": 0,
-            "maximum": 24,
-            "description": "First sync only: how many months of history to request. Default 3."
-          }
-        },
-        "additionalProperties": false,
-        "$schema": "http://json-schema.org/draft-07/schema#"
-      },
-      "annotations": {
-        "readOnlyHint": false,
-        "destructiveHint": false,
-        "idempotentHint": true,
-        "openWorldHint": true
-      }
-    },
-    {
       "name": "delete_all_data",
       "title": "Delete all data",
-      "description": "Erase the user profile and ALL financial data permanently (GDPR). For removing a single money account use delete_account instead. Requires confirm='DELETE'.",
+      "description": "Erase the user profile and ALL financial data permanently (GDPR). For removing a single money account use manage_account action=delete instead. Requires confirm='DELETE'.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -1340,6 +940,278 @@
         "destructiveHint": true,
         "idempotentHint": true,
         "openWorldHint": false
+      }
+    },
+    {
+      "name": "manage_account",
+      "title": "Manage accounts",
+      "description": "Money accounts (bank, card, cash, investment), one action per call. create: name, type, currency (entity optional). update: account plus new_name, type, currency or entity (history stays; an entity change affects future rows). set_balance: account, amount, optional currency and date: the REAL balance from the bank app at the end of that date; balances are this snapshot plus later flows. merge: source into target, moving every row, dropping duplicates (same type, currency, amount, date within dedup_window_days; the row with a bank reference wins) and deleting source; typical for a statement-import account and a bank-sync account of the same bank; run dry_run=true first and show the counts. delete: account with its snapshots; delete_transactions=true when it still has rows; delete_all_data erases everything. Transfers between own accounts never count as spending.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "create",
+              "update",
+              "set_balance",
+              "merge",
+              "delete"
+            ]
+          },
+          "account": {
+            "type": "string",
+            "minLength": 1,
+            "description": "update, set_balance, delete: the account's name (see get_accounts)."
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 40,
+            "description": "create: short name, e.g. 'Revolut', 'Mono black', 'IBKR'."
+          },
+          "new_name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 40,
+            "description": "update: the new name."
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "cash",
+              "bank",
+              "card",
+              "investment",
+              "manual"
+            ],
+            "description": "create (required), update: cash | bank | card | investment."
+          },
+          "currency": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 3,
+            "description": "create (required): main currency. update: main currency the balance is shown in. set_balance: default the account's."
+          },
+          "entity": {
+            "type": "string",
+            "enum": [
+              "personal",
+              "business"
+            ],
+            "description": "create, update: personal (default) or business, the default scope of the account's rows."
+          },
+          "amount": {
+            "type": "number",
+            "description": "set_balance: the balance shown by the bank or broker."
+          },
+          "date": {
+            "type": "string",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+            "description": "set_balance: balance as of the end of this date. Default: today."
+          },
+          "source": {
+            "type": "string",
+            "minLength": 1,
+            "description": "merge: account to merge FROM (deleted afterwards)."
+          },
+          "target": {
+            "type": "string",
+            "minLength": 1,
+            "description": "merge: account to merge INTO (kept)."
+          },
+          "dry_run": {
+            "type": "boolean",
+            "description": "merge: preview counts without changing anything."
+          },
+          "dedup_window_days": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 14,
+            "description": "merge: duplicate match window in days, default 3; 0 = bank-reference duplicates only."
+          },
+          "delete_transactions": {
+            "type": "boolean",
+            "description": "delete: must be true when the account still has transactions."
+          }
+        },
+        "required": [
+          "action"
+        ],
+        "additionalProperties": false,
+        "$schema": "http://json-schema.org/draft-07/schema#"
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": false
+      }
+    },
+    {
+      "name": "export_data",
+      "title": "Export data",
+      "description": "The user's data, for portability (GDPR) or a backup. what=profile: everything except the transactions as one JSON (settings, accounts with balance snapshots, budgets, saved recurring payments, the merchant category rules learned from the user's fixes, bank and ZenMoney links without tokens). what=transactions: all transactions as CSV, oldest first, with the account and the other side of transfers, up to 2000 rows per call: when a second text block reports has_more, call again with offset=next_offset and the same filters.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "what": {
+            "type": "string",
+            "enum": [
+              "profile",
+              "transactions"
+            ]
+          },
+          "from": {
+            "type": "string",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+            "description": "transactions: from this date."
+          },
+          "to": {
+            "$ref": "#/properties/from",
+            "description": "transactions: up to this date."
+          },
+          "entity": {
+            "type": "string",
+            "enum": [
+              "personal",
+              "business"
+            ],
+            "description": "transactions: one scope only, e.g. business rows for the accountant."
+          },
+          "offset": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "transactions: skip this many rows (paging). Default 0."
+          }
+        },
+        "required": [
+          "what"
+        ],
+        "additionalProperties": false,
+        "$schema": "http://json-schema.org/draft-07/schema#"
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "openWorldHint": false
+      }
+    },
+    {
+      "name": "zenmoney",
+      "title": "ZenMoney sync",
+      "description": "Read-only sync with a ZenMoney account (zenmoney.app international and zenmoney.ru both work; the backend is detected). action=paste_token stores the user's personal ZenMoney API token: free at zerro.app (log in choosing YOUR ZenMoney version, then open zerro.app/token and copy it). action=sync pulls transactions, accounts and balances (incremental, safe to re-run; the first sync takes the full history unless months_back is set; dry_run previews; unmapped ZenMoney tags land in 'other' for the user to review). action=status: connection health and synced accounts. action=set_account_sync with account + enabled turns ONE account on or off, e.g. when the same bank also syncs from another source (relay any overlap_warnings). action=disconnect removes the link and token; imported rows stay.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "paste_token",
+              "sync",
+              "status",
+              "set_account_sync",
+              "disconnect"
+            ]
+          },
+          "token": {
+            "type": "string",
+            "minLength": 10,
+            "description": "paste_token: the ZenMoney API token."
+          },
+          "account": {
+            "type": "string",
+            "description": "set_account_sync: account name or id (see action=status)."
+          },
+          "enabled": {
+            "type": "boolean",
+            "description": "set_account_sync: true = resume syncing this account, false = stop."
+          },
+          "dry_run": {
+            "type": "boolean",
+            "description": "sync: preview transaction changes without writing them."
+          },
+          "months_back": {
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "maximum": 240,
+            "description": "sync, first run only: import history no older than this many months."
+          }
+        },
+        "required": [
+          "action"
+        ],
+        "additionalProperties": false,
+        "$schema": "http://json-schema.org/draft-07/schema#"
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true
+      }
+    },
+    {
+      "name": "bank",
+      "title": "Bank sync",
+      "description": "Read-only sync with a real bank via open banking (Enable Banking, EU/UK/EEA). If the user's country or bank is not listed, stop and import a statement instead (import_transactions). Flow: action=list_banks with the country (and optional search) for the exact bank name; action=start with bank_name + country returns an authorize_url the user opens and approves at the bank; when they are done, action=sync (first sync takes months_back of history, default 3; later ones are incremental; the server also syncs healthy connections daily). action=status: health, consent expiry, synced accounts. action=set_account_sync with account + enabled turns ONE account on or off (relay any overlap_warnings: the same bank via ZenMoney duplicates). action=disconnect revokes the session; imported rows stay. One bank connection at a time.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "list_banks",
+              "start",
+              "sync",
+              "status",
+              "set_account_sync",
+              "disconnect"
+            ]
+          },
+          "country": {
+            "type": "string",
+            "minLength": 2,
+            "maxLength": 2,
+            "description": "2-letter country code (FI, DE, FR, ...). Required for list_banks and start."
+          },
+          "search": {
+            "type": "string",
+            "description": "list_banks: case-insensitive filter on bank names."
+          },
+          "bank_name": {
+            "type": "string",
+            "description": "start: exact bank name as list_banks returned it."
+          },
+          "account": {
+            "type": "string",
+            "description": "set_account_sync: account name or id (see action=status)."
+          },
+          "enabled": {
+            "type": "boolean",
+            "description": "set_account_sync: true = resume syncing this account, false = stop."
+          },
+          "dry_run": {
+            "type": "boolean",
+            "description": "sync: preview changes without writing them."
+          },
+          "months_back": {
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "maximum": 24,
+            "description": "sync, first run only: months of history to request. Default 3."
+          }
+        },
+        "required": [
+          "action"
+        ],
+        "additionalProperties": false,
+        "$schema": "http://json-schema.org/draft-07/schema#"
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true
       }
     }
   ],

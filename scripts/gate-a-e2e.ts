@@ -1443,7 +1443,21 @@ async function main(): Promise<void> {
   // 11. tools/list
   const list = await mcpCall(tokens.access_token, { jsonrpc: "2.0", id: 2, method: "tools/list", params: {} });
   const toolNames = (list.json?.result?.tools ?? []).map((t: any) => t.name);
-  ok("tools/list has ping", toolNames.includes("ping"), JSON.stringify(toolNames));
+  // 0.18.0 merged 14 tools into others: the list shows the merged ones only,
+  // the old names stay callable for clients that kept an old list (ping below).
+  const LISTED = [
+    "log_expense", "log_income", "log_transfer", "import_transactions", "get_summary", "get_transactions",
+    "update_transaction", "delete_transactions", "get_accounts", "manage_account", "set_budget", "get_budget_progress",
+    "get_recurring", "set_recurring", "get_settings", "update_settings", "export_data", "zenmoney", "delete_all_data",
+  ];
+  const { LEGACY_TOOLS } = await import("../src/tools");
+  ok(
+    "tools/list: the merged set (bank only where bank sync is offered), no old names",
+    LISTED.every((n) => toolNames.includes(n)) &&
+      toolNames.every((n: string) => LISTED.includes(n) || n === "bank") &&
+      !toolNames.some((n: string) => LEGACY_TOOLS.has(n)),
+    JSON.stringify(toolNames)
+  );
 
   // 11b. MCP Apps: tool _meta links + UI resource served
   const sumTool = (list.json?.result?.tools ?? []).find((t: any) => t.name === "get_summary");
@@ -2689,13 +2703,16 @@ async function main(): Promise<void> {
       ok("the allowlisted account is", await bankSyncOffered(testUserId));
       const plainNames = await a.names();
       ok(
-        "without bank sync the tool list has no connect_bank/sync_bank, ZenMoney stays",
-        !plainNames.includes("connect_bank") && !plainNames.includes("sync_bank") && plainNames.includes("connect_zenmoney"),
+        "without bank sync the tool list has no bank tool, ZenMoney stays",
+        !plainNames.includes("bank") && !plainNames.includes("connect_bank") && plainNames.includes("zenmoney"),
         JSON.stringify(plainNames)
       );
+      const hiddenBank = await a.tool("connect_bank", { action: "status" });
+      ok("the old bank tool is not callable without bank sync either", hiddenBank.isError && /not found/.test(hiddenBank.text), hiddenBank.text);
       const ub = await fresh();
       const bank = await inProcess(ub.id, true);
-      const none = await bank.tool("connect_bank", { action: "list_banks", country: "FI", search: "zzz-no-such-bank" });
+      ok("with bank sync the merged bank tool is listed", (await bank.names()).includes("bank"));
+      const none = await bank.tool("bank", { action: "list_banks", country: "FI", search: "zzz-no-such-bank" });
       ok(
         "a bank search with no match points to the statement import, never to start",
         none.json?.total === 0 && /import_transactions/.test(none.json?.instead ?? "") && none.json?.next === undefined,
@@ -2975,6 +2992,52 @@ async function main(): Promise<void> {
         removed.text
       );
       await r.close();
+
+      // 13e. Merged tools (0.18.0): each action runs the original tool
+      const um = await fresh({ currencySetAt: new Date(), timezone: "Europe/Madrid" });
+      const m = await inProcess(um.id);
+      const mCreate = await m.tool("manage_account", { action: "create", name: "Wise", type: "bank", currency: "EUR" });
+      const mCreate2 = await m.tool("manage_account", { action: "create", name: "Wise old", type: "bank", currency: "EUR" });
+      const mBad = await m.tool("manage_account", { action: "create", name: "No type" });
+      ok(
+        "manage_account create runs create_account; a missing field is named",
+        mCreate.json?.ok === true && mCreate2.json?.ok === true && mBad.isError && /Invalid arguments: type/.test(mBad.text),
+        `${mCreate.text} | ${mBad.text}`
+      );
+      const mUpd = await m.tool("manage_account", { action: "update", account: "Wise old", new_name: "Wise legacy" });
+      const mBal = await m.tool("manage_account", { action: "set_balance", account: "Wise", amount: 1500 });
+      await m.tool("log_expense", { amount: 20, account: "Wise legacy", merchant: "Shop", category: "groceries" });
+      const mMergeDry = await m.tool("manage_account", { action: "merge", source: "Wise legacy", target: "Wise", dry_run: true });
+      const mMerge = await m.tool("manage_account", { action: "merge", source: "Wise legacy", target: "Wise" });
+      const mAccounts = await m.tool("get_accounts");
+      ok(
+        "manage_account update, set_balance and merge reach their tools",
+        !mUpd.isError && !mBal.isError && !mMergeDry.isError && !mMerge.isError &&
+          !mAccounts.text.includes("Wise legacy") && mAccounts.text.includes("Wise"),
+        `${mUpd.text} | ${mBal.text} | ${mMerge.text}`
+      );
+      await m.tool("manage_account", { action: "create", name: "Cash box", type: "cash", currency: "EUR" });
+      const mDel = await m.tool("manage_account", { action: "delete", account: "Cash box" });
+      ok("manage_account delete reaches delete_account", !mDel.isError && !(await m.tool("get_accounts")).text.includes("Cash box"), mDel.text);
+      const mProfile = await m.tool("export_data", { what: "profile" });
+      const mCsv = await m.tool("export_data", { what: "transactions" });
+      ok(
+        "export_data profile and transactions",
+        Array.isArray(mProfile.json?.accounts) && /Shop/.test(mCsv.text),
+        `${mProfile.text.slice(0, 120)} | ${mCsv.text.slice(0, 120)}`
+      );
+      const mTrend = await m.tool("get_summary", { trend_months: 3 });
+      ok("get_summary trend_months runs the monthly trend", !mTrend.isError && Array.isArray(mTrend.json?.months) && mTrend.json.months.length === 3, mTrend.text.slice(0, 300));
+      const mZen = await m.tool("zenmoney", { action: "status" });
+      ok("zenmoney status reaches connect_zenmoney", mZen.json?.connected === false && /paste_token/.test(mZen.json?.hint ?? ""), mZen.text.slice(0, 200));
+      const mZenSync = await m.tool("zenmoney", { action: "sync" });
+      ok("zenmoney sync reaches sync_zenmoney (not connected: says how to connect)", mZenSync.isError && /zenmoney action=paste_token/.test(mZenSync.text), mZenSync.text.slice(0, 200));
+      const mSettings = await m.tool("get_settings");
+      ok("get_settings names the account and the server version (ping's job)", mSettings.json?.email === um.email && typeof mSettings.json?.server_version === "string");
+      const shopRow = (await cdb.transaction.findFirstOrThrow({ where: { userId: um.id, merchant: "Shop" } })).id;
+      const mDelTx = await m.tool("delete_transactions", { ids: [shopRow] });
+      ok("delete_transactions takes a single id", mDelTx.json?.deleted === 1, mDelTx.text);
+      await m.close();
 
       for (const s of [a, b, c, bank, d, w]) await s.close();
     }

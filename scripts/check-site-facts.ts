@@ -23,11 +23,30 @@ const texts = [...pages, "site/llms.txt", "README.md", "SECURITY.md"].map((path)
   body: readFileSync(path, "utf8"),
 }));
 
-// 1. Tool count = registered tools
-const tools = (readFileSync("src/tools.ts", "utf8").match(/server\.registerTool\(\s*"/g) ?? []).length;
+// 1. Tool count = the tools the server lists (bank sync included, as the
+// server card shows them; merged old names are not listed). The card itself
+// must match the server, or scanners read a stale tool list.
+const { buildMcpServer } = await import("../src/mcp");
+const { Client } = await import("@modelcontextprotocol/sdk/client/index.js");
+const { InMemoryTransport } = await import("@modelcontextprotocol/sdk/inMemory.js");
+const [clientSide, serverSide] = InMemoryTransport.createLinkedPair();
+const server = buildMcpServer("00000000-0000-0000-0000-000000000000", { bankSync: true });
+await server.connect(serverSide);
+const client = new Client({ name: "check-site-facts", version: "1.0.0" });
+await client.connect(clientSide);
+const listed = (await client.listTools()).tools.map((t) => t.name).sort();
+await client.close();
+await server.close();
+const tools = listed.length;
+const card = JSON.parse(readFileSync("site/.well-known/mcp/server-card.json", "utf8")) as { tools?: Array<{ name: string }> };
+const carded = (card.tools ?? []).map((t) => t.name).sort();
+if (carded.join() !== listed.join()) {
+  problems.push(`site/.well-known/mcp/server-card.json lists ${carded.length} tools, the server ${tools}: run bun run scripts/gen-server-card.ts`);
+}
 for (const { path, body } of texts) {
-  for (const m of body.matchAll(/\b(\d+) (?:finance )?tools\b/gi)) {
-    if (Number(m[1]) !== tools) problems.push(`${path}: "${m[0]}" but the server registers ${tools} tools`);
+  for (const m of body.matchAll(/\b(\d+) (?:finance )?tools\b|\b(\d+) herramientas\b|(\d+) инструмент/gi)) {
+    const n = Number(m[1] ?? m[2] ?? m[3]);
+    if (n !== tools) problems.push(`${path}: "${m[0]}" but the server lists ${tools} tools`);
   }
 }
 

@@ -161,7 +161,7 @@ async function api<T>(method: string, path: string, body?: unknown): Promise<T> 
           }
         }
         throw new EbAuthError(
-          `Bank access was rejected (${tag}). The consent has expired or was revoked - reconnect with connect_bank action=start.`
+          `Bank access was rejected (${tag}). The consent has expired or was revoked - reconnect with bank action=start.`
         );
       }
       if (res.status === 429) {

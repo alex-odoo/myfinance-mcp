@@ -501,14 +501,14 @@ app.get(`${BANK_PATH}/callback`, async (req, res) => {
   if (!state) return fail(400, "Missing state", "This link is incomplete. Restart the connection from your AI chat.");
   const pending = await pendingBankLink(state);
   if (!pending) {
-    return fail(400, "Unknown or expired link", "Restart the connection from your AI chat with connect_bank.");
+    return fail(400, "Unknown or expired link", "Restart the connection from your AI chat.");
   }
   const { link, meta, endAttempt } = pending;
   // From the start, not from the last write: reloading this page rewrites
   // the row and must not keep the link alive.
   if (Date.now() - (meta.startedAt ?? link.updatedAt.getTime()) > BANK_LINK_TTL_MS) {
     await endAttempt("Bank authorization link expired before consent");
-    return fail(400, "Link expired", "Link expired, restart from your AI chat with connect_bank.");
+    return fail(400, "Link expired", "Link expired, restart the connection from your AI chat.");
   }
   if (error) {
     await endAttempt(`Bank authorization failed: ${errorDescription || error}`);
@@ -516,7 +516,7 @@ app.get(`${BANK_PATH}/callback`, async (req, res) => {
   }
   if (!code) return fail(400, "Missing code", "The bank did not return an authorization code. Please retry.");
   const owner = await db.user.findUnique({ where: { id: link.userId }, select: { email: true } });
-  if (!owner) return fail(400, "Unknown or expired link", "Restart the connection from your AI chat with connect_bank.");
+  if (!owner) return fail(400, "Unknown or expired link", "Restart the connection from your AI chat.");
   // Hold the bank's code until the confirm; this browser gets the key to it.
   // A reload of this page keeps the held code as stored (encryption is
   // randomized, so re-encrypting would void a confirm already on its way)
@@ -565,7 +565,7 @@ app.post(`${BANK_PATH}/confirm`, express.urlencoded({ extended: false }), async 
     return fail(
       400,
       "Link already used or expired",
-      "If you just confirmed, go back to your AI chat and run sync_bank. Otherwise restart the connection with connect_bank."
+      "If you just confirmed, go back to your AI chat and ask it to sync your bank. Otherwise restart the connection from the chat."
     );
   }
   const { link, meta, rest, endAttempt } = pending;
@@ -587,12 +587,12 @@ app.post(`${BANK_PATH}/confirm`, express.urlencoded({ extended: false }), async 
     return fail(
       400,
       "Link already used or expired",
-      "If you just confirmed, go back to your AI chat and run sync_bank. Otherwise restart the connection with connect_bank."
+      "If you just confirmed, go back to your AI chat and ask it to sync your bank. Otherwise restart the connection from the chat."
     );
   }
   if (Date.now() - (meta.codeAt ?? 0) > BANK_CONFIRM_TTL_MS) {
     await endAttempt("Bank connection was not confirmed in time");
-    return fail(400, "Link expired", "Link expired, restart from your AI chat with connect_bank.");
+    return fail(400, "Link expired", "Link expired, restart the connection from your AI chat.");
   }
   if (body.decision !== "connect") {
     await endAttempt("Bank connection cancelled at the confirmation step");
@@ -605,7 +605,7 @@ app.post(`${BANK_PATH}/confirm`, express.urlencoded({ extended: false }), async 
     bankCode = decryptToken(meta.pendingCode!);
   } catch {
     // A rotated TOKEN_ENC_KEY or a damaged row; its own text names ZenMoney.
-    await endAttempt("The bank authorization could not be read back. Reconnect with connect_bank.");
+    await endAttempt("The bank authorization could not be read back. Reconnect from your AI chat.");
     return fail(502, "Connection failed", "Could not finish the bank connection. Retry from your AI chat.");
   }
   try {
@@ -650,7 +650,7 @@ app.post(`${BANK_PATH}/confirm`, express.urlencoded({ extended: false }), async 
       .send(
         callbackPage(
           "Bank connected",
-          `${session.accounts.length} account(s) authorized. Go back to your AI chat and run sync_bank to import transactions.`,
+          `${session.accounts.length} account(s) authorized. Go back to your AI chat and ask it to sync your bank.`,
           true
         )
       );
