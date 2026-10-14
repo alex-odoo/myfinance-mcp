@@ -18,8 +18,11 @@ export type DigestChoice = (typeof DIGEST_CHOICES)[number];
 type Kind = "weekly" | "monthly";
 
 const SEND_HOUR = 8;
-// The Resend account's free tier allows 100 emails a day, sign-in codes included.
-const MAX_PER_TICK = 40;
+// The Resend account's free tier allows 100 emails a UTC day, sign-in codes
+// included: summaries stop at 60 a day so sign-in never runs out, and the
+// rest go out on the next ticks (a period stays due until it is sent).
+const DAILY_CAP = 60;
+const MAX_PER_TICK = 30;
 const TOP_CATEGORIES = 6;
 const DAY_MS = 86_400_000;
 // A user who imports statements is reminded when the last import is older than this.
@@ -238,6 +241,13 @@ export async function buildDigest(
   return { subject, text: [intro, "", ...lines].join("\n") };
 }
 
+/** Summaries (and confirmations) still allowed today under DAILY_CAP. */
+async function roomToday(now = new Date()): Promise<number> {
+  const startOfDay = new Date(`${now.toISOString().slice(0, 10)}T00:00:00.000Z`);
+  const sent = await db.event.count({ where: { type: "digest_sent", createdAt: { gte: startOfDay } } });
+  return Math.max(0, DAILY_CAP - sent);
+}
+
 async function send(user: DigestUser, mail: { subject: string; text: string }): Promise<boolean> {
   const url = unsubscribeUrl(user.id);
   return sendMail(user.email, mail.subject, mail.text, {
@@ -256,6 +266,7 @@ export function startingPoint(kind: Kind, timezone: string, now = new Date()): s
 
 /** The confirmation email of a new subscription: the current month so far. */
 export async function sendWelcome(user: DigestUser, now = new Date()): Promise<boolean> {
+  if ((await roomToday(now)) === 0) return false;
   const today = localNow(now, user.timezone).date;
   const start = day(`${today.slice(0, 7)}-01`);
   const end = new Date(day(today).getTime() + DAY_MS);
@@ -274,21 +285,26 @@ export async function runDigests(now = new Date(), onlyUserId?: string) {
     where: { digest: { in: ["weekly", "monthly"] }, ...(onlyUserId ? { id: onlyUserId } : {}) },
     select: { id: true, email: true, baseCurrency: true, timezone: true, digest: true, digestSentFor: true },
   });
+  const budget = Math.min(MAX_PER_TICK, await roomToday(now));
   for (const u of users) {
-    if (result.sent + result.failed >= MAX_PER_TICK) break;
+    if (result.sent + result.failed >= budget) break;
     const kind = u.digest as Kind;
-    const local = localNow(now, u.timezone);
-    const period = lastComplete(kind, local.date);
-    if (u.digestSentFor === period.key) continue;
-    if (local.date === period.boundary && local.hour < SEND_HOUR) continue;
-    result.due++;
-    // Claim the period first: a second tick (or instance) finds it taken.
-    const { count } = await db.user.updateMany({
-      where: { id: u.id, digest: kind, digestSentFor: u.digestSentFor },
-      data: { digestSentFor: period.key },
-    });
-    if (count !== 1) continue;
+    let claimed: string | null = null;
+    // Everything per user inside the try: one bad row (a timezone the
+    // runtime rejects, a database blip) must not stop the others.
     try {
+      const local = localNow(now, u.timezone);
+      const period = lastComplete(kind, local.date);
+      if (u.digestSentFor === period.key) continue;
+      if (local.date === period.boundary && local.hour < SEND_HOUR) continue;
+      result.due++;
+      // Claim the period first: a second tick (or instance) finds it taken.
+      const { count } = await db.user.updateMany({
+        where: { id: u.id, digest: kind, digestSentFor: u.digestSentFor },
+        data: { digestSentFor: period.key },
+      });
+      if (count !== 1) continue;
+      claimed = period.key;
       const mail = await buildDigest(u, kind, period, before(kind, period));
       if (!mail) {
         result.skipped++;
@@ -305,9 +321,11 @@ export async function runDigests(now = new Date(), onlyUserId?: string) {
       logEvent("digest_failed", u.id, { kind });
       console.error(`[digest] ${kind} failed:`, e instanceof Error ? e.message : String(e));
       // Release the claim so the next tick retries this period.
-      await db.user
-        .updateMany({ where: { id: u.id, digestSentFor: period.key }, data: { digestSentFor: u.digestSentFor } })
-        .catch(() => {});
+      if (claimed) {
+        await db.user
+          .updateMany({ where: { id: u.id, digestSentFor: claimed }, data: { digestSentFor: u.digestSentFor } })
+          .catch(() => {});
+      }
     }
   }
   return result;

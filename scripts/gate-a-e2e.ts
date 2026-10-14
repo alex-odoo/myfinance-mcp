@@ -2283,6 +2283,18 @@ async function main(): Promise<void> {
       await a.tool("update_transaction", { id: second.json.id, category: "transport" });
       const relog = await a.tool("log_expense", { amount: 8, currency: "USD", category: "other", merchant: "uber" });
       ok("a known merchant keeps the user's category on log_expense", relog.json.category === "transport", relog.text);
+      const refund = await a.tool("log_income", { amount: 5, currency: "USD", merchant: "Uber" });
+      ok("an expense category learned for a merchant never lands on an income row", refund.json.category === "other", refund.text);
+      const failing = await fresh();
+      const f = await inProcess(failing.id);
+      const failed = await f.tool("log_expense", { amount: 100, currency: "ARS", account: "No Such Account" });
+      const failingAfter = await cdb.user.findUniqueOrThrow({ where: { id: failing.id } });
+      ok(
+        "a first entry that fails leaves the base currency unadopted",
+        failed.isError && failingAfter.baseCurrency === "EUR" && failingAfter.currencySetAt === null,
+        failed.text
+      );
+      await f.close();
       const today = new Date().toISOString().slice(0, 10);
       const imp = await a.tool("import_transactions", {
         transactions: [
@@ -2366,6 +2378,7 @@ async function main(): Promise<void> {
         emptyHtml.includes("No accounts were shared") && !emptyHtml.includes("Bank connected") && emptyRow?.status === "error",
         emptyHtml.slice(0, 300)
       );
+      ok("a consent that ended in error does not keep bank sync offered", !(await bankSyncOffered(ub.id)));
       let limited = "";
       for (let i = 0; i < 21 && !limited; i++) {
         const r = await bank.tool("connect_bank", { action: "list_banks", country: "FI" });
@@ -2430,6 +2443,10 @@ async function main(): Promise<void> {
       );
       const again = await runDigests(nextFirst(13), ud.id);
       ok("a period is sent once", again.sent === 0 && again.due === 0, JSON.stringify(again));
+      const mailsBeforeSwitch = sentMail.length;
+      await d.tool("update_settings", { email_digest: "weekly" });
+      await d.tool("update_settings", { email_digest: "monthly" });
+      ok("changing the schedule sends no second confirmation", sentMail.slice(mailsBeforeSwitch).every((m) => m.to !== ud.email));
       const uw = await fresh({ currencySetAt: new Date() });
       const w = await inProcess(uw.id);
       await w.tool("update_settings", { email_digest: "weekly" });

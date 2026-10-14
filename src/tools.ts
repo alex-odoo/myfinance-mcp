@@ -20,6 +20,14 @@ import { Prisma } from "./generated/prisma/client";
 
 const ALL_CATEGORIES = new Set<string>([...EXPENSE_CATEGORIES, ...INCOME_CATEGORIES]);
 
+/** A learned merchant category is used only on rows of a type it belongs to. */
+function fitsType(category: string | undefined, type: TxType): category is string {
+  if (!category) return false;
+  if (type === "expense") return (EXPENSE_CATEGORIES as readonly string[]).includes(category);
+  if (type === "income") return (INCOME_CATEGORIES as readonly string[]).includes(category);
+  return false;
+}
+
 /** What a model offers when direct bank sync cannot help: it works for every bank. */
 const STATEMENT_PATH =
   "Any bank works without a connection: ask the user to export a statement (CSV or PDF from the bank's app or website, or screenshots of the transaction list), send it in this chat, and import every row with ONE import_transactions call. ZenMoney users can sync with connect_zenmoney.";
@@ -82,6 +90,30 @@ async function adoptFirstCurrency(userId: string, currency: string | undefined):
   });
 }
 
+/**
+ * Puts the default back when the write that adopted a currency failed: the
+ * user's real currency must still be adoptable by the next entry.
+ */
+async function undoAdoption(userId: string, adopted: string | null): Promise<void> {
+  if (!adopted) return;
+  await asBaseSwitch(userId, () =>
+    db.user.updateMany({
+      where: { id: userId, baseCurrency: adopted, transactions: { none: {} }, budgets: { none: {} } },
+      data: { baseCurrency: "EUR", currencySetAt: null },
+    })
+  ).catch(() => {});
+}
+
+/** Runs a write that may have adopted a currency; a failed write undoes the adoption. */
+async function adoptingWrite<T>(userId: string, adopted: string | null, write: () => Promise<T>): Promise<T> {
+  try {
+    return await write();
+  } catch (e) {
+    await undoAdoption(userId, adopted);
+    throw e;
+  }
+}
+
 /** What a write tells the model about unsettled settings, until they are settled. */
 async function setupNote(userId: string, adopted: string | null): Promise<{ setup?: string }> {
   const user = await getUser(userId);
@@ -113,7 +145,7 @@ function whereItWent(user: { baseCurrency: string; digest: string | null }, spen
     where_it_went: { base_currency: user.baseCurrency, imported_spending: round2(total), top_categories: top },
     next:
       "Tell the user where the money went (top categories), then offer ONE next step: a monthly budget for the biggest category (set_budget)" +
-      (user.digest === null ? ", or a monthly summary by email (update_settings email_digest=monthly)." : "."),
+      (user.digest === null && digestAvailable() ? ", or a monthly summary by email (update_settings email_digest=monthly)." : "."),
   };
 }
 
@@ -269,7 +301,8 @@ async function logTransaction(userId: string, type: TxType, input: LogInput) {
   // entry comes without a real one.
   let category = input.category;
   if ((!category || category === "other") && input.merchant) {
-    category = (await merchantCategoryMap(userId, [input.merchant])).get(normMerchant(input.merchant)) ?? category;
+    const known = (await merchantCategoryMap(userId, [input.merchant])).get(normMerchant(input.merchant));
+    if (fitsType(known, type)) category = known;
   }
 
   const tx = await db.transaction.create({
@@ -383,7 +416,7 @@ export function registerFinanceTools(server: McpServer, userId: string, options:
     },
     async (input) => {
       const adopted = await adoptFirstCurrency(userId, await entryCurrency(userId, [input.currency], input.account));
-      const logged = await pricing(() => logTransaction(userId, "expense", input as LogInput))();
+      const logged = await adoptingWrite(userId, adopted, pricing(() => logTransaction(userId, "expense", input as LogInput)));
       return text({ ...logged, ...(await setupNote(userId, adopted)) });
     }
   );
@@ -409,7 +442,7 @@ export function registerFinanceTools(server: McpServer, userId: string, options:
     },
     async (input) => {
       const adopted = await adoptFirstCurrency(userId, await entryCurrency(userId, [input.currency], input.account));
-      const logged = await pricing(() => logTransaction(userId, "income", input as LogInput))();
+      const logged = await adoptingWrite(userId, adopted, pricing(() => logTransaction(userId, "income", input as LogInput)));
       return text({ ...logged, ...(await setupNote(userId, adopted)) });
     }
   );
@@ -983,7 +1016,7 @@ export function registerFinanceTools(server: McpServer, userId: string, options:
         args.dry_run === true
           ? null
           : await adoptFirstCurrency(userId, await entryCurrency(userId, args.transactions.map((t) => t.currency), args.account));
-      return pricing(async ({ account, statement_total, dry_run, transactions }: typeof args) => {
+      return adoptingWrite(userId, adopted, () => pricing(async ({ account, statement_total, dry_run, transactions }: typeof args) => {
         const user = await getUser(userId);
         const acc = await resolveAccount(userId, account);
         const dryRun = dry_run === true;
@@ -1236,7 +1269,7 @@ export function registerFinanceTools(server: McpServer, userId: string, options:
           let category = row.category;
           if (type !== "transfer" && (!category || category === "other" || !ALL_CATEGORIES.has(category))) {
             const known = row.merchant ? learned.get(normMerchant(row.merchant)) : undefined;
-            if (known && ALL_CATEGORIES.has(known)) {
+            if (fitsType(known, type)) {
               category = known;
             } else {
               if (category && !ALL_CATEGORIES.has(category)) coerced++;
@@ -1334,7 +1367,7 @@ export function registerFinanceTools(server: McpServer, userId: string, options:
           ...(spentByCategory.size > 0 ? whereItWent(user, spentByCategory) : {}),
           ...(await setupNote(userId, adopted)),
         });
-      })(args);
+      })(args));
     }
   );
 
@@ -1380,18 +1413,20 @@ export function registerFinanceTools(server: McpServer, userId: string, options:
       const target = currency?.toUpperCase();
       const convertTo = target && target !== user.baseCurrency ? target : undefined;
       if (convertTo) await assertConvertible(convertTo);
-      // base -> report currency at each record's own date, one lookup per day
+      // base -> report currency at each record's own date: every distinct day
+      // is priced once, a few at a time, before the rows are summed.
       const dayRates = new Map<string, number>();
-      const valueOf = async (r: { amountBase: unknown; occurredAt: Date }) => {
-        if (!convertTo) return Number(r.amountBase);
-        const d = r.occurredAt.toISOString().slice(0, 10);
-        let rate = dayRates.get(d);
-        if (rate === undefined) {
-          rate = (await convert(1, user.baseCurrency, convertTo, r.occurredAt)).rate;
-          dayRates.set(d, rate);
+      const priceDays = async (dates: Date[]) => {
+        if (!convertTo) return;
+        const todo = [...new Map(dates.map((d) => [d.toISOString().slice(0, 10), d])).entries()].filter(([k]) => !dayRates.has(k));
+        for (let i = 0; i < todo.length; i += 8) {
+          await Promise.all(
+            todo.slice(i, i + 8).map(async ([k, d]) => dayRates.set(k, (await convert(1, user.baseCurrency, convertTo, d)).rate))
+          );
         }
-        return Number(r.amountBase) * rate;
       };
+      const valueOf = (r: { amountBase: unknown; occurredAt: Date }) =>
+        convertTo ? Number(r.amountBase) * dayRates.get(r.occurredAt.toISOString().slice(0, 10))! : Number(r.amountBase);
       const groupedType = type ?? "expense";
       const weekOf = (d: Date) => {
         const monday = new Date(d.getTime() - ((d.getUTCDay() + 6) % 7) * 86_400_000);
@@ -1421,11 +1456,12 @@ export function registerFinanceTools(server: McpServer, userId: string, options:
           },
           select: { type: true, amountBase: true, categoryKey: true, merchant: true, occurredAt: true },
         });
+        await priceDays(rows.map((r) => r.occurredAt));
         let expense = 0;
         let income = 0;
         const groups = new Map<string, number>();
         for (const r of rows) {
-          const v = await valueOf(r);
+          const v = valueOf(r);
           if (r.type === "income") income += v;
           else expense += v;
           if (r.type === groupedType) groups.set(key(r), (groups.get(key(r)) ?? 0) + v);
@@ -1460,7 +1496,9 @@ export function registerFinanceTools(server: McpServer, userId: string, options:
         else prevStart.setTime(range.start.getTime() - (range.end.getTime() - range.start.getTime()));
         const elapsed = Math.min(range.end.getTime(), todayEnd.getTime()) - range.start.getTime();
         const running = unit !== "window" && range.end > todayEnd;
-        previousRange = { start: prevStart, end: running ? new Date(prevStart.getTime() + elapsed) : range.start };
+        // Clamped: on March 31 the "same days" of February would run into March.
+        const prevEnd = running ? Math.min(prevStart.getTime() + elapsed, range.start.getTime()) : range.start.getTime();
+        previousRange = { start: prevStart, end: new Date(prevEnd) };
         previous = await summarize(previousRange.start, previousRange.end);
       }
       const changePct = (nowValue: number, before: number) => (before > 0 ? round2(((nowValue - before) / before) * 100) : null);
@@ -1484,7 +1522,14 @@ export function registerFinanceTools(server: McpServer, userId: string, options:
         // legacy alias kept for older dashboard payload readers
         expense_by: group_by ?? "category",
         groups: capped.map(([k, v]) => {
-          const before = previous && !timeline ? (previous.groups.get(k) ?? 0) : undefined;
+          // "(all others)" compares with the previous period's tail: every key not listed by name.
+          const listed = new Set(capped.map(([key]) => key));
+          const before =
+            previous && !timeline
+              ? k === "(all others)" && capped !== sorted
+                ? [...previous.groups.entries()].filter(([key]) => !listed.has(key)).reduce((t, [, x]) => t + x, 0)
+                : (previous.groups.get(k) ?? 0)
+              : undefined;
           return {
             key: k,
             total: round2(v),
@@ -2135,8 +2180,10 @@ export function registerFinanceTools(server: McpServer, userId: string, options:
           }
         });
       }
-      const subscribing =
-        (email_digest === "weekly" || email_digest === "monthly") && email_digest !== user.digest ? email_digest : null;
+      // A change of schedule (weekly <-> monthly) moves the start, but only
+      // turning the summary on sends the confirmation.
+      const isOn = (v: string | null | undefined) => v === "weekly" || v === "monthly";
+      const subscribing = isOn(email_digest) && email_digest !== user.digest ? (email_digest as "weekly" | "monthly") : null;
       const updated = await db.user.update({
         where: { id: userId },
         data: {
@@ -2148,7 +2195,7 @@ export function registerFinanceTools(server: McpServer, userId: string, options:
           ...(subscribing ? { digestSentFor: startingPoint(subscribing, timezone ?? user.timezone) } : {}),
         },
       });
-      const welcome = subscribing ? await sendWelcome(updated) : undefined;
+      const welcome = subscribing && !isOn(user.digest) ? await sendWelcome(updated) : undefined;
       return text({
         ok: true,
         base_currency: updated.baseCurrency,

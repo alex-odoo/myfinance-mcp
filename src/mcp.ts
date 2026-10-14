@@ -2,6 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { registerFinanceTools, type FinanceToolOptions } from "./tools";
 import { DASHBOARD_URI, DASHBOARD_MIME, DASHBOARD_HTML } from "./ui";
 import { config } from "./config";
+import { digestAvailable } from "./digest";
 
 export { SERVER_NAME, SERVER_VERSION } from "./version";
 import { SERVER_NAME, SERVER_VERSION } from "./version";
@@ -11,12 +12,14 @@ import { SERVER_NAME, SERVER_VERSION } from "./version";
  * "this month" and every total depend on both, so the first conversation sets
  * them instead of the server guessing.
  */
-const INSTRUCTIONS =
+const instructions = (digest: boolean) =>
   "MyFinance MCP stores the user's money records and computes every total server-side: answer money questions with get_summary, get_trends, get_budget_progress and get_accounts, never by adding up rows yourself. " +
   "On first use call get_settings; if it reports default settings, ask the user which currency they think in and where they live, then call update_settings once with base_currency and timezone. " +
   "Bank statements go to import_transactions as ONE call with every row; single purchases go to log_expense. " +
-  "No bank connection is needed: for bank data from any bank, ask the user for a statement export (CSV, PDF or screenshots) and import it. " +
-  "When the user has a few records and get_settings shows email_digest not_chosen, you may offer a weekly or monthly email summary once; turn it on only after a clear yes.";
+  "No bank connection is needed: for bank data from any bank, ask the user for a statement export (CSV, PDF or screenshots) and import it." +
+  (digest
+    ? " When the user has a few records and get_settings shows email_digest not_chosen, you may offer a weekly or monthly email summary once; turn it on only after a clear yes."
+    : "");
 
 export function buildMcpServer(userId: string, options: FinanceToolOptions): McpServer {
   const server = new McpServer(
@@ -31,7 +34,7 @@ export function buildMcpServer(userId: string, options: FinanceToolOptions): Mcp
         { src: `${config.baseUrl}/favicon.svg`, mimeType: "image/svg+xml", sizes: ["any"] },
       ],
     },
-    { instructions: INSTRUCTIONS }
+    { instructions: instructions(digestAvailable()) }
   );
   registerFinanceTools(server, userId, options);
   server.registerResource(
