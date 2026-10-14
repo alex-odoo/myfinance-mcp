@@ -33,63 +33,103 @@
       (tag ? '<span class="tag">' + tag + "</span>" : "") +
       '</span><span class="av' + (pos ? " pos" : "") + '">' + val + "</span></div>";
   }
+  /* Demo text follows the page language (<html lang>): /es/ and /ru/ pages
+     get their own words and number formats, everything else English. */
+  var LANG = (document.documentElement.lang || "en").slice(0, 2);
+  var L = {
+    en: {
+      locale: "en-US",
+      budgets: "Budgets · July", groceries: "Groceries", restaurants: "Restaurants", transport: "Transport",
+      summary: "June · summary", spent: "Spent", income: "Income", net: "Net", housing: "Housing",
+      tiles: ["2,940", "4,100", "+1,160"],
+      accounts: "Accounts · net worth", nw: "24,300 EUR", nwSub: "5 accounts · 3 currencies · converted at today's rates",
+      acc: [["Revolut", "", "6,420 EUR"], ["Chase", "business", "11,900 USD eq."], ["Santander", "", "4,700 EUR"], ["Wise", "", "1,850 GBP eq."], ["Cash", "", "800 EUR"]],
+      imp: "Statement import · July",
+      impRows: [["Rows imported", "new", "61"], ["Lidl, logged by you", "merged", "-24.50"], ["Already imported", "skipped", "2"], ["Net vs statement", "match", "-1,842.30 EUR"]],
+      chat: [
+        ["Spent 24.50 eur on groceries at Lidl", "Logged: 24.50 EUR, groceries. Here's where you are this month:"],
+        ["Here's my bank statement [screenshot]", "Read 64 rows. 61 imported, your hand-logged Lidl entry merged, 2 already there. The total matches the statement:"],
+        ["How much did I spend on restaurants in June?", "412 EUR across 18 visits, 14% of your June spending, up 6% from May."],
+        ["What's my net worth?", "24,300 EUR across 5 accounts in 3 currencies."]
+      ]
+    },
+    es: {
+      locale: "es-419",
+      budgets: "Presupuestos · julio", groceries: "Supermercado", restaurants: "Restaurantes", transport: "Transporte",
+      summary: "Junio · resumen", spent: "Gastos", income: "Ingresos", net: "Neto", housing: "Vivienda",
+      tiles: ["2,940", "4,100", "+1,160"],
+      accounts: "Cuentas · patrimonio neto", nw: "24,300 EUR", nwSub: "5 cuentas · 3 monedas · convertido al tipo de cambio de hoy",
+      acc: [["Revolut", "", "6,420 EUR"], ["Chase", "empresa", "11,900 USD equiv."], ["Santander", "", "4,700 EUR"], ["Wise", "", "1,850 GBP equiv."], ["Efectivo", "", "800 EUR"]],
+      imp: "Importación de extracto · julio",
+      impRows: [["Filas importadas", "nuevas", "61"], ["Lidl, registrado por ti", "fusionado", "-24.50"], ["Ya importadas", "omitidas", "2"], ["Neto vs. extracto", "coincide", "-1,842.30 EUR"]],
+      chat: [
+        ["Gasté 24.50 euros en el súper, en Lidl", "Registrado: 24.50 EUR, supermercado. Así vas este mes:"],
+        ["Aquí está mi extracto bancario [captura]", "Leí 64 filas. 61 importadas, tu gasto en Lidl registrado a mano quedó fusionado y 2 ya estaban. El total coincide con el extracto:"],
+        ["¿Cuánto gasté en restaurantes en junio?", "412 EUR en 18 visitas, el 14% de tu gasto de junio, un 6% más que en mayo."],
+        ["¿Cuál es mi patrimonio neto?", "24,300 EUR en 5 cuentas y 3 monedas."]
+      ]
+    },
+    ru: {
+      locale: "ru-RU",
+      budgets: "Бюджеты · июль", groceries: "Продукты", restaurants: "Рестораны", transport: "Транспорт",
+      summary: "Июнь · сводка", spent: "Расходы", income: "Доходы", net: "Итог", housing: "Жильё",
+      tiles: ["2\u00a0940", "4\u00a0100", "+1\u00a0160"],
+      accounts: "Счета · капитал", nw: "24\u00a0300 EUR", nwSub: "5 счетов · 3 валюты · по сегодняшнему курсу",
+      acc: [["Revolut", "", "6\u00a0420 EUR"], ["Chase", "бизнес", "11\u00a0900 USD экв."], ["Santander", "", "4\u00a0700 EUR"], ["Wise", "", "1\u00a0850 GBP экв."], ["Наличные", "", "800 EUR"]],
+      imp: "Импорт выписки · июль",
+      impRows: [["Импортировано строк", "новые", "61"], ["Lidl, внесено вами", "объединено", "-24,50"], ["Уже были", "пропущено", "2"], ["Итог по выписке", "совпадает", "-1\u00a0842,30 EUR"]],
+      chat: [
+        ["Потратил 24,50 евро на продукты в Lidl", "Записал: 24,50 EUR, продукты. Вот как дела с бюджетами в этом месяце:"],
+        ["Вот моя банковская выписка [скриншот]", "Прочитал 64 строки. 61 импортирована, ваша ручная запись Lidl объединена, 2 уже были. Итог совпадает с выпиской:"],
+        ["Сколько я потратил на рестораны в июне?", "412 EUR за 18 визитов, 14% ваших расходов за июнь, на 6% больше, чем в мае."],
+        ["Какой у меня капитал?", "24\u00a0300 EUR на 5 счетах в 3 валютах."]
+      ]
+    }
+  };
+  var T = L[LANG] || L.en;
+
   function renderBudgets() {
     var r = el("div", "render");
-    r.innerHTML = "<h4>Budgets · July</h4>" +
-      brow("Groceries", "310 / 400", 78, false) +
-      brow("Restaurants", "368 / 400", 92, true) +
-      brow("Transport", "82 / 200", 41, false);
+    r.innerHTML = "<h4>" + T.budgets + "</h4>" +
+      brow(T.groceries, "310 / 400", 78, false) +
+      brow(T.restaurants, "368 / 400", 92, true) +
+      brow(T.transport, "82 / 200", 41, false);
     return r;
   }
   function renderSummary() {
     var r = el("div", "render");
-    r.innerHTML = "<h4>June · summary</h4>" +
+    r.innerHTML = "<h4>" + T.summary + "</h4>" +
       '<div class="tiles">' +
-      '<div class="tile"><div class="k">Spent</div><div class="v">2,940</div></div>' +
-      '<div class="tile"><div class="k">Income</div><div class="v">4,100</div></div>' +
-      '<div class="tile"><div class="k">Net</div><div class="v pos">+1,160</div></div>' +
+      '<div class="tile"><div class="k">' + T.spent + '</div><div class="v">' + T.tiles[0] + "</div></div>" +
+      '<div class="tile"><div class="k">' + T.income + '</div><div class="v">' + T.tiles[1] + "</div></div>" +
+      '<div class="tile"><div class="k">' + T.net + '</div><div class="v pos">' + T.tiles[2] + "</div></div>" +
       "</div>" +
-      brow("Groceries", "706", 24, false) +
-      brow("Housing", "647", 22, false) +
-      brow("Restaurants", "412", 14, false);
+      brow(T.groceries, "706", 24, false) +
+      brow(T.housing, "647", 22, false) +
+      brow(T.restaurants, "412", 14, false);
     return r;
   }
   function renderAccounts() {
     var r = el("div", "render");
-    r.innerHTML = "<h4>Accounts · net worth</h4>" +
-      '<div class="nw">24,300 EUR</div>' +
-      '<div class="nw-sub">5 accounts · 3 currencies · converted at today\'s rates</div>' +
-      acct("Revolut", "", "6,420 EUR") +
-      acct("Chase", "business", "11,900 USD eq.") +
-      acct("Santander", "", "4,700 EUR") +
-      acct("Wise", "", "1,850 GBP eq.") +
-      acct("Cash", "", "800 EUR");
+    r.innerHTML = "<h4>" + T.accounts + "</h4>" +
+      '<div class="nw">' + T.nw + "</div>" +
+      '<div class="nw-sub">' + T.nwSub + "</div>" +
+      T.acc.map(function (a) { return acct(a[0], a[1], a[2]); }).join("");
     return r;
   }
 
   function renderImport() {
     var r = el("div", "render");
-    r.innerHTML = "<h4>Statement import · July</h4>" +
-      acct("Rows imported", "new", "61") +
-      acct("Lidl, logged by you", "merged", "-24.50") +
-      acct("Already imported", "skipped", "2") +
-      acct("Net vs statement", "match", "-1,842.30 EUR", true);
+    r.innerHTML = "<h4>" + T.imp + "</h4>" +
+      T.impRows.map(function (a, i) { return acct(a[0], a[1], a[2], i === 3); }).join("");
     return r;
   }
 
   var scenarios = [
-    { user: "Spent 24.50 eur on groceries at Lidl",
-      ai: "Logged: 24.50 EUR, groceries. Here's where you are this month:",
-      render: renderBudgets },
-    { user: "Here's my bank statement [screenshot]",
-      ai: "Read 64 rows. 61 imported, your hand-logged Lidl entry merged, 2 already there. The total matches the statement:",
-      render: renderImport },
-    { user: "How much did I spend on restaurants in June?",
-      ai: "412 EUR across 18 visits, 14% of your June spending, up 6% from May.",
-      render: renderSummary },
-    { user: "What's my net worth?",
-      ai: "24,300 EUR across 5 accounts in 3 currencies.",
-      render: renderAccounts }
+    { user: T.chat[0][0], ai: T.chat[0][1], render: renderBudgets },
+    { user: T.chat[1][0], ai: T.chat[1][1], render: renderImport },
+    { user: T.chat[2][0], ai: T.chat[2][1], render: renderSummary },
+    { user: T.chat[3][0], ai: T.chat[3][1], render: renderAccounts }
   ];
 
   function fillBars(scope) {
@@ -229,13 +269,13 @@
         if (c.dataset.done) return;
         c.dataset.done = "1";
         var target = parseInt(c.getAttribute("data-count"), 10);
-        if (reduced || !target) { c.textContent = target.toLocaleString("en-US"); return; }
+        if (reduced || !target) { c.textContent = target.toLocaleString(T.locale, { useGrouping: true }); return; }
         var t0 = null;
         function step(ts) {
           if (!t0) t0 = ts;
           var p = Math.min((ts - t0) / 1200, 1);
           var eased = 1 - Math.pow(1 - p, 3);
-          c.textContent = Math.round(target * eased).toLocaleString("en-US");
+          c.textContent = Math.round(target * eased).toLocaleString(T.locale, { useGrouping: true });
           if (p < 1) requestAnimationFrame(step);
         }
         requestAnimationFrame(step);

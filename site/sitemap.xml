@@ -1,40 +1,185 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"
+        xmlns:xhtml="http://www.w3.org/1999/xhtml">
   <url>
     <loc>https://myfinance-mcp.com/</loc>
     <lastmod>2026-10-14</lastmod>
     <changefreq>weekly</changefreq>
     <priority>1.0</priority>
+    <xhtml:link rel="alternate" hreflang="en" href="https://myfinance-mcp.com/"/>
+    <xhtml:link rel="alternate" hreflang="es" href="https://myfinance-mcp.com/es/"/>
+    <xhtml:link rel="alternate" hreflang="ru" href="https://myfinance-mcp.com/ru/"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://myfinance-mcp.com/"/>
+  </url>
+  <url>
+    <loc>https://myfinance-mcp.com/es/</loc>
+    <lastmod>2026-10-14</lastmod>
+    <changefreq>weekly</changefreq>
+    <priority>1.0</priority>
+    <xhtml:link rel="alternate" hreflang="en" href="https://myfinance-mcp.com/"/>
+    <xhtml:link rel="alternate" hreflang="es" href="https://myfinance-mcp.com/es/"/>
+    <xhtml:link rel="alternate" hreflang="ru" href="https://myfinance-mcp.com/ru/"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://myfinance-mcp.com/"/>
+  </url>
+  <url>
+    <loc>https://myfinance-mcp.com/ru/</loc>
+    <lastmod>2026-10-14</lastmod>
+    <changefreq>weekly</changefreq>
+    <priority>1.0</priority>
+    <xhtml:link rel="alternate" hreflang="en" href="https://myfinance-mcp.com/"/>
+    <xhtml:link rel="alternate" hreflang="es" href="https://myfinance-mcp.com/es/"/>
+    <xhtml:link rel="alternate" hreflang="ru" href="https://myfinance-mcp.com/ru/"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://myfinance-mcp.com/"/>
   </url>
   <url>
     <loc>https://myfinance-mcp.com/install</loc>
     <lastmod>2026-10-14</lastmod>
     <changefreq>monthly</changefreq>
     <priority>0.8</priority>
+    <xhtml:link rel="alternate" hreflang="en" href="https://myfinance-mcp.com/install"/>
+    <xhtml:link rel="alternate" hreflang="es" href="https://myfinance-mcp.com/es/install"/>
+    <xhtml:link rel="alternate" hreflang="ru" href="https://myfinance-mcp.com/ru/install"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://myfinance-mcp.com/install"/>
+  </url>
+  <url>
+    <loc>https://myfinance-mcp.com/es/install</loc>
+    <lastmod>2026-10-14</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+    <xhtml:link rel="alternate" hreflang="en" href="https://myfinance-mcp.com/install"/>
+    <xhtml:link rel="alternate" hreflang="es" href="https://myfinance-mcp.com/es/install"/>
+    <xhtml:link rel="alternate" hreflang="ru" href="https://myfinance-mcp.com/ru/install"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://myfinance-mcp.com/install"/>
+  </url>
+  <url>
+    <loc>https://myfinance-mcp.com/ru/install</loc>
+    <lastmod>2026-10-14</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+    <xhtml:link rel="alternate" hreflang="en" href="https://myfinance-mcp.com/install"/>
+    <xhtml:link rel="alternate" hreflang="es" href="https://myfinance-mcp.com/es/install"/>
+    <xhtml:link rel="alternate" hreflang="ru" href="https://myfinance-mcp.com/ru/install"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://myfinance-mcp.com/install"/>
   </url>
   <url>
     <loc>https://myfinance-mcp.com/install/claude</loc>
     <lastmod>2026-10-14</lastmod>
     <changefreq>monthly</changefreq>
     <priority>0.7</priority>
+    <xhtml:link rel="alternate" hreflang="en" href="https://myfinance-mcp.com/install/claude"/>
+    <xhtml:link rel="alternate" hreflang="es" href="https://myfinance-mcp.com/es/install/claude"/>
+    <xhtml:link rel="alternate" hreflang="ru" href="https://myfinance-mcp.com/ru/install/claude"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://myfinance-mcp.com/install/claude"/>
+  </url>
+  <url>
+    <loc>https://myfinance-mcp.com/es/install/claude</loc>
+    <lastmod>2026-10-14</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.7</priority>
+    <xhtml:link rel="alternate" hreflang="en" href="https://myfinance-mcp.com/install/claude"/>
+    <xhtml:link rel="alternate" hreflang="es" href="https://myfinance-mcp.com/es/install/claude"/>
+    <xhtml:link rel="alternate" hreflang="ru" href="https://myfinance-mcp.com/ru/install/claude"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://myfinance-mcp.com/install/claude"/>
+  </url>
+  <url>
+    <loc>https://myfinance-mcp.com/ru/install/claude</loc>
+    <lastmod>2026-10-14</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.7</priority>
+    <xhtml:link rel="alternate" hreflang="en" href="https://myfinance-mcp.com/install/claude"/>
+    <xhtml:link rel="alternate" hreflang="es" href="https://myfinance-mcp.com/es/install/claude"/>
+    <xhtml:link rel="alternate" hreflang="ru" href="https://myfinance-mcp.com/ru/install/claude"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://myfinance-mcp.com/install/claude"/>
   </url>
   <url>
     <loc>https://myfinance-mcp.com/install/chatgpt</loc>
     <lastmod>2026-10-14</lastmod>
     <changefreq>monthly</changefreq>
     <priority>0.7</priority>
+    <xhtml:link rel="alternate" hreflang="en" href="https://myfinance-mcp.com/install/chatgpt"/>
+    <xhtml:link rel="alternate" hreflang="es" href="https://myfinance-mcp.com/es/install/chatgpt"/>
+    <xhtml:link rel="alternate" hreflang="ru" href="https://myfinance-mcp.com/ru/install/chatgpt"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://myfinance-mcp.com/install/chatgpt"/>
+  </url>
+  <url>
+    <loc>https://myfinance-mcp.com/es/install/chatgpt</loc>
+    <lastmod>2026-10-14</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.7</priority>
+    <xhtml:link rel="alternate" hreflang="en" href="https://myfinance-mcp.com/install/chatgpt"/>
+    <xhtml:link rel="alternate" hreflang="es" href="https://myfinance-mcp.com/es/install/chatgpt"/>
+    <xhtml:link rel="alternate" hreflang="ru" href="https://myfinance-mcp.com/ru/install/chatgpt"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://myfinance-mcp.com/install/chatgpt"/>
+  </url>
+  <url>
+    <loc>https://myfinance-mcp.com/ru/install/chatgpt</loc>
+    <lastmod>2026-10-14</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.7</priority>
+    <xhtml:link rel="alternate" hreflang="en" href="https://myfinance-mcp.com/install/chatgpt"/>
+    <xhtml:link rel="alternate" hreflang="es" href="https://myfinance-mcp.com/es/install/chatgpt"/>
+    <xhtml:link rel="alternate" hreflang="ru" href="https://myfinance-mcp.com/ru/install/chatgpt"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://myfinance-mcp.com/install/chatgpt"/>
   </url>
   <url>
     <loc>https://myfinance-mcp.com/install/cursor</loc>
     <lastmod>2026-10-14</lastmod>
     <changefreq>monthly</changefreq>
     <priority>0.7</priority>
+    <xhtml:link rel="alternate" hreflang="en" href="https://myfinance-mcp.com/install/cursor"/>
+    <xhtml:link rel="alternate" hreflang="es" href="https://myfinance-mcp.com/es/install/cursor"/>
+    <xhtml:link rel="alternate" hreflang="ru" href="https://myfinance-mcp.com/ru/install/cursor"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://myfinance-mcp.com/install/cursor"/>
+  </url>
+  <url>
+    <loc>https://myfinance-mcp.com/es/install/cursor</loc>
+    <lastmod>2026-10-14</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.7</priority>
+    <xhtml:link rel="alternate" hreflang="en" href="https://myfinance-mcp.com/install/cursor"/>
+    <xhtml:link rel="alternate" hreflang="es" href="https://myfinance-mcp.com/es/install/cursor"/>
+    <xhtml:link rel="alternate" hreflang="ru" href="https://myfinance-mcp.com/ru/install/cursor"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://myfinance-mcp.com/install/cursor"/>
+  </url>
+  <url>
+    <loc>https://myfinance-mcp.com/ru/install/cursor</loc>
+    <lastmod>2026-10-14</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.7</priority>
+    <xhtml:link rel="alternate" hreflang="en" href="https://myfinance-mcp.com/install/cursor"/>
+    <xhtml:link rel="alternate" hreflang="es" href="https://myfinance-mcp.com/es/install/cursor"/>
+    <xhtml:link rel="alternate" hreflang="ru" href="https://myfinance-mcp.com/ru/install/cursor"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://myfinance-mcp.com/install/cursor"/>
   </url>
   <url>
     <loc>https://myfinance-mcp.com/install/codex</loc>
     <lastmod>2026-10-14</lastmod>
     <changefreq>monthly</changefreq>
     <priority>0.7</priority>
+    <xhtml:link rel="alternate" hreflang="en" href="https://myfinance-mcp.com/install/codex"/>
+    <xhtml:link rel="alternate" hreflang="es" href="https://myfinance-mcp.com/es/install/codex"/>
+    <xhtml:link rel="alternate" hreflang="ru" href="https://myfinance-mcp.com/ru/install/codex"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://myfinance-mcp.com/install/codex"/>
+  </url>
+  <url>
+    <loc>https://myfinance-mcp.com/es/install/codex</loc>
+    <lastmod>2026-10-14</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.7</priority>
+    <xhtml:link rel="alternate" hreflang="en" href="https://myfinance-mcp.com/install/codex"/>
+    <xhtml:link rel="alternate" hreflang="es" href="https://myfinance-mcp.com/es/install/codex"/>
+    <xhtml:link rel="alternate" hreflang="ru" href="https://myfinance-mcp.com/ru/install/codex"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://myfinance-mcp.com/install/codex"/>
+  </url>
+  <url>
+    <loc>https://myfinance-mcp.com/ru/install/codex</loc>
+    <lastmod>2026-10-14</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.7</priority>
+    <xhtml:link rel="alternate" hreflang="en" href="https://myfinance-mcp.com/install/codex"/>
+    <xhtml:link rel="alternate" hreflang="es" href="https://myfinance-mcp.com/es/install/codex"/>
+    <xhtml:link rel="alternate" hreflang="ru" href="https://myfinance-mcp.com/ru/install/codex"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://myfinance-mcp.com/install/codex"/>
   </url>
   <url>
     <loc>https://myfinance-mcp.com/alternatives</loc>

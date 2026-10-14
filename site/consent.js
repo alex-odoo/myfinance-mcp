@@ -79,24 +79,57 @@
   else dropGaCookies();
 
   /* ---------- banner ---------- */
+  // Banner text follows the page language (<html lang>): /es/ and /ru/ pages
+  // get their own words, everything else English. Behaviour is identical.
+  var T = {
+    en: {
+      region: "Analytics consent",
+      ask: "May we use Google Analytics to see which pages are useful? It loads only if you allow it, and your financial data is never part of it.",
+      details: "Details",
+      allow: "Allow",
+      decline: "Decline",
+      granted: "You allowed Google Analytics. You can change that here.",
+      denied: "You declined Google Analytics. You can change that here."
+    },
+    es: {
+      region: "Consentimiento de analítica",
+      ask: "¿Podemos usar Google Analytics para ver qué páginas son útiles? Solo se carga si lo permites, y tus datos financieros nunca forman parte de él.",
+      details: "Detalles (en inglés)",
+      allow: "Permitir",
+      decline: "Rechazar",
+      granted: "Permitiste Google Analytics. Puedes cambiarlo aquí.",
+      denied: "Rechazaste Google Analytics. Puedes cambiarlo aquí."
+    },
+    ru: {
+      region: "Согласие на аналитику",
+      ask: "Можно мы будем использовать Google Analytics, чтобы видеть, какие страницы полезны? Он загружается, только если вы разрешите, и ваши финансовые данные в него никогда не попадают.",
+      details: "Подробнее (на английском)",
+      allow: "Разрешить",
+      decline: "Отклонить",
+      granted: "Вы разрешили Google Analytics. Это можно изменить здесь.",
+      denied: "Вы отклонили Google Analytics. Это можно изменить здесь."
+    }
+  };
+  var t = T[(document.documentElement.lang || "en").slice(0, 2)] || T.en;
+
   var banner, now, opener;
 
   function build() {
     banner = document.createElement("div");
     banner.className = "mf-consent";
     banner.setAttribute("role", "region");
-    banner.setAttribute("aria-label", "Analytics consent");
+    banner.setAttribute("aria-label", t.region);
     banner.hidden = true;
     banner.innerHTML =
       '<div class="mf-consent-copy">' +
-        "<p>May we use Google Analytics to see which pages are useful? It loads only if you allow it, and your financial data is never part of it. " +
-        '<a href="/privacy#cookies">Details</a></p>' +
+        "<p>" + t.ask + " " +
+        '<a href="/privacy#cookies">' + t.details + "</a></p>" +
         '<p class="mf-consent-now" hidden></p>' +
       "</div>" +
       // Equal weight on purpose: same size, same style, no default.
       '<div class="mf-consent-actions">' +
-        '<button type="button" data-consent="granted">Allow</button>' +
-        '<button type="button" data-consent="denied">Decline</button>' +
+        '<button type="button" data-consent="granted">' + t.allow + "</button>" +
+        '<button type="button" data-consent="denied">' + t.decline + "</button>" +
       "</div>";
     now = banner.querySelector(".mf-consent-now");
     banner.addEventListener("click", function (e) {
@@ -126,8 +159,7 @@
   function show(from) {
     if (!banner) build();
     now.hidden = !choice;
-    now.textContent = choice === "granted" ? "You allowed Google Analytics. You can change that here."
-      : choice === "denied" ? "You declined Google Analytics. You can change that here." : "";
+    now.textContent = choice === "granted" ? t.granted : choice === "denied" ? t.denied : "";
     banner.hidden = false;
     reserve();
     if (from) {

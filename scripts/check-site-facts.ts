@@ -34,8 +34,10 @@ for (const { path, body } of texts) {
 // 2. Email sign-in code length = EMAIL_CODE_DIGITS
 const digits = Number(readFileSync("src/oauth/provider.ts", "utf8").match(/EMAIL_CODE_DIGITS = (\d+)/)?.[1]);
 if (!digits) problems.push("src/oauth/provider.ts: EMAIL_CODE_DIGITS not found");
+// The Spanish and Russian pages say it their own way ("código de 8 dígitos",
+// "8-значный код"); they go stale the same way.
 for (const { path, body } of texts) {
-  for (const m of body.matchAll(/\b(\d+)-digit\b/g)) {
+  for (const m of body.matchAll(/\b(\d+)(?:-digit\b| dígitos|-значн)/g)) {
     if (Number(m[1]) !== digits) problems.push(`${path}: "${m[0]}" but sign-in codes have ${digits} digits`);
   }
 }
@@ -81,8 +83,49 @@ for (const path of pages) {
   }
 }
 
+// 5. Language versions (/, /es/, /ru/): every page with hreflang alternates
+// names a set whose targets exist and name the same set back, with itself in
+// it under its own <html lang>, and its canonical is its own URL.
+const SITE_ORIGIN = "https://myfinance-mcp.com";
+const fileFor = (url: string) => {
+  const p = url.slice(SITE_ORIGIN.length).replace(/\/$/, "");
+  return p ? join("site", p, "index.html") : join("site", "index.html");
+};
+const alternates = (html: string) =>
+  [...html.matchAll(/<link rel="alternate" hreflang="([^"]+)" href="([^"]+)">/g)]
+    .map((m) => `${m[1]} ${m[2]}`)
+    .sort()
+    .join("\n");
+let langPages = 0;
+for (const path of pages) {
+  const html = readFileSync(path, "utf8");
+  const set = alternates(html);
+  if (!set) continue;
+  langPages++;
+  const lang = html.match(/<html lang="([^"]+)">/)?.[1];
+  const canonical = html.match(/<link rel="canonical" href="([^"]+)">/)?.[1];
+  if (!canonical || fileFor(canonical) !== path) problems.push(`${path}: canonical ${canonical} is not this page`);
+  if (!set.split("\n").includes(`${lang} ${canonical}`)) problems.push(`${path}: hreflang set lacks itself as "${lang}"`);
+  if (!set.includes("x-default ")) problems.push(`${path}: hreflang set has no x-default`);
+  for (const target of new Set(set.split("\n").map((line) => fileFor(line.split(" ")[1]!)))) {
+    let other: string;
+    try {
+      other = readFileSync(target, "utf8");
+    } catch {
+      problems.push(`${path}: hreflang target ${target} does not exist`);
+      continue;
+    }
+    if (alternates(other) !== set) problems.push(`${path}: hreflang set differs on ${target}`);
+  }
+}
+
+// 6. No em-dash anywhere on the site (house style).
+for (const { path, body } of texts) {
+  if (path.startsWith("site") && body.includes("—")) problems.push(`${path}: em-dash (U+2014)`);
+}
+
 if (problems.length) {
   console.error(`Site facts out of date (${problems.length}):\n  ${problems.join("\n  ")}`);
   process.exit(1);
 }
-console.log(`site facts ok: ${texts.length} texts, ${tools} tools, ${digits}-digit codes`);
+console.log(`site facts ok: ${texts.length} texts, ${tools} tools, ${digits}-digit codes, ${langPages} pages with reciprocal hreflang`);

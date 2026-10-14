@@ -7,6 +7,10 @@
 <title>Expense Tracker for ChatGPT - Set Up MyFinance MCP in 1 Minute</title>
 <meta name="description" content="Track expenses in ChatGPT with MyFinance MCP: Developer mode steps, which plans support custom MCP apps, sign-in, first prompts and fixes. Free.">
 <link rel="canonical" href="https://myfinance-mcp.com/install/chatgpt">
+<link rel="alternate" hreflang="en" href="https://myfinance-mcp.com/install/chatgpt">
+<link rel="alternate" hreflang="es" href="https://myfinance-mcp.com/es/install/chatgpt">
+<link rel="alternate" hreflang="ru" href="https://myfinance-mcp.com/ru/install/chatgpt">
+<link rel="alternate" hreflang="x-default" href="https://myfinance-mcp.com/install/chatgpt">
 <meta name="theme-color" content="#FAF8F3" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#181712" media="(prefers-color-scheme: dark)">
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
@@ -15,6 +19,9 @@
 <link rel="preload" href="/fonts/Switzer-Variable.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="/styles.css">
 <meta property="og:type" content="website">
+<meta property="og:locale" content="en_US">
+<meta property="og:locale:alternate" content="es_419">
+<meta property="og:locale:alternate" content="ru_RU">
 <meta property="og:url" content="https://myfinance-mcp.com/install/chatgpt">
 <meta property="og:title" content="Expense Tracker for ChatGPT - Set Up MyFinance MCP in 1 Minute">
 <meta property="og:description" content="Track expenses in ChatGPT with MyFinance MCP: Developer mode steps, which plans support custom MCP apps, sign-in, first prompts and fixes. Free.">
@@ -23,8 +30,8 @@
 <meta name="twitter:title" content="Expense Tracker for ChatGPT - Set Up MyFinance MCP in 1 Minute">
 <meta name="twitter:description" content="Track expenses in ChatGPT with MyFinance MCP: Developer mode steps, which plans support custom MCP apps, sign-in, first prompts and fixes. Free.">
 <script type="application/ld+json">{"@context": "https://schema.org", "@type": "BreadcrumbList", "itemListElement": [{"@type": "ListItem", "position": 1, "name": "Home", "item": "https://myfinance-mcp.com/"}, {"@type": "ListItem", "position": 2, "name": "Install", "item": "https://myfinance-mcp.com/install"}, {"@type": "ListItem", "position": 3, "name": "ChatGPT", "item": "https://myfinance-mcp.com/install/chatgpt"}]}</script>
-<script type="application/ld+json">{"@context": "https://schema.org", "@type": "HowTo", "name": "How to add MyFinance MCP to ChatGPT", "description": "Track expenses in ChatGPT with MyFinance MCP: Developer mode steps, which plans support custom MCP apps, sign-in, first prompts and fixes. Free.", "totalTime": "PT1M", "url": "https://myfinance-mcp.com/install/chatgpt#steps", "estimatedCost": {"@type": "MonetaryAmount", "currency": "USD", "value": "0"}, "step": [{"@type": "HowToStep", "position": 1, "name": "Step 1", "text": "Turn on Developer mode: Settings, then Apps, then Advanced settings"}, {"@type": "HowToStep", "position": 2, "name": "Step 2", "text": "Open Plugins in the sidebar, click +, then Add custom MCP server (on the older menu: Settings, then Apps, then Create)"}, {"@type": "HowToStep", "position": 3, "name": "Step 3", "text": "Name it MyFinance and paste https://myfinance-mcp.com/mcp as the server URL"}, {"@type": "HowToStep", "position": 4, "name": "Step 4", "text": "Choose OAuth as authentication and leave the client ID and secret empty"}, {"@type": "HowToStep", "position": 5, "name": "Step 5", "text": "Review the risk warning, select I understand and want to continue, create the app and sign in with Google or an email code"}, {"@type": "HowToStep", "position": 6, "name": "Step 6", "text": "Start a new chat, type @ and pick MyFinance"}]}</script>
-<script type="application/ld+json">{"@context": "https://schema.org", "@type": "FAQPage", "mainEntity": [{"@type": "Question", "name": "I don't see Developer mode or Add custom MCP server", "acceptedAnswer": {"@type": "Answer", "text": "Your plan or workspace does not allow custom MCP servers. On Business only admins and owners can use Developer mode; on Enterprise and Edu ask an admin to grant it. OpenAI's help center does not list Developer mode for Free, Go or Plus: if it is not there, use Codex or Claude instead."}}, {"@type": "Question", "name": "The app shows no tools", "acceptedAnswer": {"@type": "Answer", "text": "Open MyFinance under Plugins and select Refresh, or delete the app and add it again with the same URL. ChatGPT reads the tool list when the app is created."}}, {"@type": "Question", "name": "MyFinance can read my data but cannot log anything", "acceptedAnswer": {"@type": "Answer", "text": "On ChatGPT Pro, OpenAI gives custom MCP servers read-only access. Logging needs Business, Enterprise or Edu, or another client such as Codex, Claude or Cursor. On those plans, approve the action when ChatGPT asks for confirmation."}}, {"@type": "Question", "name": "Something broke after a MyFinance update", "acceptedAnswer": {"@type": "Answer", "text": "Open MyFinance under Plugins and select Refresh, or remove it and add it again. In a workspace an admin may have to refresh the published app's actions, because ChatGPT keeps the tool list it approved earlier."}}]}</script>
+<script type="application/ld+json">{"@context": "https://schema.org", "@type": "HowTo", "inLanguage": "en", "name": "How to add MyFinance MCP to ChatGPT", "description": "Track expenses in ChatGPT with MyFinance MCP: Developer mode steps, which plans support custom MCP apps, sign-in, first prompts and fixes. Free.", "totalTime": "PT1M", "url": "https://myfinance-mcp.com/install/chatgpt#steps", "estimatedCost": {"@type": "MonetaryAmount", "currency": "USD", "value": "0"}, "step": [{"@type": "HowToStep", "position": 1, "name": "Step 1", "text": "Turn on Developer mode: Settings, then Apps, then Advanced settings"}, {"@type": "HowToStep", "position": 2, "name": "Step 2", "text": "Open Plugins in the sidebar, click +, then Add custom MCP server (on the older menu: Settings, then Apps, then Create)"}, {"@type": "HowToStep", "position": 3, "name": "Step 3", "text": "Name it MyFinance and paste https://myfinance-mcp.com/mcp as the server URL"}, {"@type": "HowToStep", "position": 4, "name": "Step 4", "text": "Choose OAuth as authentication and leave the client ID and secret empty"}, {"@type": "HowToStep", "position": 5, "name": "Step 5", "text": "Review the risk warning, select I understand and want to continue, create the app and sign in with Google or an email code"}, {"@type": "HowToStep", "position": 6, "name": "Step 6", "text": "Start a new chat, type @ and pick MyFinance"}]}</script>
+<script type="application/ld+json">{"@context": "https://schema.org", "@type": "FAQPage", "inLanguage": "en", "mainEntity": [{"@type": "Question", "name": "I don't see Developer mode or Add custom MCP server", "acceptedAnswer": {"@type": "Answer", "text": "Your plan or workspace does not allow custom MCP servers. On Business only admins and owners can use Developer mode; on Enterprise and Edu ask an admin to grant it. OpenAI's help center does not list Developer mode for Free, Go or Plus: if it is not there, use Codex or Claude instead."}}, {"@type": "Question", "name": "The app shows no tools", "acceptedAnswer": {"@type": "Answer", "text": "Open MyFinance under Plugins and select Refresh, or delete the app and add it again with the same URL. ChatGPT reads the tool list when the app is created."}}, {"@type": "Question", "name": "MyFinance can read my data but cannot log anything", "acceptedAnswer": {"@type": "Answer", "text": "On ChatGPT Pro, OpenAI gives custom MCP servers read-only access. Logging needs Business, Enterprise or Edu, or another client such as Codex, Claude or Cursor. On those plans, approve the action when ChatGPT asks for confirmation."}}, {"@type": "Question", "name": "Something broke after a MyFinance update", "acceptedAnswer": {"@type": "Answer", "text": "Open MyFinance under Plugins and select Refresh, or remove it and add it again. In a workspace an admin may have to refresh the published app's actions, because ChatGPT keeps the tool list it approved earlier."}}]}</script>
 </head>
 <body>
 <header class="site">
@@ -51,6 +58,7 @@
     </nav>
     <a class="gh-link" href="https://github.com/alex-odoo/myfinance-mcp" target="_blank" rel="noopener">★ GitHub</a>
     <a class="hd-cta" href="/install">Connect</a>
+    <nav class="lang-sw" aria-label="Language"><a href="/install/chatgpt" hreflang="en" lang="en" title="English" aria-current="page">EN</a><a href="/es/install/chatgpt" hreflang="es" lang="es" title="Español">ES</a><a href="/ru/install/chatgpt" hreflang="ru" lang="ru" title="Русский">RU</a></nav>
   </div>
 </header>
 
@@ -236,6 +244,7 @@
 
 <footer class="site">
   <div class="wrap foot-inner">
+    <nav class="lang-sw" aria-label="Language"><a href="/install/chatgpt" hreflang="en" lang="en" title="English" aria-current="page">EN</a><a href="/es/install/chatgpt" hreflang="es" lang="es" title="Español">ES</a><a href="/ru/install/chatgpt" hreflang="ru" lang="ru" title="Русский">RU</a></nav>
     <a href="/">Home</a>
     <a href="/install">Install guides</a>
     <a href="/alternatives">Alternatives</a>

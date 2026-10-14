@@ -12,7 +12,7 @@ Already hosted and ready to use - just connect it to your MCP client:
 https://myfinance-mcp.com/mcp
 ```
 
-**On Claude:** Customize → Connectors → **+ Add** → Add custom connector → name it and paste the URL → Continue → Authentication: Sign in now, OAuth client: **Register automatically** → Add. Never choose "Use your own OAuth client" or fill a Client ID/Secret - that breaks sign-in. Works on every Claude plan (Free allows one custom connector).
+**On Claude:** Customize → Connectors → **+ Add** → Add custom connector → name it and paste the URL → Continue → Authentication: Sign in now, OAuth client: keep **Use Claude's published identity (Recommended)** (**Register automatically** works too) → Add. Never choose "Use your own OAuth client" or fill a Client ID/Secret - that breaks sign-in. Works on every Claude plan (Free allows one custom connector).
 
 **On ChatGPT (web):** turn on Developer mode (Settings → Apps → Advanced settings), then Plugins → **+** → Add custom MCP server (older menu: Settings → Apps → Create) → paste the URL → OAuth, client ID/secret empty → create and sign in → type `@` in a chat to use it. Per OpenAI's help center, custom MCP servers with write actions (needed for logging) are available on Business, Enterprise and Edu; Pro gets read-only access; Free, Go and Plus cannot add them, so use Codex there.
 
