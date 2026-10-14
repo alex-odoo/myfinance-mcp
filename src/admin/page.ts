@@ -126,7 +126,8 @@ function userRow(u: AdminUserRow, now: Date): string {
     : `<span class="empty">-</span>`;
   return `<tr${u.operator ? ` class="op"` : ""}>
   <td>${e(u.email)}${u.operator ? ` <span class="chip">operator</span>` : ""}
-    <span class="sub">${e(u.method)} · ${e(u.baseCurrency)} · ${e(u.timezone)}</span></td>
+    <span class="sub">${e(u.method)} · ${e(u.baseCurrency)} · ${e(u.timezone)}${u.digest === "weekly" || u.digest === "monthly" ? ` · ${e(u.digest)} email` : ""}</span>
+    ${u.signupClient ? `<span class="sub">via ${e(u.signupClient)}</span>` : ""}</td>
   <td title="${e(stamp(u.joined))}">${e(day(u.joined))}</td>
   <td title="${e(u.clientNames.join(", "))}">${clients}</td>
   <td>${ago(u.lastCallAt, now)}</td>

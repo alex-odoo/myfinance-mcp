@@ -20,6 +20,7 @@ export async function bootstrapUser(): Promise<void> {
       passwordHash: config.passwordHash,
       baseCurrency: "EUR",
       timezone: "Europe/Kyiv",
+      currencySetAt: new Date(), // configured on purpose: never adopted from a first entry
     },
   });
 }
@@ -39,7 +40,8 @@ export class GoogleAccountConflictError extends Error {
  * re-linked: a reassigned Workspace mailbox or a re-registered domain hands
  * the same address to another person.
  */
-export async function findOrCreateGoogleUser(email: string, sub: string): Promise<SessionUser> {
+/** `client` names the AI client of the sign-in, kept on a new account as its signup source. */
+export async function findOrCreateGoogleUser(email: string, sub: string, client?: string): Promise<SessionUser> {
   const bySub = await db.user.findUnique({ where: { googleSub: sub } });
   if (bySub) return { id: bySub.id, email: bySub.email };
 
@@ -62,9 +64,9 @@ export async function findOrCreateGoogleUser(email: string, sub: string): Promis
   }
 
   const created = await db.user.create({
-    data: { email: normalized, googleSub: sub, baseCurrency: "EUR", timezone: "UTC" },
+    data: { email: normalized, googleSub: sub, baseCurrency: "EUR", timezone: "UTC", signupClient: client?.slice(0, 120) },
   });
-  notifySignup(created.email, "google");
+  notifySignup(created.email, "google", client);
   return { id: created.id, email: created.email };
 }
 
@@ -90,7 +92,7 @@ export const otherSignIn = (u: { googleSub: string | null; passwordHash: string 
  * password is what protects that account, so the mailbox alone must not
  * open it.
  */
-export async function findOrCreateEmailUser(email: string): Promise<SessionUser> {
+export async function findOrCreateEmailUser(email: string, client?: string): Promise<SessionUser> {
   const normalized = email.trim().toLowerCase();
   const existing = await db.user.findUnique({ where: { email: normalized } });
   if (existing) {
@@ -100,9 +102,9 @@ export async function findOrCreateEmailUser(email: string): Promise<SessionUser>
   }
   try {
     const created = await db.user.create({
-      data: { email: normalized, baseCurrency: "EUR", timezone: "UTC" },
+      data: { email: normalized, baseCurrency: "EUR", timezone: "UTC", signupClient: client?.slice(0, 120) },
     });
-    notifySignup(created.email, "email");
+    notifySignup(created.email, "email", client);
     return { id: created.id, email: created.email };
   } catch (e) {
     // Two first sign-ins of the same address raced: the other one created it.

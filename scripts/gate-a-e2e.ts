@@ -102,7 +102,7 @@ const ZEN_TOKEN = "zen-e2e-token-0123456789";
 const EB_PORT = 8792;
 const MAIL_PORT = 8793;
 /** Every email the spawned server sent (Resend stub): sign-in codes and signup notices. */
-const sentMail: Array<{ to: string; subject: string; text: string }> = [];
+const sentMail: Array<{ to: string; subject: string; text: string; headers?: Record<string, string> }> = [];
 let mailStub: { stop: (closeActiveConnections?: boolean) => void } | null = null;
 /** Users this run created besides the gate-a test user; spawn mode deletes them on exit. */
 const createdUserEmails: string[] = [];
@@ -147,8 +147,8 @@ function startMailStub() {
     port: MAIL_PORT,
     async fetch(req) {
       if (new URL(req.url).pathname !== "/emails" || req.method !== "POST") return new Response("not found", { status: 404 });
-      const body = (await req.json()) as { to: string[]; subject: string; text: string };
-      sentMail.push({ to: body.to[0] ?? "", subject: body.subject, text: body.text });
+      const body = (await req.json()) as { to: string[]; subject: string; text: string; headers?: Record<string, string> };
+      sentMail.push({ to: body.to[0] ?? "", subject: body.subject, text: body.text, headers: body.headers });
       return Response.json({ id: `e2e-mail-${sentMail.length}` });
     },
   });
@@ -249,13 +249,19 @@ function startEbStub() {
         return new Response("unauthorized", { status: 401 });
       }
       if (url.pathname === "/aspsps") {
+        const country = url.searchParams.get("country") ?? "FI";
         return Response.json({
-          aspsps: [{ name: "Mock Bank", country: url.searchParams.get("country") ?? "FI", maximum_consent_validity: 7_776_000 }],
+          aspsps: [
+            { name: "Mock Bank", country, maximum_consent_validity: 7_776_000 },
+            // Approves the sign-in but shares no account (the restricted tier).
+            { name: "Empty Mock Bank", country, maximum_consent_validity: 7_776_000 },
+          ],
         });
       }
       if (url.pathname === "/auth" && req.method === "POST") {
-        const body = (await req.json()) as { state: string; redirect_url: string };
-        return Response.json({ url: `${body.redirect_url}?code=e2e-eb-code-${++ebCodesIssued}&state=${body.state}` });
+        const body = (await req.json()) as { state: string; redirect_url: string; aspsp?: { name?: string } };
+        const empty = body.aspsp?.name === "Empty Mock Bank" ? "empty-" : "";
+        return Response.json({ url: `${body.redirect_url}?code=e2e-eb-code-${empty}${++ebCodesIssued}&state=${body.state}` });
       }
       if (url.pathname === "/sessions" && req.method === "POST") {
         const body = (await req.json()) as { code: string };
@@ -263,6 +269,14 @@ function startEbStub() {
         if (!body.code.startsWith("e2e-eb-code-") || ebCodesUsed.has(body.code)) return new Response("bad code", { status: 400 });
         ebCodesUsed.add(body.code);
         await Bun.sleep(150); // a real session call takes a moment: room for a double click
+        if (body.code.startsWith("e2e-eb-code-empty-")) {
+          return Response.json({
+            session_id: "e2e-eb-session-empty",
+            aspsp: { name: "Empty Mock Bank", country: "FI" },
+            access: { valid_until: new Date(Date.now() + 90 * 86_400_000).toISOString() },
+            accounts: [],
+          });
+        }
         return Response.json({
           session_id: "e2e-eb-session",
           aspsp: { name: "Mock Bank", country: "FI" },
@@ -345,6 +359,14 @@ async function main(): Promise<void> {
     process.env.EB_PRIVATE_KEY_B64 = Buffer.from(ebKey).toString("base64");
     process.env.EB_API_ORIGIN = `http://localhost:${EB_PORT}`;
     process.env.ZENMONEY_API_BASE = `http://localhost:${ZEN_PORT}`;
+    // In-process checks (13c) build MCP servers here: links they mint must
+    // point at the spawned server, and their mail goes to the local stub.
+    process.env.BASE_URL = BASE;
+    process.env.RESEND_API_KEY = "e2e-resend-key";
+    process.env.RESEND_API_BASE = `http://localhost:${MAIL_PORT}`;
+    process.env.FROM_EMAIL = "noreply@test.local";
+    // The run's own account keeps direct bank sync (12eb); new accounts do not.
+    process.env.BANK_SYNC_EMAILS = EMAIL;
     // Idempotency: a previously crashed run may have left the test user behind
     if (!EMAIL.endsWith("@test.local")) throw new Error(`refusing to wipe non-test user ${EMAIL}`);
     const { db } = await import("../src/db");
@@ -389,6 +411,8 @@ async function main(): Promise<void> {
         NOTIFY_EMAIL: "ops@test.local",
         TELEGRAM_BOT_TOKEN: "",
         TELEGRAM_CHAT_ID: "",
+        // The run sends summaries itself (runDigests with a fixed clock).
+        DIGEST_INTERVAL_MS: "0",
       },
       stdout: "pipe",
       stderr: "pipe",
@@ -2190,6 +2214,250 @@ async function main(): Promise<void> {
       JSON.stringify({ before: synced.updatedAt, usd: syncedUsd.updatedAt, back: syncedBack.updatedAt })
     );
     void handLogged;
+
+    // 13c. Activation and retention (0.16.0), on fresh accounts driven through
+    // an in-process MCP server (no OAuth needed): first currency becomes the
+    // base, learned categories, import summary, week/compare/currency views,
+    // bank sync only where it works, email summaries.
+    {
+      const { buildMcpServer } = await import("../src/mcp");
+      const { Client } = await import("@modelcontextprotocol/sdk/client/index.js");
+      const { InMemoryTransport } = await import("@modelcontextprotocol/sdk/inMemory.js");
+      const { db: cdb } = await import("../src/db");
+      const { bankSyncOffered } = await import("../src/bankAccess");
+      const { runDigests } = await import("../src/digest");
+      const fresh = async (data: Record<string, unknown> = {}) => {
+        const email = `fresh-${randomBytes(4).toString("hex")}@test.local`;
+        createdUserEmails.push(email);
+        return cdb.user.create({ data: { email, ...data } });
+      };
+      const inProcess = async (uid: string, bankSync = false) => {
+        const [clientSide, serverSide] = InMemoryTransport.createLinkedPair();
+        const server = buildMcpServer(uid, { bankSync });
+        await server.connect(serverSide);
+        const client = new Client({ name: "e2e-in-process", version: "1.0.0" });
+        await client.connect(clientSide);
+        const tool = async (name: string, args: Record<string, unknown> = {}) => {
+          const r = await client.callTool({ name, arguments: args });
+          const textOut = (r.content as Array<{ text?: string }>)[0]?.text ?? "";
+          let json: any;
+          try {
+            json = JSON.parse(textOut);
+          } catch {
+            json = undefined;
+          }
+          return { isError: r.isError === true, text: textOut, json };
+        };
+        const names = async () => (await client.listTools()).tools.map((t) => t.name);
+        return { tool, names, close: async () => { await client.close(); await server.close(); } };
+      };
+
+      // First entry's currency becomes the base of a new account
+      const ua = await fresh();
+      const a = await inProcess(ua.id);
+      const first = await a.tool("log_expense", { amount: 12500, currency: "ARS", category: "groceries", merchant: "Coto" });
+      const uaAfter = await cdb.user.findUniqueOrThrow({ where: { id: ua.id } });
+      ok(
+        "first entry in ARS makes ARS the base, and says so",
+        !first.isError && uaAfter.baseCurrency === "ARS" && !!uaAfter.currencySetAt && first.json.amount_base === 12500 &&
+          first.json.base_currency === "ARS" && /Base currency set to ARS/.test(first.json.setup ?? ""),
+        first.text
+      );
+      ok("a UTC account is asked for its timezone on writes", /Timezone is UTC/.test(first.json.setup ?? ""), first.text);
+      const second = await a.tool("log_expense", { amount: 10, currency: "USD", category: "transport", merchant: "Uber" });
+      ok(
+        "a second entry in another currency keeps the base",
+        (await cdb.user.findUniqueOrThrow({ where: { id: ua.id } })).baseCurrency === "ARS" && !/Base currency set/.test(second.json.setup ?? ""),
+        second.text
+      );
+      const chose = await fresh({ currencySetAt: new Date(), timezone: "Europe/Madrid" });
+      const b = await inProcess(chose.id);
+      const bLog = await b.tool("log_expense", { amount: 50, currency: "USD", category: "groceries" });
+      ok(
+        "a chosen base is never replaced by an entry's currency; no setup note once settled",
+        (await cdb.user.findUniqueOrThrow({ where: { id: chose.id } })).baseCurrency === "EUR" && bLog.json.setup === undefined,
+        bLog.text
+      );
+
+      // Learned categories reach manual entries and imports
+      await a.tool("update_transaction", { id: second.json.id, category: "transport" });
+      const relog = await a.tool("log_expense", { amount: 8, currency: "USD", category: "other", merchant: "uber" });
+      ok("a known merchant keeps the user's category on log_expense", relog.json.category === "transport", relog.text);
+      const today = new Date().toISOString().slice(0, 10);
+      const imp = await a.tool("import_transactions", {
+        transactions: [
+          { date: today, amount: -3000, currency: "ARS", merchant: "UBER ", external_id: "e2e-13c-1" },
+          { date: today, amount: -45000, currency: "ARS", category: "restaurants", merchant: "Don Julio", external_id: "e2e-13c-2" },
+        ],
+      });
+      const uberRow = await cdb.transaction.findFirst({ where: { userId: ua.id, externalId: "e2e-13c-1" } });
+      ok("an imported row of a known merchant takes the learned category", uberRow?.categoryKey === "transport", imp.text);
+      ok(
+        "an import says where the money went and offers one next step",
+        imp.json.where_it_went?.top_categories?.[0]?.category === "restaurants" && /email_digest=monthly/.test(imp.json.next ?? ""),
+        imp.text
+      );
+      const adoptByImport = await fresh();
+      const c = await inProcess(adoptByImport.id);
+      const cImp = await c.tool("import_transactions", {
+        transactions: [
+          { date: today, amount: -250, currency: "THB", category: "restaurants", merchant: "Som Tam" },
+          { date: today, amount: -90, currency: "THB", category: "transport", merchant: "BTS" },
+        ],
+      });
+      ok(
+        "a first statement in one currency makes it the base",
+        (await cdb.user.findUniqueOrThrow({ where: { id: adoptByImport.id } })).baseCurrency === "THB" && /Base currency set to THB/.test(cImp.json.setup ?? ""),
+        cImp.text
+      );
+
+      // Week view, comparison with the period before, totals in another currency
+      const week = await a.tool("get_summary", { group_by: "week", type: "expense" });
+      const monday = (() => {
+        const d = new Date(`${today}T00:00:00.000Z`);
+        return new Date(d.getTime() - ((d.getUTCDay() + 6) % 7) * 86_400_000).toISOString().slice(0, 10);
+      })();
+      ok("group_by=week groups by the Monday of each week", week.json.groups?.some((g: any) => g.key === monday), week.text);
+      const cmp = await a.tool("get_summary", { compare: "previous" });
+      ok(
+        "compare=previous returns the period before and each group's change",
+        cmp.json.previous && typeof cmp.json.previous.total_expense === "number" && "previous_total" in (cmp.json.groups?.[0] ?? {}),
+        cmp.text
+      );
+      const inUsd = await a.tool("get_summary", { currency: "USD" });
+      const inArs = await a.tool("get_summary", {});
+      ok(
+        "currency=USD reports in USD at each record's rate",
+        inUsd.json.report_currency === "USD" && inUsd.json.total_expense > 0 && inUsd.json.total_expense < inArs.json.total_expense / 100,
+        inUsd.text
+      );
+
+      // Direct bank sync only where it works
+      ok("a new account is not offered direct bank sync", !(await bankSyncOffered(ua.id)));
+      ok("the allowlisted account is", await bankSyncOffered(testUserId));
+      const plainNames = await a.names();
+      ok(
+        "without bank sync the tool list has no connect_bank/sync_bank, ZenMoney stays",
+        !plainNames.includes("connect_bank") && !plainNames.includes("sync_bank") && plainNames.includes("connect_zenmoney"),
+        JSON.stringify(plainNames)
+      );
+      const ub = await fresh();
+      const bank = await inProcess(ub.id, true);
+      const none = await bank.tool("connect_bank", { action: "list_banks", country: "FI", search: "zzz-no-such-bank" });
+      ok(
+        "a bank search with no match points to the statement import, never to start",
+        none.json?.total === 0 && /import_transactions/.test(none.json?.instead ?? "") && none.json?.next === undefined,
+        none.text
+      );
+      const notFound = await bank.tool("connect_bank", { action: "start", country: "FI", bank_name: "No Such Bank" });
+      ok("start for an unlisted bank offers the statement import", notFound.isError && /import_transactions/.test(notFound.text), notFound.text);
+      const empty = await bank.tool("connect_bank", { action: "start", country: "FI", bank_name: "Empty Mock Bank" });
+      const emptyPage = await fetch(empty.json.authorize_url);
+      const emptyCookie = emptyPage.headers.getSetCookie().find((x) => x.startsWith("mf_bank="))?.split(";")[0] ?? "";
+      const emptyConfirm = await fetch(`${BASE}/connect/enablebanking/confirm`, {
+        method: "POST",
+        headers: { "content-type": "application/x-www-form-urlencoded", cookie: emptyCookie },
+        body: new URLSearchParams({ state: new URL(empty.json.authorize_url).searchParams.get("state") ?? "", decision: "connect" }),
+      });
+      const emptyHtml = await emptyConfirm.text();
+      const emptyRow = await cdb.bankConnection.findFirst({ where: { userId: ub.id, provider: "enablebanking" } });
+      ok(
+        "a bank that shares no account is reported as such, not as connected",
+        emptyHtml.includes("No accounts were shared") && !emptyHtml.includes("Bank connected") && emptyRow?.status === "error",
+        emptyHtml.slice(0, 300)
+      );
+      let limited = "";
+      for (let i = 0; i < 21 && !limited; i++) {
+        const r = await bank.tool("connect_bank", { action: "list_banks", country: "FI" });
+        if (r.isError) limited = r.text;
+      }
+      ok("bank searches are limited per hour, with the statement path offered", /Too many bank searches/.test(limited) && /import_transactions/.test(limited), limited);
+
+      // Telemetry: bank calls record their action and country; one client_init a day per client
+      await mcpCall(tokens.access_token, {
+        jsonrpc: "2.0",
+        id: 901,
+        method: "initialize",
+        params: { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "gate-a-e2e", version: "1.0.0" } },
+      });
+      await Bun.sleep(200);
+      const inits = await cdb.event.count({
+        where: { type: "client_init", userId: testUserId, meta: { path: ["client"], equals: "gate-a-e2e" } },
+      });
+      ok("client_init is recorded once a day per client", inits === 1, `found ${inits}`);
+      const bankEvent = await cdb.event.findFirst({
+        where: { type: "tool_call", userId: testUserId, meta: { path: ["tool"], equals: "connect_bank" } },
+        orderBy: { createdAt: "asc" },
+      });
+      const bankMeta = (bankEvent?.meta ?? {}) as Record<string, unknown>;
+      ok("connect_bank calls record action and country", bankMeta.a_action === "list_banks" && bankMeta.a_country === "FI", JSON.stringify(bankMeta));
+
+      // Email summaries: opt-in, a confirmation, then one per period from 08:00 local
+      const tz = "America/Argentina/Buenos_Aires";
+      const ud = await fresh({ timezone: tz, baseCurrency: "ARS", currencySetAt: new Date() });
+      const d = await inProcess(ud.id);
+      ok("email_digest starts as not_chosen", (await d.tool("get_settings")).json.email_digest === "not_chosen");
+      const localToday = new Intl.DateTimeFormat("en-CA", { timeZone: tz }).format(new Date());
+      const [ly, lm] = localToday.split("-").map(Number) as [number, number];
+      const prevMonthDay = new Date(Date.UTC(ly, lm - 2, 10)).toISOString().slice(0, 10);
+      await d.tool("log_expense", { amount: 40000, category: "groceries", merchant: "Coto", date: prevMonthDay });
+      await d.tool("log_expense", { amount: 52000, category: "groceries", merchant: "Coto" });
+      await d.tool("log_expense", { amount: 18000, category: "entertainment", merchant: "Cine" });
+      await d.tool("set_budget", { amount: 15000, category: "entertainment" });
+      const mailsBefore = sentMail.length;
+      const on = await d.tool("update_settings", { email_digest: "monthly" });
+      const welcome = sentMail.slice(mailsBefore).find((m) => m.to === ud.email);
+      ok(
+        "turning the summary on sends a confirmation with the month so far and a one-click unsubscribe",
+        on.json.email_digest === "monthly" && /sent to/.test(on.json.confirmation_email ?? "") && !!welcome &&
+          /so far/.test(welcome.subject) && welcome.text.includes("Groceries") && welcome.text.includes("ARS") &&
+          welcome.headers?.["List-Unsubscribe-Post"] === "List-Unsubscribe=One-Click" &&
+          (welcome.headers?.["List-Unsubscribe"] ?? "").includes(`${BASE}/digest/unsubscribe?u=${ud.id}`),
+        JSON.stringify({ on: on.json, welcome })
+      );
+      // 1st of next month in Buenos Aires (UTC-3): 07:00 local is too early, 09:00 is due
+      const nextFirst = (hourUtc: number) => new Date(Date.UTC(lm === 12 ? ly + 1 : ly, lm === 12 ? 0 : lm, 1, hourUtc));
+      const early = await runDigests(nextFirst(10), ud.id);
+      ok("no summary before 08:00 local on the 1st", early.sent === 0 && early.due === 0, JSON.stringify(early));
+      const mailsBeforeMonthly = sentMail.length;
+      const due = await runDigests(nextFirst(12), ud.id);
+      const monthly = sentMail.slice(mailsBeforeMonthly).find((m) => m.to === ud.email);
+      ok(
+        "the monthly summary covers the month just ended, with budgets and the change vs the month before",
+        due.sent === 1 && !!monthly && /^Your .* with MyFinance: .* spent$/.test(monthly.subject) &&
+          monthly.text.includes("vs the period before") && monthly.text.includes("Entertainment: 18,000 ARS of 15,000 ARS, over by 3,000 ARS"),
+        JSON.stringify({ due, monthly })
+      );
+      const again = await runDigests(nextFirst(13), ud.id);
+      ok("a period is sent once", again.sent === 0 && again.due === 0, JSON.stringify(again));
+      const uw = await fresh({ currencySetAt: new Date() });
+      const w = await inProcess(uw.id);
+      await w.tool("update_settings", { email_digest: "weekly" });
+      const quiet = await runDigests(new Date(Date.now() + 8 * 86_400_000), uw.id);
+      ok("a week with no records sends nothing", quiet.sent === 0 && quiet.skipped === 1, JSON.stringify(quiet));
+
+      // Unsubscribe: GET only asks, POST (the button or the mail client's one-click) stops
+      const unsubUrl = (welcome?.headers?.["List-Unsubscribe"] ?? "").replace(/^<|>$/g, "");
+      const ask = await fetch(unsubUrl);
+      ok(
+        "the unsubscribe link asks first and changes nothing on GET",
+        ask.status === 200 && (await ask.text()).includes("Stop the emails") &&
+          (await cdb.user.findUniqueOrThrow({ where: { id: ud.id } })).digest === "monthly"
+      );
+      const forged = await fetch(unsubUrl.replace(/t=[^&]+/, "t=forged"), { method: "POST", body: "List-Unsubscribe=One-Click" });
+      ok("a forged unsubscribe token -> 400", forged.status === 400);
+      const oneClick = await fetch(unsubUrl, {
+        method: "POST",
+        headers: { "content-type": "application/x-www-form-urlencoded" },
+        body: "List-Unsubscribe=One-Click",
+      });
+      ok(
+        "one-click POST unsubscribes",
+        oneClick.status === 200 && (await cdb.user.findUniqueOrThrow({ where: { id: ud.id } })).digest === "off"
+      );
+
+      for (const s of [a, b, c, bank, d, w]) await s.close();
+    }
   } else {
     const settings = await mcpCall(tokens.access_token, {
       jsonrpc: "2.0",

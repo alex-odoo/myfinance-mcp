@@ -11,7 +11,9 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { buildMcpServer, SERVER_NAME, SERVER_VERSION } from "../src/mcp";
 
 const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
-const server = buildMcpServer("00000000-0000-0000-0000-000000000000");
+// Every tool the server can offer, bank sync included (it is listed only for
+// some accounts; see bankSyncOffered).
+const server = buildMcpServer("00000000-0000-0000-0000-000000000000", { bankSync: true });
 await server.connect(serverTransport);
 
 const client = new Client({ name: "server-card-gen", version: "1.0.0" });

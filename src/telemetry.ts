@@ -27,7 +27,12 @@ const SAFE_ARG_VALUES = new Map<string, (v: unknown) => boolean>([
   ["category", (v) => typeof v === "string" && CATEGORIES.has(v)],
   ["currency", isStr(/^[A-Za-z]{3}$/)],
   ["type", oneOf(["expense", "income", "transfer", ...ACCOUNT_TYPES])],
-  ["group_by", oneOf(["category", "merchant", "month"])],
+  ["group_by", oneOf(["category", "merchant", "month", "week"])],
+  // Tool modes (connect_bank, connect_zenmoney, ...): a short snake_case word.
+  ["action", isStr(/^[a-z_]{2,24}$/)],
+  ["country", isStr(/^[A-Za-z]{2}$/)],
+  ["compare", oneOf(["previous"])],
+  ["email_digest", oneOf(["off", "weekly", "monthly"])],
   ["period", isStr(/^\d{4}(-\d{2})?$/)],
   ["from", isDate],
   ["to", isDate],
@@ -77,6 +82,23 @@ interface SendCapable {
   send: (message: JSONRPCMessage, options?: { relatedRequestId?: string | number }) => Promise<void>;
 }
 
+// Clients re-initialize constantly (Cursor every few minutes: one user wrote
+// ~2,000 client_init rows against 160 tool calls in a month). One row per
+// user, client and UTC day keeps the signal.
+const initSeen = new Set<string>();
+let initDay = "";
+function firstInitToday(userId: string, client: string): boolean {
+  const today = new Date().toISOString().slice(0, 10);
+  if (today !== initDay || initSeen.size > 50_000) {
+    initSeen.clear();
+    initDay = today;
+  }
+  const key = `${userId}|${client}`;
+  if (initSeen.has(key)) return false;
+  initSeen.add(key);
+  return true;
+}
+
 export function instrumentTransport(transport: SendCapable, body: unknown, userId: string): void {
   const rpcs: RpcMessage[] = (Array.isArray(body) ? body : [body]).filter(
     (r): r is RpcMessage => !!r && typeof r === "object"
@@ -84,10 +106,10 @@ export function instrumentTransport(transport: SendCapable, body: unknown, userI
   const calls = new Map<number | string, { rpc: RpcMessage; started: number }>();
   for (const r of rpcs) {
     if (r.method === "initialize") {
-      logEvent("client_init", userId, {
-        client: r.params?.clientInfo?.name ?? "unknown",
-        version: r.params?.clientInfo?.version ?? "unknown",
-      });
+      const client = r.params?.clientInfo?.name ?? "unknown";
+      if (firstInitToday(userId, client)) {
+        logEvent("client_init", userId, { client, version: r.params?.clientInfo?.version ?? "unknown" });
+      }
     }
     if (r.method === "tools/call" && r.id != null) calls.set(r.id, { rpc: r, started: Date.now() });
   }
@@ -139,7 +161,16 @@ function recordResponse(
 // High-volume telemetry types get the 90d retention. Product milestones
 // (bank_imported, bulk_deleted, account_deleted) are kept forever: they are
 // low-volume and feed the public lifetime counters on the landing (/api/stats).
-const PRUNED_EVENT_TYPES = ["tool_call", "client_init", "logged", "summary_run", "oauth_error", "admin_signin"];
+const PRUNED_EVENT_TYPES = [
+  "tool_call",
+  "client_init",
+  "logged",
+  "summary_run",
+  "oauth_error",
+  "admin_signin",
+  "digest_sent",
+  "digest_failed",
+];
 
 export async function pruneOldEvents(): Promise<void> {
   await db.event

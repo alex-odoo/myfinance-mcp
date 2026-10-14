@@ -146,6 +146,13 @@ type RepeatContext =
 
 const REDEMPTION_POLL_MS = 250;
 
+/** "Claude @ claude.ai": the client's self-chosen name and where its code goes. */
+function signupClientLabel(client?: LoginClient): string | undefined {
+  if (!client) return undefined;
+  const where = destinationLabel(client);
+  return `${client.name ?? "unnamed client"}${where ? ` @ ${where}` : ""}`;
+}
+
 function newSecret(bytes = 32): string {
   return randomBytes(bytes).toString("base64url");
 }
@@ -555,7 +562,7 @@ export class FinanceOAuthProvider implements OAuthServerProvider {
           // tap meanwhile waits in line, and finishLogin consumes the request
           // with its code.
           try {
-            const user = await findOrCreateEmailUser(sentCode.email);
+            const user = await findOrCreateEmailUser(sentCode.email, signupClientLabel(pendingReq.client));
             await this.finishLogin(requestId, pendingReq, user.id, res, { method: "email", emailCodeHash: sentCode.hash });
           } catch (err) {
             if (err instanceof NoEmailSignInError) {
@@ -632,7 +639,7 @@ export class FinanceOAuthProvider implements OAuthServerProvider {
             return;
           }
           try {
-            const user = await this.googleUserFromCode(code);
+            const user = await this.googleUserFromCode(code, signupClientLabel(pendingReq.client));
             await this.finishLogin(requestId, pendingReq, user.id, res, { method: "google", googleState: state });
           } catch (err) {
             console.error("google sign-in failed:", err instanceof Error ? err.message : String(err));
@@ -656,9 +663,9 @@ export class FinanceOAuthProvider implements OAuthServerProvider {
   }
 
   /** Exchange the Google authorization code and provision/find the user. */
-  private async googleUserFromCode(code: string): Promise<SessionUser> {
+  private async googleUserFromCode(code: string, client?: string): Promise<SessionUser> {
     const { email, sub } = await googleIdentityFromCode(code);
-    return findOrCreateGoogleUser(email, sub);
+    return findOrCreateGoogleUser(email, sub, client);
   }
 
   /**

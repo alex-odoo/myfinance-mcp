@@ -1,7 +1,7 @@
 {
   "serverInfo": {
     "name": "myfinancemcp",
-    "version": "0.15.0"
+    "version": "0.16.0"
   },
   "authentication": {
     "required": true,
@@ -598,7 +598,7 @@
     {
       "name": "get_summary",
       "title": "Spending summary",
-      "description": "Totals for a period, computed server-side in the user's base currency. Breaks down expenses (default) or income: 'how much did I spend on X in July', 'what does my June income consist of'. Supports category drill-down (category=subscriptions + group_by=merchant) and exclusions (exclude_categories).",
+      "description": "Totals for a period, computed server-side in the user's base currency. Breaks down expenses (default) or income: 'how much did I spend on X in July', 'what does my June income consist of'. Supports category drill-down (category=subscriptions + group_by=merchant), exclusions (exclude_categories), week-by-week views (group_by=week), comparison with the period before (compare=previous: 'how does this week compare to last week') and totals in another currency (currency=USD).",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -628,9 +628,23 @@
             "enum": [
               "category",
               "merchant",
-              "month"
+              "month",
+              "week"
             ],
-            "description": "Default: category."
+            "description": "Default: category. week = Monday-to-Sunday weeks."
+          },
+          "compare": {
+            "type": "string",
+            "enum": [
+              "previous"
+            ],
+            "description": "previous: also return the period before (the previous month, year or same-length window; for a period still running, the same number of days of the one before) and each category's or merchant's change."
+          },
+          "currency": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 3,
+            "description": "Report in this currency instead of the base: every record is converted at its own date's rate (e.g. USD totals for peso spending)."
           },
           "category": {
             "type": "string",
@@ -1052,7 +1066,7 @@
     {
       "name": "get_settings",
       "title": "Get settings",
-      "description": "Signed-in account email, base currency and timezone.",
+      "description": "Signed-in account email, base currency, timezone and the email summary choice.",
       "inputSchema": {
         "type": "object",
         "properties": {},
@@ -1066,7 +1080,7 @@
     {
       "name": "update_settings",
       "title": "Update settings",
-      "description": "Change base currency (recomputes all historical stats at each transaction's original date rate) or timezone.",
+      "description": "Change base currency (recomputes all historical stats at each transaction's original date rate), timezone, or the email summary (email_digest).",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -1079,6 +1093,15 @@
           "timezone": {
             "type": "string",
             "description": "IANA timezone, e.g. Europe/Kyiv, Asia/Dubai."
+          },
+          "email_digest": {
+            "type": "string",
+            "enum": [
+              "off",
+              "weekly",
+              "monthly"
+            ],
+            "description": "Email summary to the sign-in address: weekly (Mondays), monthly (on the 1st) or off. Set weekly/monthly ONLY after the user explicitly said yes; a confirmation with this month so far goes out at once."
           }
         },
         "additionalProperties": false,
@@ -1216,7 +1239,7 @@
     {
       "name": "connect_bank",
       "title": "Connect a bank",
-      "description": "Link a real bank account via open banking (Enable Banking, EU/UK/EEA coverage) for read-only transaction sync. Flow: action=list_banks with the user's country (and optional search) to find the exact bank name -> action=start with bank_name + country -> give the user the returned authorize_url to open and approve at their bank -> after they confirm they are done, run sync_bank. action=status shows connection health, consent expiry and the synced accounts list. action=set_account_sync with account + enabled turns syncing of ONE account on or off, for example when the same bank is also connected via another source. action=disconnect revokes the session and removes the link; imported transactions stay. Only one bank connection at a time for now; connecting a different bank replaces the previous one after disconnect.",
+      "description": "Link a real bank account via open banking (Enable Banking, EU/UK/EEA coverage) for read-only transaction sync. If the user's country or bank is not listed, stop here and import a statement instead (import_transactions). Flow: action=list_banks with the user's country (and optional search) to find the exact bank name -> action=start with bank_name + country -> give the user the returned authorize_url to open and approve at their bank -> after they confirm they are done, run sync_bank. action=status shows connection health, consent expiry and the synced accounts list. action=set_account_sync with account + enabled turns syncing of ONE account on or off, for example when the same bank is also connected via another source. action=disconnect revokes the session and removes the link; imported transactions stay. Only one bank connection at a time for now; connecting a different bank replaces the previous one after disconnect.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -1262,7 +1285,7 @@
       "annotations": {
         "readOnlyHint": false,
         "destructiveHint": false,
-        "idempotentHint": true,
+        "idempotentHint": false,
         "openWorldHint": true
       }
     },

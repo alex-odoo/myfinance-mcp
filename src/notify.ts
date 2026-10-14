@@ -10,9 +10,9 @@ import { SERVER_VERSION } from "./version";
  * signups produced email but no Telegram alert and the old swallow-everything
  * code left zero evidence of why).
  */
-export function notifySignup(email: string, method: string): void {
-  void deliver("resend", () => sendResendEmail(email, method));
-  void deliver("telegram", () => sendTelegram(email));
+export function notifySignup(email: string, method: string, client?: string): void {
+  void deliver("resend", () => sendResendEmail(email, method, client));
+  void deliver("telegram", () => sendTelegram(email, client));
 }
 
 /** Run one channel: check the HTTP response, retry once, never throw. */
@@ -41,7 +41,7 @@ function redact(s: string): string {
 }
 
 /** Email alert via Resend (from the verified sender domain). */
-function sendResendEmail(email: string, method: string): Promise<Response> | null {
+function sendResendEmail(email: string, method: string, client?: string): Promise<Response> | null {
   if (!config.resendApiKey || !config.notifyEmail || !config.fromEmail) return null;
   return fetch(`${config.resendApiBase}/emails`, {
     method: "POST",
@@ -53,17 +53,18 @@ function sendResendEmail(email: string, method: string): Promise<Response> | nul
       from: `MyFinance MCP <${config.fromEmail}>`,
       to: [config.notifyEmail],
       subject: `[MyFinance MCP] New user - ${email}`,
-      text: `New user registered\n\nEmail: ${email}\nMethod: ${method}\nTime: ${new Date().toISOString()}\n`,
+      text: `New user registered\n\nEmail: ${email}\nMethod: ${method}\nClient: ${client ?? "unknown"}\nTime: ${new Date().toISOString()}\n`,
     }),
   });
 }
 
 /** Telegram alert (email + time + version) to the configured chat. */
-function sendTelegram(email: string): Promise<Response> | null {
+function sendTelegram(email: string, client?: string): Promise<Response> | null {
   if (!config.telegramBotToken || !config.telegramChatId) return null;
   const text =
     `<b>MyFinance MCP · New user</b>\n` +
     `Email: ${escapeHtml(email)}\n` +
+    `Client: ${escapeHtml(client ?? "unknown")}\n` +
     `Time: ${new Date().toISOString()}\n` +
     `Version: ${SERVER_VERSION}`;
   return fetch(`https://api.telegram.org/bot${config.telegramBotToken}/sendMessage`, {

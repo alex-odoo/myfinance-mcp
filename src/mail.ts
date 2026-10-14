@@ -10,13 +10,24 @@ export function mailConfigured(): boolean {
  * configured or the send failed; the caller decides what the user sees.
  * Status codes only in logs: the address and the body stay out (blind logs).
  */
-export async function sendMail(to: string, subject: string, text: string): Promise<boolean> {
+export async function sendMail(
+  to: string,
+  subject: string,
+  text: string,
+  headers?: Record<string, string>
+): Promise<boolean> {
   if (!mailConfigured()) return false;
   try {
     const res = await fetch(`${config.resendApiBase}/emails`, {
       method: "POST",
       headers: { authorization: `Bearer ${config.resendApiKey}`, "content-type": "application/json" },
-      body: JSON.stringify({ from: `MyFinance MCP <${config.fromEmail}>`, to: [to], subject, text }),
+      body: JSON.stringify({
+        from: `MyFinance MCP <${config.fromEmail}>`,
+        to: [to],
+        subject,
+        text,
+        ...(headers ? { headers } : {}),
+      }),
       signal: AbortSignal.timeout(10_000),
     });
     if (!res.ok) console.error(`[mail] resend HTTP ${res.status}`);

@@ -1,5 +1,5 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { registerFinanceTools } from "./tools";
+import { registerFinanceTools, type FinanceToolOptions } from "./tools";
 import { DASHBOARD_URI, DASHBOARD_MIME, DASHBOARD_HTML } from "./ui";
 import { config } from "./config";
 
@@ -14,9 +14,11 @@ import { SERVER_NAME, SERVER_VERSION } from "./version";
 const INSTRUCTIONS =
   "MyFinance MCP stores the user's money records and computes every total server-side: answer money questions with get_summary, get_trends, get_budget_progress and get_accounts, never by adding up rows yourself. " +
   "On first use call get_settings; if it reports default settings, ask the user which currency they think in and where they live, then call update_settings once with base_currency and timezone. " +
-  "Bank statements go to import_transactions as ONE call with every row; single purchases go to log_expense.";
+  "Bank statements go to import_transactions as ONE call with every row; single purchases go to log_expense. " +
+  "No bank connection is needed: for bank data from any bank, ask the user for a statement export (CSV, PDF or screenshots) and import it. " +
+  "When the user has a few records and get_settings shows email_digest not_chosen, you may offer a weekly or monthly email summary once; turn it on only after a clear yes.";
 
-export function buildMcpServer(userId: string): McpServer {
+export function buildMcpServer(userId: string, options: FinanceToolOptions): McpServer {
   const server = new McpServer(
     {
       name: SERVER_NAME,
@@ -31,7 +33,7 @@ export function buildMcpServer(userId: string): McpServer {
     },
     { instructions: INSTRUCTIONS }
   );
-  registerFinanceTools(server, userId);
+  registerFinanceTools(server, userId, options);
   server.registerResource(
     "dashboard",
     DASHBOARD_URI,

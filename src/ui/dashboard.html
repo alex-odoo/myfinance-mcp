@@ -119,7 +119,7 @@
   }
 
   function renderSummary(p) {
-    var cur = p.base_currency;
+    var cur = p.report_currency || p.base_currency;
     var scope = (p.grouped_type === "income" ? "income" : "spending") + " by " + esc(p.grouped_by || p.expense_by || "category");
     if (p.category) scope += " &middot; " + esc(p.category);
     else if (p.excluded_categories && p.excluded_categories.length) scope += " &middot; excl. " + esc(p.excluded_categories.join(", "));

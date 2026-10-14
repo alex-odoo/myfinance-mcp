@@ -33,6 +33,15 @@ model User {
   baseCurrency String   @default("EUR") @db.Char(3)
   timezone     String   @default("UTC")
   createdAt    DateTime @default(now())
+  // When the base currency was chosen: by update_settings, or by the first
+  // entry of a new account. Null = still the EUR default.
+  currencySetAt DateTime?
+  // Email summary: null = never chosen, "off", "weekly" or "monthly".
+  digest        String?
+  // The last period a summary went out for ("2026-09" or "2026-W41"), claimed before sending.
+  digestSentFor String?
+  // The AI client this account signed up from, e.g. "Claude @ claude.ai".
+  signupClient  String?
 
   accounts           Account[]
   transactions       Transaction[]

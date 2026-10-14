@@ -5,6 +5,7 @@ import { assertConvertible, convert, round2, UnknownCurrencyError } from "./fx";
 import { EXPENSE_CATEGORIES, INCOME_CATEGORIES } from "./categories";
 import { resolveAccount, computeBalance, connectionAccounts, setAccountSync, ACCOUNT_TYPES } from "./accounts";
 import { SERVER_VERSION } from "./version";
+import { DIGEST_CHOICES, digestAvailable, sendWelcome, startingPoint } from "./digest";
 import { DASHBOARD_TOOL_META } from "./ui";
 import { asBaseSwitch, asBaseWriter } from "./baseGate";
 import { detectZenHost } from "./zenmoney/client";
@@ -12,12 +13,114 @@ import { encryptToken, decryptToken } from "./zenmoney/crypto";
 import { syncZenMoney } from "./zenmoney/sync";
 import { ebConfigured, ebAspsps, ebStartAuth, ebDeleteSession } from "./enablebanking/client";
 import { syncEnableBanking } from "./enablebanking/sync";
-import { rememberMerchantCategory } from "./merchantMemory";
+import { merchantCategoryMap, normMerchant, rememberMerchantCategory } from "./merchantMemory";
 import type { EbConnectionMeta } from "./enablebanking/sync";
 import type { TxType } from "./generated/prisma/enums";
 import { Prisma } from "./generated/prisma/client";
 
 const ALL_CATEGORIES = new Set<string>([...EXPENSE_CATEGORIES, ...INCOME_CATEGORIES]);
+
+/** What a model offers when direct bank sync cannot help: it works for every bank. */
+const STATEMENT_PATH =
+  "Any bank works without a connection: ask the user to export a statement (CSV or PDF from the bank's app or website, or screenshots of the transaction list), send it in this chat, and import every row with ONE import_transactions call. ZenMoney users can sync with connect_zenmoney.";
+
+// Bank directory searches per user per hour: one script searched 146 times in a day.
+const BANK_SEARCHES_PER_HOUR = 20;
+const bankSearches = new Map<string, number[]>();
+function bankSearchAllowed(userId: string): boolean {
+  const now = Date.now();
+  const recent = (bankSearches.get(userId) ?? []).filter((t) => now - t < 3_600_000);
+  if (recent.length >= BANK_SEARCHES_PER_HOUR) {
+    bankSearches.set(userId, recent);
+    return false;
+  }
+  recent.push(now);
+  bankSearches.set(userId, recent);
+  if (bankSearches.size > 10_000) bankSearches.clear();
+  return true;
+}
+
+/**
+ * The currency an entry is in, before it is written: its own, else the named
+ * account's. Undefined when the entry would take the base currency.
+ */
+async function entryCurrency(userId: string, currencies: Array<string | undefined>, account?: string): Promise<string | undefined> {
+  const given = new Set(currencies.filter((c): c is string => !!c).map((c) => c.toUpperCase()));
+  if (given.size > 1) return undefined;
+  if (given.size === 1 && currencies.every(Boolean)) return [...given][0];
+  if (!account || account.toLowerCase() === "manual") return given.size === 1 ? [...given][0] : undefined;
+  const acc = await db.account.findFirst({
+    where: { userId, name: { equals: account, mode: "insensitive" } },
+    select: { currency: true },
+  });
+  const all = new Set([...given, ...(acc?.currency ? [acc.currency] : [])]);
+  return all.size === 1 ? [...all][0] : undefined;
+}
+
+/**
+ * A new account starts on EUR/UTC. While no base currency was chosen
+ * (currencySetAt null) and nothing is stored yet, the first entry's currency
+ * becomes the base: there is no history to reprice, and new users logged
+ * pesos, lei and baht that were totalled in euros. Runs as a base switch, so
+ * no writer prices against the old base meanwhile. Returns the adopted code.
+ */
+async function adoptFirstCurrency(userId: string, currency: string | undefined): Promise<string | null> {
+  if (!currency) return null;
+  const user = await getUser(userId);
+  if (user.currencySetAt || user.baseCurrency === currency) return null;
+  try {
+    await assertConvertible(currency);
+  } catch {
+    return null; // the write itself reports the currency
+  }
+  return asBaseSwitch(userId, async () => {
+    const { count } = await db.user.updateMany({
+      where: { id: userId, currencySetAt: null, transactions: { none: {} }, budgets: { none: {} } },
+      data: { baseCurrency: currency, currencySetAt: new Date() },
+    });
+    return count === 1 ? currency : null;
+  });
+}
+
+/** What a write tells the model about unsettled settings, until they are settled. */
+async function setupNote(userId: string, adopted: string | null): Promise<{ setup?: string }> {
+  const user = await getUser(userId);
+  const notes = [
+    ...(adopted
+      ? [`Base currency set to ${adopted} from this first entry, so totals read in ${adopted}. If the user thinks in another currency, call update_settings.`]
+      : !user.currencySetAt
+        ? [`Base currency is still the default ${user.baseCurrency}. Ask the user which currency they think in and call update_settings.`]
+        : []),
+    ...(user.timezone === "UTC"
+      ? ["Timezone is UTC, so 'today' and month boundaries follow UTC. Unless the user lives on UTC, ask where they live and call update_settings with timezone."]
+      : []),
+  ];
+  return notes.length ? { setup: notes.join(" ") } : {};
+}
+
+/**
+ * After an import: the biggest categories of what it wrote, and one next
+ * step. A user who imported a statement and saw only row counts never came
+ * back.
+ */
+function whereItWent(user: { baseCurrency: string; digest: string | null }, spent: Map<string, number>) {
+  const total = [...spent.values()].reduce((a, b) => a + b, 0);
+  const top = [...spent.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 5)
+    .map(([category, sum]) => ({ category, total: round2(sum), share_pct: total > 0 ? round2((sum / total) * 100) : 0 }));
+  return {
+    where_it_went: { base_currency: user.baseCurrency, imported_spending: round2(total), top_categories: top },
+    next:
+      "Tell the user where the money went (top categories), then offer ONE next step: a monthly budget for the biggest category (set_budget)" +
+      (user.digest === null ? ", or a monthly summary by email (update_settings email_digest=monthly)." : "."),
+  };
+}
+
+export interface FinanceToolOptions {
+  /** Offer connect_bank and sync_bank (see bankSyncOffered). */
+  bankSync: boolean;
+}
 
 /** One export call stays a readable tool result (~100 bytes per row). */
 const EXPORT_PAGE_ROWS = 2000;
@@ -162,6 +265,12 @@ async function logTransaction(userId: string, type: TxType, input: LogInput) {
   const occurredAt = parseDate(dateStr);
 
   const { converted, rate } = await convert(input.amount, currency, user.baseCurrency, occurredAt);
+  // A merchant the user has categorised before keeps that category when the
+  // entry comes without a real one.
+  let category = input.category;
+  if ((!category || category === "other") && input.merchant) {
+    category = (await merchantCategoryMap(userId, [input.merchant])).get(normMerchant(input.merchant)) ?? category;
+  }
 
   const tx = await db.transaction.create({
     data: {
@@ -172,7 +281,7 @@ async function logTransaction(userId: string, type: TxType, input: LogInput) {
       currency,
       amountBase: converted,
       fxRate: rate,
-      categoryKey: input.category ?? "other",
+      categoryKey: category ?? "other",
       merchant: input.merchant,
       note: input.note,
       items: input.items ? (input.items as object) : undefined,
@@ -228,7 +337,7 @@ function periodRange(timezone: string, period?: string, from?: string, to?: stri
   throw new Error(`Invalid period "${p}". Use YYYY or YYYY-MM (month 01-12), or from/to dates.`);
 }
 
-export function registerFinanceTools(server: McpServer, userId: string): void {
+export function registerFinanceTools(server: McpServer, userId: string, options: FinanceToolOptions): void {
   // Tools that price amounts in the base currency pass the base-switch gate:
   // a switch waits for them and holds new ones until it has committed.
   const pricing =
@@ -272,7 +381,11 @@ export function registerFinanceTools(server: McpServer, userId: string): void {
           .describe("Override the account's default scope, e.g. a personal dinner paid with the business card."),
       },
     },
-    pricing(async (input) => text(await logTransaction(userId, "expense", input as LogInput)))
+    async (input) => {
+      const adopted = await adoptFirstCurrency(userId, await entryCurrency(userId, [input.currency], input.account));
+      const logged = await pricing(() => logTransaction(userId, "expense", input as LogInput))();
+      return text({ ...logged, ...(await setupNote(userId, adopted)) });
+    }
   );
 
   server.registerTool(
@@ -294,7 +407,11 @@ export function registerFinanceTools(server: McpServer, userId: string): void {
           .describe("Override the account's default scope, e.g. a client payment landing on a personal card."),
       },
     },
-    pricing(async (input) => text(await logTransaction(userId, "income", input as LogInput)))
+    async (input) => {
+      const adopted = await adoptFirstCurrency(userId, await entryCurrency(userId, [input.currency], input.account));
+      const logged = await pricing(() => logTransaction(userId, "income", input as LogInput))();
+      return text({ ...logged, ...(await setupNote(userId, adopted)) });
+    }
   );
 
   server.registerTool(
@@ -861,347 +978,364 @@ export function registerFinanceTools(server: McpServer, userId: string): void {
           .max(500),
       },
     },
-    pricing(async ({ account, statement_total, dry_run, transactions }) => {
-      const user = await getUser(userId);
-      const acc = await resolveAccount(userId, account);
-      const dryRun = dry_run === true;
-      let imported = 0;
-      let merged = 0;
-      let coerced = 0;
-      let rowsSum = 0;
-      let noIdSkips = 0;
-      let idConflicts = 0;
-      const skipped: Array<{ row: number; reason: string; existing_id?: string; currency?: string }> = [];
-      const budgetAdded = new Map<string, number>();
+    async (args) => {
+      const adopted =
+        args.dry_run === true
+          ? null
+          : await adoptFirstCurrency(userId, await entryCurrency(userId, args.transactions.map((t) => t.currency), args.account));
+      return pricing(async ({ account, statement_total, dry_run, transactions }: typeof args) => {
+        const user = await getUser(userId);
+        const acc = await resolveAccount(userId, account);
+        const dryRun = dry_run === true;
+        // The user's own category per merchant (learned from their edits), for
+        // rows that arrive without a usable category.
+        const learned = await merchantCategoryMap(userId, transactions.map((t) => t.merchant));
+        // Base-currency spending of the rows this call wrote, for "where it went".
+        const spentByCategory = new Map<string, number>();
+        let imported = 0;
+        let merged = 0;
+        let coerced = 0;
+        let rowsSum = 0;
+        let noIdSkips = 0;
+        let idConflicts = 0;
+        const skipped: Array<{ row: number; reason: string; existing_id?: string; currency?: string }> = [];
+        const budgetAdded = new Map<string, number>();
 
-      const normalize = (s?: string | null) => (s ?? "").toLowerCase().replace(/[^\p{L}\p{N}]/gu, "");
-      const SYN_PREFIX = "fmcp:";
-      const isRealId = (id?: string | null): id is string => !!id && !id.startsWith(SYN_PREFIX);
-      // Filler references ('', 'N/A', '-') are no reference: the first stored
-      // row would otherwise swallow every later row carrying the same filler.
-      const realRef = (id?: string) => {
-        const t = id?.trim();
-        return t && !/^(n\/?a|none|null|-+|0+)$/i.test(t) ? t : undefined;
-      };
-      const DAY_MS = 86_400_000;
+        const normalize = (s?: string | null) => (s ?? "").toLowerCase().replace(/[^\p{L}\p{N}]/gu, "");
+        const SYN_PREFIX = "fmcp:";
+        const isRealId = (id?: string | null): id is string => !!id && !id.startsWith(SYN_PREFIX);
+        // Filler references ('', 'N/A', '-') are no reference: the first stored
+        // row would otherwise swallow every later row carrying the same filler.
+        const realRef = (id?: string) => {
+          const t = id?.trim();
+          return t && !/^(n\/?a|none|null|-+|0+)$/i.test(t) ? t : undefined;
+        };
+        const DAY_MS = 86_400_000;
 
-      // The statement itself is the source of truth: rows inserted by THIS call are
-      // never dedup candidates (two identical rides on one day = two real rides),
-      // and each pre-existing row can absorb at most one statement row.
-      const createdIds = new Set<string>();
-      const usedCandidates = new Set<string>();
-      // Rows without a bank reference get a deterministic synthetic key
-      // (amount + currency + date + occurrence counter, YNAB pattern), so re-importing
-      // the same statement stays idempotent even when merchant wording drifts
-      // between extractions. Counted per row SENT, not per row imported.
-      const occurrence = new Map<string, number>();
-      // A merged hand-logged row keeps an entity the user set explicitly (one
-      // that differs from its own account's default), e.g. a personal dinner
-      // paid with the business card.
-      const accountEntity = new Map(
-        (await db.account.findMany({ where: { userId }, select: { id: true, entity: true } })).map((a) => [a.id, a.entity])
-      );
-      // A currency no FX source publishes is skipped per row and reported
-      // instead of aborting the statement half-way with the earlier rows
-      // written. An outage is not "unsupported": those rows fail per row as
-      // fx_unavailable and the hint says to re-run later.
-      const unsupported = new Set<string>();
-      for (const c of new Set(transactions.map((r) => (r.currency ?? acc.currency ?? user.baseCurrency).toUpperCase()))) {
-        if (c === user.baseCurrency) continue;
-        await assertConvertible(c).catch((e: unknown) => {
-          if (e instanceof UnknownCurrencyError) unsupported.add(c);
-          else throw e;
-        });
-      }
-
-      // Dedup candidates for the whole statement in two queries (its span +-2
-      // days), filtered per row in memory: one query per row each made a 500-row
-      // statement cost ~2,000 round trips. Rows this call touches are excluded
-      // through createdIds/usedCandidates, so the snapshot stays valid.
-      const times = transactions.map((r) => parseDate(r.date).getTime());
-      const span = { gte: new Date(Math.min(...times) - 2 * DAY_MS), lte: new Date(Math.max(...times) + 2 * DAY_MS) };
-      const pool = await db.transaction.findMany({
-        where: {
-          userId,
-          currency: { in: [...new Set(transactions.map((r) => (r.currency ?? acc.currency ?? user.baseCurrency).toUpperCase()))] },
-          occurredAt: span,
-          OR: [
-            { source: { in: ["manual", "receipt"] }, externalId: null },
-            { accountId: acc.id, externalId: { not: null } },
-          ],
-        },
-      });
-      const legPool = await db.transaction.findMany({
-        where: { userId, type: "transfer", counterAccountId: acc.id, counterExternalId: null, accountId: { not: acc.id }, occurredAt: span },
-      });
-      const monthRange = periodRange(user.timezone);
-
-      for (const [idx, row] of transactions.entries()) {
-        rowsSum += row.amount;
-        const cur = (row.currency ?? acc.currency ?? user.baseCurrency).toUpperCase();
-        const occurredAt = parseDate(row.date);
-        const type: TxType = row.type ?? (row.amount < 0 ? "expense" : "income");
-        const amountSigned = round2(row.amount);
-        const amountAbs = Math.abs(amountSigned);
-        const direction = amountSigned < 0 ? "out" : "in";
-        // Stored amount = money LEAVING the account for expense and transfer
-        // rows (a refund is a negative expense, an incoming one-legged transfer
-        // a negative transfer) and money ARRIVING for income: the statement's
-        // sign survives an explicit type instead of being dropped by abs().
-        const stored = type === "income" ? amountSigned : -amountSigned;
-
-        if (unsupported.has(cur)) {
-          skipped.push({ row: idx + 1, reason: "unsupported_currency", currency: cur });
-          continue;
-        }
-
-        const ref = realRef(row.external_id);
-        const occKey = `${amountSigned}:${cur}:${row.date}`;
-        const occ = (occurrence.get(occKey) ?? 0) + 1;
-        occurrence.set(occKey, occ);
-        let externalId = ref ?? `${SYN_PREFIX}${occKey}:${occ}`;
-
-        let byExt = await db.transaction.findFirst({
-          where: { accountId: acc.id, externalId },
-        });
-        // A reference that reappears on a clearly different transaction (more
-        // than 3 days apart, or the opposite direction) is a reused id, e.g.
-        // statement row numbers restarting every month: keep it, scoped by date.
-        if (
-          byExt &&
-          ref &&
-          (Math.abs(byExt.occurredAt.getTime() - occurredAt.getTime()) > 3 * DAY_MS ||
-            directionOf(byExt, acc.id) !== direction)
-        ) {
-          idConflicts++;
-          externalId = `${ref}@${row.date}`;
-          byExt = await db.transaction.findFirst({ where: { accountId: acc.id, externalId } });
-        }
-        if (byExt) {
-          if (!ref) noIdSkips++;
-          skipped.push({
-            row: idx + 1,
-            reason: ref ? "external_id_exists" : "already_imported",
-            existing_id: byExt.id,
-          });
-          continue;
-        }
-        // This row may live on as the absorbed leg of a merged transfer
-        // (update_transaction counter_transaction_id): its external id moved to
-        // counterExternalId and its account to counterAccountId.
-        const asLeg = await db.transaction.findFirst({
-          where: { userId, counterAccountId: acc.id, counterExternalId: externalId },
-        });
-        if (asLeg) {
-          if (!ref) noIdSkips++;
-          skipped.push({ row: idx + 1, reason: "merged_transfer_leg", existing_id: asLeg.id });
-          continue;
-        }
-
-        const inWindow = (c: { occurredAt: Date }) => Math.abs(c.occurredAt.getTime() - occurredAt.getTime()) <= 2 * DAY_MS;
-        const byNearest = <T extends { occurredAt: Date }>(a: T, b: T) =>
-          Math.abs(a.occurredAt.getTime() - occurredAt.getTime()) - Math.abs(b.occurredAt.getTime() - occurredAt.getTime());
-
-        // Candidates: hand-logged rows not yet confirmed by any statement or
-        // feed (any account: manual entries default to the Manual account), and
-        // this account's already-confirmed rows. Same currency, amount and
-        // DIRECTION: a refund must never absorb the purchase it refunds.
-        // force = the hint-driven recovery path: the model confirmed this row
-        // is new, so only the exact-key checks above apply.
-        const candidates = row.force
-          ? []
-          : pool.filter(
-              (c) =>
-                c.currency === cur &&
-                inWindow(c) &&
-                !createdIds.has(c.id) &&
-                !usedCandidates.has(c.id) &&
-                Math.abs(Math.abs(Number(c.amount)) - amountAbs) <= 0.009 &&
-                directionOf(c, acc.id) === direction
-            );
-        const rm = normalize(row.merchant);
-
-        // Already-confirmed rows of this account first (exact evidence beats
-        // fuzzy, and a row already booked here wins over a transfer leg of
-        // another account): same day only. Two REAL bank references that
-        // differ mean distinct transactions no matter how similar the rows
-        // look. Same-merchant candidates are preferred, but merchant wording
-        // drifts between exports, so any remaining same-day same-amount row
-        // still counts as the twin.
-        const bankPool = candidates.filter(
-          (c) =>
-            c.externalId !== null &&
-            c.occurredAt.getTime() === occurredAt.getTime() &&
-            !(isRealId(ref) && isRealId(c.externalId))
+        // The statement itself is the source of truth: rows inserted by THIS call are
+        // never dedup candidates (two identical rides on one day = two real rides),
+        // and each pre-existing row can absorb at most one statement row.
+        const createdIds = new Set<string>();
+        const usedCandidates = new Set<string>();
+        // Rows without a bank reference get a deterministic synthetic key
+        // (amount + currency + date + occurrence counter, YNAB pattern), so re-importing
+        // the same statement stays idempotent even when merchant wording drifts
+        // between extractions. Counted per row SENT, not per row imported.
+        const occurrence = new Map<string, number>();
+        // A merged hand-logged row keeps an entity the user set explicitly (one
+        // that differs from its own account's default), e.g. a personal dinner
+        // paid with the business card.
+        const accountEntity = new Map(
+          (await db.account.findMany({ where: { userId }, select: { id: true, entity: true } })).map((a) => [a.id, a.entity])
         );
-        const bankTwin = bankPool.find((c) => normalize(c.merchant) === rm) ?? bankPool[0];
-        if (bankTwin) {
-          usedCandidates.add(bankTwin.id);
-          // Self-heal: stamp the dedup key on legacy/synthetic rows so the next
-          // re-run matches by key directly instead of by day+amount.
-          if (!dryRun && !isRealId(bankTwin.externalId)) {
-            await db.transaction.update({ where: { id: bankTwin.id }, data: { externalId } });
-          }
-          if (!ref) noIdSkips++;
-          skipped.push({ row: idx + 1, reason: "already_imported", existing_id: bankTwin.id });
-          continue;
+        // A currency no FX source publishes is skipped per row and reported
+        // instead of aborting the statement half-way with the earlier rows
+        // written. An outage is not "unsupported": those rows fail per row as
+        // fx_unavailable and the hint says to re-run later.
+        const unsupported = new Set<string>();
+        for (const c of new Set(transactions.map((r) => (r.currency ?? acc.currency ?? user.baseCurrency).toUpperCase()))) {
+          if (c === user.baseCurrency) continue;
+          await assertConvertible(c).catch((e: unknown) => {
+            if (e instanceof UnknownCurrencyError) unsupported.add(c);
+            else throw e;
+          });
         }
 
-        // A credit can be the RECEIVING leg of a transfer already on record
-        // (hand-logged, or paired by a bank sync, in any sending currency): it
-        // confirms that transfer instead of becoming a new income.
-        if (direction === "in" && !row.force) {
-          const leg = legPool
+        // Dedup candidates for the whole statement in two queries (its span +-2
+        // days), filtered per row in memory: one query per row each made a 500-row
+        // statement cost ~2,000 round trips. Rows this call touches are excluded
+        // through createdIds/usedCandidates, so the snapshot stays valid.
+        const times = transactions.map((r) => parseDate(r.date).getTime());
+        const span = { gte: new Date(Math.min(...times) - 2 * DAY_MS), lte: new Date(Math.max(...times) + 2 * DAY_MS) };
+        const pool = await db.transaction.findMany({
+          where: {
+            userId,
+            currency: { in: [...new Set(transactions.map((r) => (r.currency ?? acc.currency ?? user.baseCurrency).toUpperCase()))] },
+            occurredAt: span,
+            OR: [
+              { source: { in: ["manual", "receipt"] }, externalId: null },
+              { accountId: acc.id, externalId: { not: null } },
+            ],
+          },
+        });
+        const legPool = await db.transaction.findMany({
+          where: { userId, type: "transfer", counterAccountId: acc.id, counterExternalId: null, accountId: { not: acc.id }, occurredAt: span },
+        });
+        const monthRange = periodRange(user.timezone);
+
+        for (const [idx, row] of transactions.entries()) {
+          rowsSum += row.amount;
+          const cur = (row.currency ?? acc.currency ?? user.baseCurrency).toUpperCase();
+          const occurredAt = parseDate(row.date);
+          const type: TxType = row.type ?? (row.amount < 0 ? "expense" : "income");
+          const amountSigned = round2(row.amount);
+          const amountAbs = Math.abs(amountSigned);
+          const direction = amountSigned < 0 ? "out" : "in";
+          // Stored amount = money LEAVING the account for expense and transfer
+          // rows (a refund is a negative expense, an incoming one-legged transfer
+          // a negative transfer) and money ARRIVING for income: the statement's
+          // sign survives an explicit type instead of being dropped by abs().
+          const stored = type === "income" ? amountSigned : -amountSigned;
+
+          if (unsupported.has(cur)) {
+            skipped.push({ row: idx + 1, reason: "unsupported_currency", currency: cur });
+            continue;
+          }
+
+          const ref = realRef(row.external_id);
+          const occKey = `${amountSigned}:${cur}:${row.date}`;
+          const occ = (occurrence.get(occKey) ?? 0) + 1;
+          occurrence.set(occKey, occ);
+          let externalId = ref ?? `${SYN_PREFIX}${occKey}:${occ}`;
+
+          let byExt = await db.transaction.findFirst({
+            where: { accountId: acc.id, externalId },
+          });
+          // A reference that reappears on a clearly different transaction (more
+          // than 3 days apart, or the opposite direction) is a reused id, e.g.
+          // statement row numbers restarting every month: keep it, scoped by date.
+          if (
+            byExt &&
+            ref &&
+            (Math.abs(byExt.occurredAt.getTime() - occurredAt.getTime()) > 3 * DAY_MS ||
+              directionOf(byExt, acc.id) !== direction)
+          ) {
+            idConflicts++;
+            externalId = `${ref}@${row.date}`;
+            byExt = await db.transaction.findFirst({ where: { accountId: acc.id, externalId } });
+          }
+          if (byExt) {
+            if (!ref) noIdSkips++;
+            skipped.push({
+              row: idx + 1,
+              reason: ref ? "external_id_exists" : "already_imported",
+              existing_id: byExt.id,
+            });
+            continue;
+          }
+          // This row may live on as the absorbed leg of a merged transfer
+          // (update_transaction counter_transaction_id): its external id moved to
+          // counterExternalId and its account to counterAccountId.
+          const asLeg = await db.transaction.findFirst({
+            where: { userId, counterAccountId: acc.id, counterExternalId: externalId },
+          });
+          if (asLeg) {
+            if (!ref) noIdSkips++;
+            skipped.push({ row: idx + 1, reason: "merged_transfer_leg", existing_id: asLeg.id });
+            continue;
+          }
+
+          const inWindow = (c: { occurredAt: Date }) => Math.abs(c.occurredAt.getTime() - occurredAt.getTime()) <= 2 * DAY_MS;
+          const byNearest = <T extends { occurredAt: Date }>(a: T, b: T) =>
+            Math.abs(a.occurredAt.getTime() - occurredAt.getTime()) - Math.abs(b.occurredAt.getTime() - occurredAt.getTime());
+
+          // Candidates: hand-logged rows not yet confirmed by any statement or
+          // feed (any account: manual entries default to the Manual account), and
+          // this account's already-confirmed rows. Same currency, amount and
+          // DIRECTION: a refund must never absorb the purchase it refunds.
+          // force = the hint-driven recovery path: the model confirmed this row
+          // is new, so only the exact-key checks above apply.
+          const candidates = row.force
+            ? []
+            : pool.filter(
+                (c) =>
+                  c.currency === cur &&
+                  inWindow(c) &&
+                  !createdIds.has(c.id) &&
+                  !usedCandidates.has(c.id) &&
+                  Math.abs(Math.abs(Number(c.amount)) - amountAbs) <= 0.009 &&
+                  directionOf(c, acc.id) === direction
+              );
+          const rm = normalize(row.merchant);
+
+          // Already-confirmed rows of this account first (exact evidence beats
+          // fuzzy, and a row already booked here wins over a transfer leg of
+          // another account): same day only. Two REAL bank references that
+          // differ mean distinct transactions no matter how similar the rows
+          // look. Same-merchant candidates are preferred, but merchant wording
+          // drifts between exports, so any remaining same-day same-amount row
+          // still counts as the twin.
+          const bankPool = candidates.filter(
+            (c) =>
+              c.externalId !== null &&
+              c.occurredAt.getTime() === occurredAt.getTime() &&
+              !(isRealId(ref) && isRealId(c.externalId))
+          );
+          const bankTwin = bankPool.find((c) => normalize(c.merchant) === rm) ?? bankPool[0];
+          if (bankTwin) {
+            usedCandidates.add(bankTwin.id);
+            // Self-heal: stamp the dedup key on legacy/synthetic rows so the next
+            // re-run matches by key directly instead of by day+amount.
+            if (!dryRun && !isRealId(bankTwin.externalId)) {
+              await db.transaction.update({ where: { id: bankTwin.id }, data: { externalId } });
+            }
+            if (!ref) noIdSkips++;
+            skipped.push({ row: idx + 1, reason: "already_imported", existing_id: bankTwin.id });
+            continue;
+          }
+
+          // A credit can be the RECEIVING leg of a transfer already on record
+          // (hand-logged, or paired by a bank sync, in any sending currency): it
+          // confirms that transfer instead of becoming a new income.
+          if (direction === "in" && !row.force) {
+            const leg = legPool
+              .filter((c) => {
+                if (!inWindow(c) || usedCandidates.has(c.id)) return false;
+                const received = c.counterAmount !== null && c.counterCurrency;
+                const legCur = received ? c.counterCurrency : c.currency;
+                const legAmount = Number(received ? c.counterAmount : c.amount);
+                return legCur === cur && Math.abs(legAmount - amountAbs) <= 0.009;
+              })
+              .sort(byNearest)[0];
+            if (leg) {
+              usedCandidates.add(leg.id);
+              if (!dryRun) await db.transaction.update({ where: { id: leg.id }, data: { counterExternalId: externalId } });
+              merged++;
+              skipped.push({ row: idx + 1, reason: "transfer_leg_matched", existing_id: leg.id });
+              continue;
+            }
+          }
+
+          // Hand-logged twin (fuzzy merchant, +-2 days): merge instead of skip - the
+          // bank feed confirms the entry, so it moves to the real account and gains
+          // the dedup key, which also takes it out of the fuzzy pool for good.
+          const manualTwin = candidates
             .filter((c) => {
-              if (!inWindow(c) || usedCandidates.has(c.id)) return false;
-              const received = c.counterAmount !== null && c.counterCurrency;
-              const legCur = received ? c.counterCurrency : c.currency;
-              const legAmount = Number(received ? c.counterAmount : c.amount);
-              return legCur === cur && Math.abs(legAmount - amountAbs) <= 0.009;
+              if (c.externalId !== null) return false;
+              // Only a transfer leaving THIS account can be the twin of a debit:
+              // a transfer between two other accounts is a different money
+              // movement even at the same amount and day (Wise -> Mono EUR -> Mono
+              // UAH hops), and receiving legs were matched above.
+              if (c.type === "transfer" && c.accountId !== acc.id) return false;
+              const cm = normalize(c.merchant);
+              if (rm && cm) return cm.includes(rm) || rm.includes(cm);
+              // no merchant info to compare: only exact same day counts as duplicate (conservative)
+              return c.occurredAt.getTime() === occurredAt.getTime();
             })
             .sort(byNearest)[0];
-          if (leg) {
-            usedCandidates.add(leg.id);
-            if (!dryRun) await db.transaction.update({ where: { id: leg.id }, data: { counterExternalId: externalId } });
+          if (manualTwin) {
+            usedCandidates.add(manualTwin.id);
+            if (!dryRun) {
+              // User-entered category, note and date stay; so does an entity the
+              // user set explicitly on the row.
+              const explicitEntity = manualTwin.entity !== accountEntity.get(manualTwin.accountId);
+              await db.transaction.update({
+                where: { id: manualTwin.id },
+                data: {
+                  accountId: acc.id,
+                  externalId,
+                  entity: row.entity ?? (explicitEntity ? manualTwin.entity : acc.entity),
+                },
+              });
+            }
             merged++;
-            skipped.push({ row: idx + 1, reason: "transfer_leg_matched", existing_id: leg.id });
+            skipped.push({ row: idx + 1, reason: "manual_twin_merged", existing_id: manualTwin.id });
             continue;
           }
-        }
 
-        // Hand-logged twin (fuzzy merchant, +-2 days): merge instead of skip - the
-        // bank feed confirms the entry, so it moves to the real account and gains
-        // the dedup key, which also takes it out of the fuzzy pool for good.
-        const manualTwin = candidates
-          .filter((c) => {
-            if (c.externalId !== null) return false;
-            // Only a transfer leaving THIS account can be the twin of a debit:
-            // a transfer between two other accounts is a different money
-            // movement even at the same amount and day (Wise -> Mono EUR -> Mono
-            // UAH hops), and receiving legs were matched above.
-            if (c.type === "transfer" && c.accountId !== acc.id) return false;
-            const cm = normalize(c.merchant);
-            if (rm && cm) return cm.includes(rm) || rm.includes(cm);
-            // no merchant info to compare: only exact same day counts as duplicate (conservative)
-            return c.occurredAt.getTime() === occurredAt.getTime();
-          })
-          .sort(byNearest)[0];
-        if (manualTwin) {
-          usedCandidates.add(manualTwin.id);
+          let category = row.category;
+          if (type !== "transfer" && (!category || category === "other" || !ALL_CATEGORIES.has(category))) {
+            const known = row.merchant ? learned.get(normMerchant(row.merchant)) : undefined;
+            if (known && ALL_CATEGORIES.has(known)) {
+              category = known;
+            } else {
+              if (category && !ALL_CATEGORIES.has(category)) coerced++;
+              category = "other";
+            }
+          }
+
           if (!dryRun) {
-            // User-entered category, note and date stay; so does an entity the
-            // user set explicitly on the row.
-            const explicitEntity = manualTwin.entity !== accountEntity.get(manualTwin.accountId);
-            await db.transaction.update({
-              where: { id: manualTwin.id },
+            let fx;
+            try {
+              fx = await convert(stored, cur, user.baseCurrency, occurredAt);
+            } catch {
+              // Rates for this date unavailable (all sources down, nothing cached
+              // within a week): report the row, keep importing the rest.
+              skipped.push({ row: idx + 1, reason: "fx_unavailable", currency: cur });
+              continue;
+            }
+            const created = await db.transaction.create({
               data: {
+                userId,
                 accountId: acc.id,
+                type,
+                amount: stored,
+                currency: cur,
+                amountBase: fx.converted,
+                fxRate: fx.rate,
+                categoryKey: type === "transfer" ? null : category,
+                merchant: row.merchant,
+                note: row.note,
+                occurredAt,
+                source: "bank",
                 externalId,
-                entity: row.entity ?? (explicitEntity ? manualTwin.entity : acc.entity),
+                entity: row.entity ?? acc.entity,
               },
             });
+            createdIds.add(created.id);
+            if (type === "expense") spentByCategory.set(category ?? "other", (spentByCategory.get(category ?? "other") ?? 0) + fx.converted);
+            for (const [k, v] of budgetDelta(
+              user,
+              { type, entity: created.entity, occurredAt, categoryKey: created.categoryKey, amountBase: fx.converted },
+              monthRange
+            )) {
+              budgetAdded.set(k, (budgetAdded.get(k) ?? 0) + v);
+            }
           }
-          merged++;
-          skipped.push({ row: idx + 1, reason: "manual_twin_merged", existing_id: manualTwin.id });
-          continue;
+          imported++;
         }
 
-        let category = row.category;
-        if (type !== "transfer") {
-          if (!category || !ALL_CATEGORIES.has(category)) {
-            if (category) coerced++;
-            category = "other";
-          }
-        }
-
-        if (!dryRun) {
-          let fx;
-          try {
-            fx = await convert(stored, cur, user.baseCurrency, occurredAt);
-          } catch {
-            // Rates for this date unavailable (all sources down, nothing cached
-            // within a week): report the row, keep importing the rest.
-            skipped.push({ row: idx + 1, reason: "fx_unavailable", currency: cur });
-            continue;
-          }
-          const created = await db.transaction.create({
-            data: {
-              userId,
-              accountId: acc.id,
-              type,
-              amount: stored,
-              currency: cur,
-              amountBase: fx.converted,
-              fxRate: fx.rate,
-              categoryKey: type === "transfer" ? null : category,
-              merchant: row.merchant,
-              note: row.note,
-              occurredAt,
-              source: "bank",
-              externalId,
-              entity: row.entity ?? acc.entity,
-            },
-          });
-          createdIds.add(created.id);
-          for (const [k, v] of budgetDelta(
-            user,
-            { type, entity: created.entity, occurredAt, categoryKey: created.categoryKey, amountBase: fx.converted },
-            monthRange
-          )) {
-            budgetAdded.set(k, (budgetAdded.get(k) ?? 0) + v);
-          }
-        }
-        imported++;
-      }
-
-      rowsSum = round2(rowsSum);
-      const diff = statement_total !== undefined ? round2(statement_total - rowsSum) : undefined;
-      logEvent("bank_imported", userId, { imported, duplicates: skipped.length, merged, dry_run: dryRun });
-      const SKIP_REPORT_CAP = 100;
-      const unpriced = skipped.filter((s) => s.reason === "unsupported_currency");
-      const fxDown = skipped.filter((s) => s.reason === "fx_unavailable");
-      const hints = [
-        ...(noIdSkips > 0
-          ? [
-              `${noIdSkips} row(s) without external_id matched existing records by derived key (amount+date+occurrence). If they are re-imported rows, this is correct. If they are NEW rows (e.g. this call is a continuation chunk of a statement with several identical rows), re-send ONLY those rows with an explicit external_id (bank reference or statement-scoped row id) and force=true.`,
-            ]
-          : []),
-        ...(idConflicts > 0
-          ? [
-              `${idConflicts} row(s) reused an external_id that already belongs to a different transaction (e.g. statement row numbers restart every statement); they were imported under a date-scoped key. Use statement-scoped ids such as '2026-09:r017'.`,
-            ]
-          : []),
-        ...(unpriced.length > 0
-          ? [
-              `${unpriced.length} row(s) were NOT imported: no exchange rate source publishes ${[...new Set(unpriced.map((s) => s.currency))].join(", ")}. Supported: the ECB reference currencies plus UAH and AED.`,
-            ]
-          : []),
-        ...(fxDown.length > 0
-          ? [
-              `${fxDown.length} row(s) were NOT imported: exchange rates are temporarily unavailable. Re-run the same import later; rows already imported are skipped.`,
-            ]
-          : []),
-      ];
-      const alerts = await crossedBudgets(user, budgetAdded).catch(() => []); // best-effort, rows are written
-      return text({
-        account: acc.name,
-        ...(dryRun ? { dry_run: true } : {}),
-        imported,
-        ...(alerts.length ? { budget_alerts: alerts } : {}),
-        duplicates_skipped: skipped.length - unpriced.length - fxDown.length,
-        manual_twins_merged: merged,
-        unknown_categories_coerced_to_other: coerced,
-        ...(unpriced.length + fxDown.length > 0 ? { not_imported_no_fx_rate: unpriced.length + fxDown.length } : {}),
-        ...(idConflicts > 0 ? { external_id_conflicts: idConflicts } : {}),
-        rows_sum: rowsSum,
-        statement_total,
-        reconciliation:
-          statement_total === undefined ? "not_checked" : Math.abs(diff!) < 0.01 ? "ok" : `MISMATCH by ${diff}`,
-        ...(skipped.length > 0 ? { skipped: skipped.slice(0, SKIP_REPORT_CAP) } : {}),
-        ...(skipped.length > SKIP_REPORT_CAP ? { skipped_not_listed: skipped.length - SKIP_REPORT_CAP } : {}),
-        ...(hints.length > 0 ? { hint: hints.join(" ") } : {}),
-      });
-    })
+        rowsSum = round2(rowsSum);
+        const diff = statement_total !== undefined ? round2(statement_total - rowsSum) : undefined;
+        logEvent("bank_imported", userId, { imported, duplicates: skipped.length, merged, dry_run: dryRun });
+        const SKIP_REPORT_CAP = 100;
+        const unpriced = skipped.filter((s) => s.reason === "unsupported_currency");
+        const fxDown = skipped.filter((s) => s.reason === "fx_unavailable");
+        const hints = [
+          ...(noIdSkips > 0
+            ? [
+                `${noIdSkips} row(s) without external_id matched existing records by derived key (amount+date+occurrence). If they are re-imported rows, this is correct. If they are NEW rows (e.g. this call is a continuation chunk of a statement with several identical rows), re-send ONLY those rows with an explicit external_id (bank reference or statement-scoped row id) and force=true.`,
+              ]
+            : []),
+          ...(idConflicts > 0
+            ? [
+                `${idConflicts} row(s) reused an external_id that already belongs to a different transaction (e.g. statement row numbers restart every statement); they were imported under a date-scoped key. Use statement-scoped ids such as '2026-09:r017'.`,
+              ]
+            : []),
+          ...(unpriced.length > 0
+            ? [
+                `${unpriced.length} row(s) were NOT imported: no exchange rate source publishes ${[...new Set(unpriced.map((s) => s.currency))].join(", ")}. Every other ISO currency (about 150) is supported; these codes have no published rate.`,
+              ]
+            : []),
+          ...(fxDown.length > 0
+            ? [
+                `${fxDown.length} row(s) were NOT imported: exchange rates are temporarily unavailable. Re-run the same import later; rows already imported are skipped.`,
+              ]
+            : []),
+        ];
+        const alerts = await crossedBudgets(user, budgetAdded).catch(() => []); // best-effort, rows are written
+        return text({
+          account: acc.name,
+          ...(dryRun ? { dry_run: true } : {}),
+          imported,
+          ...(alerts.length ? { budget_alerts: alerts } : {}),
+          duplicates_skipped: skipped.length - unpriced.length - fxDown.length,
+          manual_twins_merged: merged,
+          unknown_categories_coerced_to_other: coerced,
+          ...(unpriced.length + fxDown.length > 0 ? { not_imported_no_fx_rate: unpriced.length + fxDown.length } : {}),
+          ...(idConflicts > 0 ? { external_id_conflicts: idConflicts } : {}),
+          rows_sum: rowsSum,
+          statement_total,
+          reconciliation:
+            statement_total === undefined ? "not_checked" : Math.abs(diff!) < 0.01 ? "ok" : `MISMATCH by ${diff}`,
+          ...(skipped.length > 0 ? { skipped: skipped.slice(0, SKIP_REPORT_CAP) } : {}),
+          ...(skipped.length > SKIP_REPORT_CAP ? { skipped_not_listed: skipped.length - SKIP_REPORT_CAP } : {}),
+          ...(hints.length > 0 ? { hint: hints.join(" ") } : {}),
+          ...(spentByCategory.size > 0 ? whereItWent(user, spentByCategory) : {}),
+          ...(await setupNote(userId, adopted)),
+        });
+      })(args);
+    }
   );
 
   server.registerTool(
@@ -1211,7 +1345,7 @@ export function registerFinanceTools(server: McpServer, userId: string): void {
       title: "Spending summary",
       annotations: { readOnlyHint: true, openWorldHint: false },
       description:
-        "Totals for a period, computed server-side in the user's base currency. Breaks down expenses (default) or income: 'how much did I spend on X in July', 'what does my June income consist of'. Supports category drill-down (category=subscriptions + group_by=merchant) and exclusions (exclude_categories).",
+        "Totals for a period, computed server-side in the user's base currency. Breaks down expenses (default) or income: 'how much did I spend on X in July', 'what does my June income consist of'. Supports category drill-down (category=subscriptions + group_by=merchant), exclusions (exclude_categories), week-by-week views (group_by=week), comparison with the period before (compare=previous: 'how does this week compare to last week') and totals in another currency (currency=USD).",
       inputSchema: {
         period: z.string().optional().describe("YYYY-MM or YYYY. Defaults to the current month."),
         from: dateSchema.optional(),
@@ -1220,7 +1354,18 @@ export function registerFinanceTools(server: McpServer, userId: string): void {
           .enum(["expense", "income"])
           .optional()
           .describe("Which side the groups break down. Default: expense. Use income for 'where does my income come from'."),
-        group_by: z.enum(["category", "merchant", "month"]).optional().describe("Default: category."),
+        group_by: z.enum(["category", "merchant", "month", "week"]).optional().describe("Default: category. week = Monday-to-Sunday weeks."),
+        compare: z
+          .enum(["previous"])
+          .optional()
+          .describe(
+            "previous: also return the period before (the previous month, year or same-length window; for a period still running, the same number of days of the one before) and each category's or merchant's change."
+          ),
+        currency: z
+          .string()
+          .length(3)
+          .optional()
+          .describe("Report in this currency instead of the base: every record is converted at its own date's rate (e.g. USD totals for peso spending)."),
         category: categoryFilterSchema.optional().describe("Only this category, e.g. subscriptions with group_by=merchant to see what the subscriptions consist of."),
         exclude_categories: z
           .array(categoryFilterSchema)
@@ -1229,50 +1374,96 @@ export function registerFinanceTools(server: McpServer, userId: string): void {
         entity: entitySchema.optional().describe("personal or business only. Omit for everything."),
       },
     },
-    async ({ period, from, to, type, group_by, category, exclude_categories, entity }) => {
+    async ({ period, from, to, type, group_by, category, exclude_categories, entity, compare, currency }) => {
       const user = await getUser(userId);
       const range = periodRange(user.timezone, period, from, to);
-      const rows = await db.transaction.findMany({
-        where: {
-          userId,
-          occurredAt: { gte: range.start, lt: range.end },
-          type: { not: "transfer" },
-          ...(entity ? { entity } : {}),
-          ...(category
-            ? { categoryKey: category }
-            : exclude_categories?.length
-              ? { categoryKey: { notIn: exclude_categories } }
-              : {}),
-        },
-        select: { type: true, amountBase: true, categoryKey: true, merchant: true, occurredAt: true },
-      });
-      const expenses = rows.filter((r) => r.type === "expense");
-      const income = rows.filter((r) => r.type === "income");
-      const totalExpense = round2(expenses.reduce((s, r) => s + Number(r.amountBase), 0));
-      const totalIncome = round2(income.reduce((s, r) => s + Number(r.amountBase), 0));
-
+      const target = currency?.toUpperCase();
+      const convertTo = target && target !== user.baseCurrency ? target : undefined;
+      if (convertTo) await assertConvertible(convertTo);
+      // base -> report currency at each record's own date, one lookup per day
+      const dayRates = new Map<string, number>();
+      const valueOf = async (r: { amountBase: unknown; occurredAt: Date }) => {
+        if (!convertTo) return Number(r.amountBase);
+        const d = r.occurredAt.toISOString().slice(0, 10);
+        let rate = dayRates.get(d);
+        if (rate === undefined) {
+          rate = (await convert(1, user.baseCurrency, convertTo, r.occurredAt)).rate;
+          dayRates.set(d, rate);
+        }
+        return Number(r.amountBase) * rate;
+      };
       const groupedType = type ?? "expense";
-      const grouped = groupedType === "income" ? income : expenses;
-      const groupedTotal = groupedType === "income" ? totalIncome : totalExpense;
-      const key = (r: (typeof rows)[number]) =>
+      const weekOf = (d: Date) => {
+        const monday = new Date(d.getTime() - ((d.getUTCDay() + 6) % 7) * 86_400_000);
+        return monday.toISOString().slice(0, 10);
+      };
+      const key = (r: { categoryKey: string | null; merchant: string | null; occurredAt: Date }) =>
         group_by === "merchant"
           ? (r.merchant ?? "(no merchant)")
           : group_by === "month"
             ? r.occurredAt.toISOString().slice(0, 7)
-            : (r.categoryKey ?? "other");
-      const groups = new Map<string, number>();
-      for (const r of grouped) groups.set(key(r), (groups.get(key(r)) ?? 0) + Number(r.amountBase));
-      // months read as a timeline, categories/merchants as a ranking
-      const sorted = [...groups.entries()].sort(
-        group_by === "month" ? (a, b) => a[0].localeCompare(b[0]) : (a, b) => b[1] - a[1]
-      );
+            : group_by === "week"
+              ? weekOf(r.occurredAt)
+              : (r.categoryKey ?? "other");
+
+      const summarize = async (start: Date, end: Date) => {
+        const rows = await db.transaction.findMany({
+          where: {
+            userId,
+            occurredAt: { gte: start, lt: end },
+            type: { not: "transfer" },
+            ...(entity ? { entity } : {}),
+            ...(category
+              ? { categoryKey: category }
+              : exclude_categories?.length
+                ? { categoryKey: { notIn: exclude_categories } }
+                : {}),
+          },
+          select: { type: true, amountBase: true, categoryKey: true, merchant: true, occurredAt: true },
+        });
+        let expense = 0;
+        let income = 0;
+        const groups = new Map<string, number>();
+        for (const r of rows) {
+          const v = await valueOf(r);
+          if (r.type === "income") income += v;
+          else expense += v;
+          if (r.type === groupedType) groups.set(key(r), (groups.get(key(r)) ?? 0) + v);
+        }
+        return { count: rows.length, expense: round2(expense), income: round2(income), groups };
+      };
+
+      const now = await summarize(range.start, range.end);
+      const groupedTotal = groupedType === "income" ? now.income : now.expense;
+      const timeline = group_by === "month" || group_by === "week";
+      // months and weeks read as a timeline, categories/merchants as a ranking
+      const sorted = [...now.groups.entries()].sort(timeline ? (a, b) => a[0].localeCompare(b[0]) : (a, b) => b[1] - a[1]);
       const capped: Array<[string, number]> =
-        group_by === "month" || sorted.length <= SUMMARY_MAX_GROUPS
+        timeline || sorted.length <= SUMMARY_MAX_GROUPS
           ? sorted
           : [
               ...sorted.slice(0, SUMMARY_MAX_GROUPS),
               ["(all others)", sorted.slice(SUMMARY_MAX_GROUPS).reduce((s, [, v]) => s + v, 0)],
             ];
+
+      // The period before: one month or year back, or the same length for
+      // from/to. A period still running is compared with the same number of
+      // days of the one before ("October so far" vs "September 1-14").
+      let previous: Awaited<ReturnType<typeof summarize>> | undefined;
+      let previousRange: { start: Date; end: Date } | undefined;
+      if (compare === "previous") {
+        const todayEnd = new Date(parseDate(todayIn(user.timezone)).getTime() + 86_400_000);
+        const unit = from || to ? "window" : /^\d{4}$/.test(period ?? "") ? "year" : "month";
+        const prevStart = new Date(range.start);
+        if (unit === "year") prevStart.setUTCFullYear(prevStart.getUTCFullYear() - 1);
+        else if (unit === "month") prevStart.setUTCMonth(prevStart.getUTCMonth() - 1);
+        else prevStart.setTime(range.start.getTime() - (range.end.getTime() - range.start.getTime()));
+        const elapsed = Math.min(range.end.getTime(), todayEnd.getTime()) - range.start.getTime();
+        const running = unit !== "window" && range.end > todayEnd;
+        previousRange = { start: prevStart, end: running ? new Date(prevStart.getTime() + elapsed) : range.start };
+        previous = await summarize(previousRange.start, previousRange.end);
+      }
+      const changePct = (nowValue: number, before: number) => (before > 0 ? round2(((nowValue - before) / before) * 100) : null);
 
       logEvent("summary_run", userId, { period: range.label });
       return text({
@@ -1281,20 +1472,42 @@ export function registerFinanceTools(server: McpServer, userId: string): void {
         ...(category ? { category } : {}),
         ...(exclude_categories?.length && !category ? { excluded_categories: exclude_categories } : {}),
         base_currency: user.baseCurrency,
-        total_expense: totalExpense,
-        total_income: totalIncome,
-        net: round2(totalIncome - totalExpense),
-        transactions: rows.length,
+        ...(convertTo
+          ? { report_currency: convertTo, conversion: "each record at its own date's rate" }
+          : {}),
+        total_expense: now.expense,
+        total_income: now.income,
+        net: round2(now.income - now.expense),
+        transactions: now.count,
         grouped_type: groupedType,
         grouped_by: group_by ?? "category",
         // legacy alias kept for older dashboard payload readers
         expense_by: group_by ?? "category",
-        groups: capped.map(([k, v]) => ({
-          key: k,
-          total: round2(v),
-          share_pct: groupedTotal > 0 ? round2((v / groupedTotal) * 100) : 0,
-        })),
+        groups: capped.map(([k, v]) => {
+          const before = previous && !timeline ? (previous.groups.get(k) ?? 0) : undefined;
+          return {
+            key: k,
+            total: round2(v),
+            share_pct: groupedTotal > 0 ? round2((v / groupedTotal) * 100) : 0,
+            ...(before !== undefined ? { previous_total: round2(before), change_pct: changePct(v, before) } : {}),
+          };
+        }),
         ...(capped !== sorted ? { groups_total: sorted.length } : {}),
+        ...(previous && previousRange
+          ? {
+              previous: {
+                from: previousRange.start.toISOString().slice(0, 10),
+                to: new Date(previousRange.end.getTime() - 86_400_000).toISOString().slice(0, 10),
+                total_expense: previous.expense,
+                total_income: previous.income,
+                net: round2(previous.income - previous.expense),
+                transactions: previous.count,
+              },
+              change_pct_expense: changePct(now.expense, previous.expense),
+              change_pct_income: changePct(now.income, previous.income),
+            }
+          : {}),
+        ...(await setupNote(userId, null)),
       });
     }
   );
@@ -1796,7 +2009,7 @@ export function registerFinanceTools(server: McpServer, userId: string): void {
     {
       title: "Get settings",
       annotations: { readOnlyHint: true, openWorldHint: false },
-      description: "Signed-in account email, base currency and timezone.",
+      description: "Signed-in account email, base currency, timezone and the email summary choice.",
       inputSchema: {},
     },
     async () => {
@@ -1805,11 +2018,16 @@ export function registerFinanceTools(server: McpServer, userId: string): void {
         email: user.email,
         base_currency: user.baseCurrency,
         timezone: user.timezone,
+        email_digest: user.digest ?? "not_chosen",
         // New accounts start on EUR/UTC; dates and "this month" follow the
         // timezone, so the first conversation should set both.
-        ...(user.timezone === "UTC"
+        ...(!user.currencySetAt && user.timezone === "UTC"
           ? { hint: "Settings are still the defaults. Ask the user which currency they think in and where they live, then call update_settings with base_currency and timezone." }
-          : {}),
+          : !user.currencySetAt
+            ? { hint: `Base currency is still the default ${user.baseCurrency}. Ask the user which currency they think in and call update_settings with base_currency.` }
+          : user.timezone === "UTC"
+            ? { hint: "Timezone is UTC. Unless the user lives on UTC, ask where they live and call update_settings with timezone." }
+            : {}),
       });
     }
   );
@@ -1820,14 +2038,23 @@ export function registerFinanceTools(server: McpServer, userId: string): void {
       title: "Update settings",
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
       description:
-        "Change base currency (recomputes all historical stats at each transaction's original date rate) or timezone.",
+        "Change base currency (recomputes all historical stats at each transaction's original date rate), timezone, or the email summary (email_digest).",
       inputSchema: {
         base_currency: currencySchema.optional(),
         timezone: z.string().optional().describe("IANA timezone, e.g. Europe/Kyiv, Asia/Dubai."),
+        email_digest: z
+          .enum(DIGEST_CHOICES)
+          .optional()
+          .describe(
+            "Email summary to the sign-in address: weekly (Mondays), monthly (on the 1st) or off. Set weekly/monthly ONLY after the user explicitly said yes; a confirmation with this month so far goes out at once."
+          ),
       },
     },
-    async ({ base_currency, timezone }) => {
+    async ({ base_currency, timezone, email_digest }) => {
       const user = await getUser(userId);
+      if ((email_digest === "weekly" || email_digest === "monthly") && !digestAvailable()) {
+        throw new Error("Email summaries are not available on this server.");
+      }
       if (timezone) {
         try {
           new Intl.DateTimeFormat("en", { timeZone: timezone });
@@ -1908,11 +2135,31 @@ export function registerFinanceTools(server: McpServer, userId: string): void {
           }
         });
       }
+      const subscribing =
+        (email_digest === "weekly" || email_digest === "monthly") && email_digest !== user.digest ? email_digest : null;
       const updated = await db.user.update({
         where: { id: userId },
-        data: { ...(timezone ? { timezone } : {}) },
+        data: {
+          ...(timezone ? { timezone } : {}),
+          ...(base_currency ? { currencySetAt: new Date() } : {}),
+          ...(email_digest ? { digest: email_digest } : {}),
+          // A new subscription starts after the last complete period: it
+          // never mails an old one.
+          ...(subscribing ? { digestSentFor: startingPoint(subscribing, timezone ?? user.timezone) } : {}),
+        },
       });
-      return text({ ok: true, base_currency: updated.baseCurrency, timezone: updated.timezone });
+      const welcome = subscribing ? await sendWelcome(updated) : undefined;
+      return text({
+        ok: true,
+        base_currency: updated.baseCurrency,
+        timezone: updated.timezone,
+        email_digest: updated.digest ?? "not_chosen",
+        ...(welcome === undefined
+          ? {}
+          : welcome
+            ? { confirmation_email: `sent to ${updated.email}` }
+            : { confirmation_email: "could not be sent now; the summaries still go out on schedule" }),
+      });
     }
   );
 
@@ -2026,6 +2273,7 @@ export function registerFinanceTools(server: McpServer, userId: string): void {
           email: user.email,
           base_currency: user.baseCurrency,
           timezone: user.timezone,
+          email_digest: user.digest ?? "not_chosen",
           created_at: user.createdAt.toISOString(),
         },
         accounts: accounts.map((a) => ({
@@ -2162,159 +2410,182 @@ export function registerFinanceTools(server: McpServer, userId: string): void {
     })
   );
 
-  server.registerTool(
-    "connect_bank",
-    {
-      title: "Connect a bank",
-      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
-      description:
-        "Link a real bank account via open banking (Enable Banking, EU/UK/EEA coverage) for read-only transaction sync. Flow: action=list_banks with the user's country (and optional search) to find the exact bank name -> action=start with bank_name + country -> give the user the returned authorize_url to open and approve at their bank -> after they confirm they are done, run sync_bank. action=status shows connection health, consent expiry and the synced accounts list. action=set_account_sync with account + enabled turns syncing of ONE account on or off, for example when the same bank is also connected via another source. action=disconnect revokes the session and removes the link; imported transactions stay. Only one bank connection at a time for now; connecting a different bank replaces the previous one after disconnect.",
-      inputSchema: {
-        action: z.enum(["list_banks", "start", "status", "disconnect", "set_account_sync"]),
-        country: z
-          .string()
-          .length(2)
-          .optional()
-          .describe("2-letter country code (FI, DE, FR, ...). Required for list_banks and start."),
-        search: z.string().optional().describe("list_banks: case-insensitive substring filter on bank names."),
-        bank_name: z
-          .string()
-          .optional()
-          .describe("start: exact bank name as returned by list_banks. Required for action=start."),
-        account: z.string().optional().describe("set_account_sync: account name or id (see action=status)."),
-        enabled: z.boolean().optional().describe("set_account_sync: true = resume syncing this account, false = stop."),
-      },
-    },
-    async ({ action, country, search, bank_name, account, enabled }) => {
-      await getUser(userId);
-      if (!ebConfigured()) {
-        throw new Error("Bank connections are not enabled on this server yet. Use import_transactions with a statement export instead.");
-      }
-      const existing = await db.bankConnection.findUnique({
-        where: { userId_provider: { userId, provider: "enablebanking" } },
-      });
-
-      if (action === "list_banks") {
-        if (!country) throw new Error("list_banks requires the country parameter (2-letter code).");
-        const all = await ebAspsps(country);
-        const q = search?.toLowerCase();
-        const matches = q ? all.filter((a) => a.name.toLowerCase().includes(q)) : all;
-        return text({
-          country: country.toUpperCase(),
-          total: matches.length,
-          banks: matches.slice(0, 30).map((a) => a.name),
-          ...(matches.length > 30 ? { hint: "More than 30 matches; narrow with the search parameter." } : {}),
-          next: "Call connect_bank action=start with the exact bank_name and country.",
-        });
-      }
-
-      if (action === "status") {
-        if (!existing) return text({ connected: false, hint: "Connect with action=start." });
-        const meta = (existing.meta ?? {}) as EbConnectionMeta;
-        const map = (existing.accountMap ?? {}) as Record<string, { enabled: boolean }>;
-        return text({
-          connected: existing.status === "active",
-          status: existing.status,
-          bank: meta.aspsp?.name,
-          country: meta.aspsp?.country,
-          consent_valid_until: meta.validUntil,
-          last_sync: existing.lastSyncAt?.toISOString() ?? null,
-          last_error: existing.lastError ?? undefined,
-          accounts_synced: Object.values(map).filter((m) => m.enabled).length,
-          accounts: await connectionAccounts(existing),
-          auto_sync: "Healthy connections are synced server-side roughly daily.",
-        });
-      }
-
-      if (action === "set_account_sync") {
-        if (!existing) throw new Error("No bank connection. Connect with action=start first.");
-        if (!account || enabled === undefined) throw new Error("set_account_sync requires account and enabled.");
-        const name = await setAccountSync(existing, account, enabled);
-        return text({
-          account: name,
-          provider: "enablebanking",
-          enabled,
-          note: enabled
-            ? "Sync resumed. A long-disabled account may have a history gap: the bank re-fetches only a few days behind the cursor; re-sync with months_back after reconnecting if needed."
-            : "This account is no longer pulled from the bank. Already-imported transactions were kept; remove them with get_transactions + delete_transactions if they duplicate another source.",
-        });
-      }
-
-      if (action === "disconnect") {
-        if (!existing) return text({ connected: false });
-        if (existing.tokenEnc) await revokeEbSession(existing.tokenEnc);
-        await db.bankConnection.delete({ where: { id: existing.id } });
-        logEvent("bank_disconnected", userId, { provider: "enablebanking" });
-        return text({ disconnected: true, note: "Bank access revoked. Imported transactions were kept." });
-      }
-
-      // action=start
-      if (!country || !bank_name) throw new Error("action=start requires bank_name and country.");
-      if (existing && existing.status === "active") {
-        throw new Error("A bank is already connected. Run connect_bank action=disconnect first to replace it.");
-      }
-      const banks = await ebAspsps(country);
-      const bank = banks.find((b) => b.name.toLowerCase() === bank_name.toLowerCase());
-      if (!bank) {
-        throw new Error(`Bank "${bank_name}" not found in ${country.toUpperCase()}. Use action=list_banks to get exact names.`);
-      }
-      const state = crypto.randomUUID();
-      // Consent window: 90 days or whatever shorter maximum the bank enforces.
-      const maxSeconds = Math.min(bank.maximum_consent_validity ?? 90 * 86_400, 90 * 86_400);
-      const validUntil = new Date(Date.now() + maxSeconds * 1000).toISOString();
-      const { url } = await ebStartAuth({ aspspName: bank.name, country, state, validUntil });
-      await db.bankConnection.upsert({
-        where: { userId_provider: { userId, provider: "enablebanking" } },
-        // accountMap survives a consent renewal: it carries which accounts the
-        // user switched off (set_account_sync) and their history cursors; the
-        // next sync re-keys it to the new session.
-        update: {
-          tokenEnc: "",
-          status: "pending",
-          lastError: null,
-          meta: { state, startedAt: Date.now(), aspsp: { name: bank.name, country: country.toUpperCase() } },
+  // Direct bank sync only for accounts that can use it (bankSyncOffered):
+  // for everyone else these two tools led to a dead end.
+  if (options.bankSync) {
+    server.registerTool(
+      "connect_bank",
+      {
+        title: "Connect a bank",
+        // Not idempotent: each start opens a new consent link.
+        annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+        description:
+          "Link a real bank account via open banking (Enable Banking, EU/UK/EEA coverage) for read-only transaction sync. If the user's country or bank is not listed, stop here and import a statement instead (import_transactions). Flow: action=list_banks with the user's country (and optional search) to find the exact bank name -> action=start with bank_name + country -> give the user the returned authorize_url to open and approve at their bank -> after they confirm they are done, run sync_bank. action=status shows connection health, consent expiry and the synced accounts list. action=set_account_sync with account + enabled turns syncing of ONE account on or off, for example when the same bank is also connected via another source. action=disconnect revokes the session and removes the link; imported transactions stay. Only one bank connection at a time for now; connecting a different bank replaces the previous one after disconnect.",
+        inputSchema: {
+          action: z.enum(["list_banks", "start", "status", "disconnect", "set_account_sync"]),
+          country: z
+            .string()
+            .length(2)
+            .optional()
+            .describe("2-letter country code (FI, DE, FR, ...). Required for list_banks and start."),
+          search: z.string().optional().describe("list_banks: case-insensitive substring filter on bank names."),
+          bank_name: z
+            .string()
+            .optional()
+            .describe("start: exact bank name as returned by list_banks. Required for action=start."),
+          account: z.string().optional().describe("set_account_sync: account name or id (see action=status)."),
+          enabled: z.boolean().optional().describe("set_account_sync: true = resume syncing this account, false = stop."),
         },
-        create: {
-          userId,
-          provider: "enablebanking",
-          status: "pending",
-          meta: { state, startedAt: Date.now(), aspsp: { name: bank.name, country: country.toUpperCase() } },
-        },
-      });
-      logEvent("bank_connected", userId, { provider: "enablebanking" });
-      return text({
-        authorize_url: url,
-        bank: bank.name,
-        instructions:
-          "Show authorize_url to the user as a clickable link. They open it, sign in at their bank and approve read-only access, then confirm on our page that the MyFinance account shown is theirs. The link works once, within 30 minutes. When they say they are done, run sync_bank.",
-      });
-    }
-  );
-
-  server.registerTool(
-    "sync_bank",
-    {
-      title: "Sync bank",
-      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
-      description:
-        "Pull booked transactions and balances from the connected bank (via connect_bank; read-only, incremental, safe to re-run). First sync imports months_back of history (default 3; banks may return less). Equal-amount same-day debit/credit pairs across the user's own synced accounts are merged into transfers. Categories come from the user's remembered per-merchant fixes first, then MCC; the rest land in 'other'. The server also auto-syncs healthy connections roughly daily; run this only for immediate freshness or right after connecting. If the same real bank account is also connected via ZenMoney its transactions WILL duplicate: relay any overlap_warnings from the response to the user and offer to disable one side (action=set_account_sync).",
-      inputSchema: {
-        dry_run: z.boolean().optional().describe("Preview changes without writing them."),
-        months_back: z
-          .number()
-          .int()
-          .positive()
-          .max(24)
-          .optional()
-          .describe("First sync only: how many months of history to request. Default 3."),
       },
-    },
-    pricing(async ({ dry_run, months_back }) => {
-      await getUser(userId);
-      const report = await syncEnableBanking(userId, { dryRun: dry_run, monthsBack: months_back });
-      return text(report);
-    })
-  );
+      async ({ action, country, search, bank_name, account, enabled }) => {
+        await getUser(userId);
+        if (!ebConfigured()) {
+          throw new Error(`Bank connections are not enabled on this server. ${STATEMENT_PATH}`);
+        }
+        const existing = await db.bankConnection.findUnique({
+          where: { userId_provider: { userId, provider: "enablebanking" } },
+        });
+
+        if (action === "list_banks") {
+          if (!country) throw new Error("list_banks requires the country parameter (2-letter code).");
+          if (!bankSearchAllowed(userId)) {
+            throw new Error(`Too many bank searches in the last hour. ${STATEMENT_PATH}`);
+          }
+          const all = await ebAspsps(country);
+          const q = search?.toLowerCase();
+          const matches = q ? all.filter((a) => a.name.toLowerCase().includes(q)) : all;
+          if (matches.length === 0) {
+            // No "try start" here: a start for a bank that is not listed only
+            // sends the model back to list_banks, and clients looped on that.
+            return text({
+              country: country.toUpperCase(),
+              total: 0,
+              banks: [],
+              not_available: all.length
+                ? `No bank matching "${search}" is available for direct sync in ${country.toUpperCase()}.`
+                : `Direct bank sync does not cover ${country.toUpperCase()}.`,
+              instead: STATEMENT_PATH,
+            });
+          }
+          return text({
+            country: country.toUpperCase(),
+            total: matches.length,
+            banks: matches.slice(0, 30).map((a) => a.name),
+            ...(matches.length > 30 ? { hint: "More than 30 matches; narrow with the search parameter." } : {}),
+            next: "Call connect_bank action=start with the exact bank_name and country.",
+          });
+        }
+
+        if (action === "status") {
+          if (!existing) return text({ connected: false, hint: "Connect with action=start." });
+          const meta = (existing.meta ?? {}) as EbConnectionMeta;
+          const map = (existing.accountMap ?? {}) as Record<string, { enabled: boolean }>;
+          return text({
+            connected: existing.status === "active",
+            status: existing.status,
+            bank: meta.aspsp?.name,
+            country: meta.aspsp?.country,
+            consent_valid_until: meta.validUntil,
+            last_sync: existing.lastSyncAt?.toISOString() ?? null,
+            last_error: existing.lastError ?? undefined,
+            accounts_synced: Object.values(map).filter((m) => m.enabled).length,
+            accounts: await connectionAccounts(existing),
+            auto_sync: "Healthy connections are synced server-side roughly daily.",
+          });
+        }
+
+        if (action === "set_account_sync") {
+          if (!existing) throw new Error("No bank connection. Connect with action=start first.");
+          if (!account || enabled === undefined) throw new Error("set_account_sync requires account and enabled.");
+          const name = await setAccountSync(existing, account, enabled);
+          return text({
+            account: name,
+            provider: "enablebanking",
+            enabled,
+            note: enabled
+              ? "Sync resumed. A long-disabled account may have a history gap: the bank re-fetches only a few days behind the cursor; re-sync with months_back after reconnecting if needed."
+              : "This account is no longer pulled from the bank. Already-imported transactions were kept; remove them with get_transactions + delete_transactions if they duplicate another source.",
+          });
+        }
+
+        if (action === "disconnect") {
+          if (!existing) return text({ connected: false });
+          if (existing.tokenEnc) await revokeEbSession(existing.tokenEnc);
+          await db.bankConnection.delete({ where: { id: existing.id } });
+          logEvent("bank_disconnected", userId, { provider: "enablebanking" });
+          return text({ disconnected: true, note: "Bank access revoked. Imported transactions were kept." });
+        }
+
+        // action=start
+        if (!country || !bank_name) throw new Error("action=start requires bank_name and country.");
+        if (existing && existing.status === "active") {
+          throw new Error("A bank is already connected. Run connect_bank action=disconnect first to replace it.");
+        }
+        const banks = await ebAspsps(country);
+        const bank = banks.find((b) => b.name.toLowerCase() === bank_name.toLowerCase());
+        if (!bank) {
+          throw new Error(
+            `Bank "${bank_name}" not found in ${country.toUpperCase()}. If list_banks did not show it, it is not available for direct sync. ${STATEMENT_PATH}`
+          );
+        }
+        const state = crypto.randomUUID();
+        // Consent window: 90 days or whatever shorter maximum the bank enforces.
+        const maxSeconds = Math.min(bank.maximum_consent_validity ?? 90 * 86_400, 90 * 86_400);
+        const validUntil = new Date(Date.now() + maxSeconds * 1000).toISOString();
+        const { url } = await ebStartAuth({ aspspName: bank.name, country, state, validUntil });
+        await db.bankConnection.upsert({
+          where: { userId_provider: { userId, provider: "enablebanking" } },
+          // accountMap survives a consent renewal: it carries which accounts the
+          // user switched off (set_account_sync) and their history cursors; the
+          // next sync re-keys it to the new session.
+          update: {
+            tokenEnc: "",
+            status: "pending",
+            lastError: null,
+            meta: { state, startedAt: Date.now(), aspsp: { name: bank.name, country: country.toUpperCase() } },
+          },
+          create: {
+            userId,
+            provider: "enablebanking",
+            status: "pending",
+            meta: { state, startedAt: Date.now(), aspsp: { name: bank.name, country: country.toUpperCase() } },
+          },
+        });
+        logEvent("bank_connected", userId, { provider: "enablebanking" });
+        return text({
+          authorize_url: url,
+          bank: bank.name,
+          instructions:
+            "Show authorize_url to the user as a clickable link. They open it, sign in at their bank and approve read-only access, then confirm on our page that the MyFinance account shown is theirs. The link works once, within 30 minutes. When they say they are done, run sync_bank.",
+        });
+      }
+    );
+
+    server.registerTool(
+      "sync_bank",
+      {
+        title: "Sync bank",
+        annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+        description:
+          "Pull booked transactions and balances from the connected bank (via connect_bank; read-only, incremental, safe to re-run). First sync imports months_back of history (default 3; banks may return less). Equal-amount same-day debit/credit pairs across the user's own synced accounts are merged into transfers. Categories come from the user's remembered per-merchant fixes first, then MCC; the rest land in 'other'. The server also auto-syncs healthy connections roughly daily; run this only for immediate freshness or right after connecting. If the same real bank account is also connected via ZenMoney its transactions WILL duplicate: relay any overlap_warnings from the response to the user and offer to disable one side (action=set_account_sync).",
+        inputSchema: {
+          dry_run: z.boolean().optional().describe("Preview changes without writing them."),
+          months_back: z
+            .number()
+            .int()
+            .positive()
+            .max(24)
+            .optional()
+            .describe("First sync only: how many months of history to request. Default 3."),
+        },
+      },
+      pricing(async ({ dry_run, months_back }) => {
+        await getUser(userId);
+        const report = await syncEnableBanking(userId, { dryRun: dry_run, monthsBack: months_back });
+        return text(report);
+      })
+    );
+  }
 
   server.registerTool(
     "delete_all_data",

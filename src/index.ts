@@ -12,12 +12,14 @@ import { bootstrapUser } from "./users";
 import { buildMcpServer, SERVER_NAME, SERVER_VERSION } from "./mcp";
 import { EXPENSE_CATEGORIES, INCOME_CATEGORIES } from "./categories";
 import { instrumentTransport, pruneOldEvents } from "./telemetry";
-import { ebCreateSession } from "./enablebanking/client";
+import { ebCreateSession, ebDeleteSession } from "./enablebanking/client";
 import { runAutoSync } from "./autosync";
 import { decryptToken, encryptToken } from "./zenmoney/crypto";
 import { GOOGLE_CALLBACK_PATH } from "./oauth/google";
 import { adminGoogleCallback, adminRouter } from "./admin/router";
 import { readCookie, sha256 } from "./httpUtil";
+import { bankSyncOffered } from "./bankAccess";
+import { digestAvailable, runDigests, unsubscribe, validUnsubscribe } from "./digest";
 
 assertConfig();
 
@@ -73,6 +75,16 @@ if (config.autoSyncIntervalMs > 0) {
         console.error("[autosync] tick failed:", e instanceof Error ? e.message : String(e));
       }),
     config.autoSyncIntervalMs
+  );
+}
+
+if (config.digestIntervalMs > 0 && digestAvailable()) {
+  setInterval(
+    () =>
+      void runDigests().catch((e: unknown) => {
+        console.error("[digest] tick failed:", e instanceof Error ? e.message : String(e));
+      }),
+    config.digestIntervalMs
   );
 }
 
@@ -250,7 +262,7 @@ const bearerAuth = requireBearerAuth({
 // never costs a parse.
 app.post("/mcp", bearerAuth, express.json({ limit: "1mb" }), async (req, res) => {
   const userId = String(req.auth?.extra?.userId ?? "");
-  const server = buildMcpServer(userId);
+  const server = buildMcpServer(userId, { bankSync: await bankSyncOffered(userId) });
   const transport = new StreamableHTTPServerTransport({
     sessionIdGenerator: undefined,
     enableJsonResponse: true,
@@ -524,6 +536,26 @@ app.post(`${BANK_PATH}/confirm`, express.urlencoded({ extended: false }), async 
   }
   try {
     const session = await ebCreateSession(bankCode);
+    if (!session.accounts?.length) {
+      // The bank approved the sign-in but shared no account (the provider's
+      // restricted tier does this). "Bank connected" here sent users to a
+      // sync that could only fail; say what happened and what works instead.
+      await ebDeleteSession(session.session_id).catch((e: unknown) => {
+        console.error("[enablebanking] session revoke failed:", e instanceof Error ? e.message : String(e));
+      });
+      await endAttempt(
+        "The bank approved the sign-in but shared no accounts. Direct sync is not available for this bank yet: import a statement with import_transactions instead."
+      );
+      return res
+        .type("html")
+        .send(
+          callbackPage(
+            "No accounts were shared",
+            "Your bank approved the sign-in but shared no accounts with MyFinance, so there is nothing to sync. Direct bank sync is not available for this bank yet. In your AI chat, send a statement export instead (CSV, PDF or screenshots of the transactions): it works with any bank.",
+            false
+          )
+        );
+    }
     await db.bankConnection.update({
       where: { id: link.id },
       data: {
@@ -544,7 +576,7 @@ app.post(`${BANK_PATH}/confirm`, express.urlencoded({ extended: false }), async 
       .send(
         callbackPage(
           "Bank connected",
-          `${session.accounts?.length ?? 0} account(s) authorized. Go back to your AI chat and run sync_bank to import transactions.`,
+          `${session.accounts.length} account(s) authorized. Go back to your AI chat and run sync_bank to import transactions.`,
           true
         )
       );
@@ -552,6 +584,46 @@ app.post(`${BANK_PATH}/confirm`, express.urlencoded({ extended: false }), async 
     await endAttempt(e instanceof Error ? e.message : String(e));
     return fail(502, "Connection failed", "Could not finish the bank connection. Retry from your AI chat.");
   }
+});
+
+// Email summary unsubscribe. GET only shows the button: mail scanners open
+// links, and a GET that unsubscribed would stop summaries for people who
+// never clicked. POST does it, from the button or from the mail client's
+// one-click unsubscribe (RFC 8058, List-Unsubscribe-Post).
+const DIGEST_PATH = "/digest/unsubscribe";
+const badUnsubscribe = () =>
+  callbackPage(
+    "Link not valid",
+    "This unsubscribe link is incomplete or damaged. You can also say \"turn off the MyFinance email summary\" in your AI chat.",
+    false
+  );
+const unsubscribeParams = (req: express.Request) => {
+  const { u, t } = req.query as Record<string, unknown>;
+  return typeof u === "string" && typeof t === "string" && validUnsubscribe(u, t) ? { u, t } : null;
+};
+app.get(DIGEST_PATH, (req, res) => {
+  res.set("Cache-Control", "no-store");
+  const p = unsubscribeParams(req);
+  if (!p) return res.status(400).type("html").send(badUnsubscribe());
+  res
+    .type("html")
+    .send(
+      pageShell(
+        "Stop the email summary",
+        `<h1>Stop the MyFinance email summary?</h1><p>No more weekly or monthly summaries by email. Your records stay as they are.</p>` +
+          `<form method="post" action="${DIGEST_PATH}?u=${escapeHtml(encodeURIComponent(p.u))}&amp;t=${escapeHtml(encodeURIComponent(p.t))}">` +
+          `<button class="go">Stop the emails</button></form>`
+      )
+    );
+});
+app.post(DIGEST_PATH, express.urlencoded({ extended: false }), async (req, res) => {
+  res.set("Cache-Control", "no-store");
+  const p = unsubscribeParams(req);
+  if (!p) return res.status(400).type("html").send(badUnsubscribe());
+  await unsubscribe(p.u);
+  res
+    .type("html")
+    .send(callbackPage("Email summary stopped", "You will get no more summaries. Turn them back on any time from your AI chat.", true));
 });
 
 app.get("/", (_req, res) => {

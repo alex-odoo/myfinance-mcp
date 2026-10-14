@@ -25,6 +25,10 @@ export interface AdminUserRow {
   method: "google" | "email" | "password";
   baseCurrency: string;
   timezone: string;
+  /** The AI client of the sign-up ("Claude @ claude.ai"); null before 0.16.0. */
+  signupClient: string | null;
+  /** Email summary choice, null = never chosen. */
+  digest: string | null;
   /** Client families seen at connect ("Claude", "ChatGPT / Codex", ...). */
   clients: string[];
   /** Raw clientInfo names behind those families. */
@@ -98,7 +102,17 @@ export async function computeAdminStats(now = new Date()): Promise<AdminStats> {
   const since = new Date(now.getTime() - ACTIVITY_WINDOW_DAYS * DAY_MS);
   const [users, txGroups, accountGroups, budgetGroups, banks, events, deletedAccounts] = await Promise.all([
     db.user.findMany({
-      select: { id: true, email: true, googleSub: true, passwordHash: true, createdAt: true, baseCurrency: true, timezone: true },
+      select: {
+        id: true,
+        email: true,
+        googleSub: true,
+        passwordHash: true,
+        createdAt: true,
+        baseCurrency: true,
+        timezone: true,
+        signupClient: true,
+        digest: true,
+      },
     }),
     db.transaction.groupBy({ by: ["userId", "source"], _count: { _all: true }, _max: { createdAt: true } }),
     db.account.groupBy({ by: ["userId"], _count: { _all: true } }),
@@ -124,6 +138,8 @@ export async function computeAdminStats(now = new Date()): Promise<AdminStats> {
       method: otherSignIn(u) ?? "email",
       baseCurrency: u.baseCurrency,
       timezone: u.timezone,
+      signupClient: u.signupClient,
+      digest: u.digest,
       clients: [],
       clientNames: [],
       records: 0,

@@ -53,6 +53,16 @@ export const config = {
   ebAppId: process.env.EB_APP_ID ?? "",
   ebPrivateKeyB64: process.env.EB_PRIVATE_KEY_B64 ?? "",
   ebApiOrigin: (process.env.EB_API_ORIGIN ?? "https://api.enablebanking.com").replace(/\/$/, ""),
+  // Direct bank sync (Enable Banking) is offered only to these addresses
+  // (comma-separated) and to accounts that already hold a bank connection:
+  // the provider app is in a restricted tier, and new users who started there
+  // met a dead end. ZenMoney and statement import stay open to everyone.
+  bankSyncEmails: (process.env.BANK_SYNC_EMAILS ?? "")
+    .split(",")
+    .map((email) => email.trim().toLowerCase())
+    .filter(Boolean),
+  // Email summaries: how often the scheduler looks for due ones. 0 = off.
+  digestIntervalMs: milliseconds(process.env.DIGEST_INTERVAL_MS, 60 * 60 * 1000),
   // Bank connections are auto-synced roughly daily; each tick syncs whatever
   // is >20h stale. 0 disables the scheduler (manual sync_bank still works).
   autoSyncIntervalMs: Number(process.env.AUTO_SYNC_INTERVAL_MS ?? 60 * 60 * 1000),
