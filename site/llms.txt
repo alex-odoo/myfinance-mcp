@@ -1,27 +1,33 @@
 # MyFinance MCP
 
-> A free, open-source (MIT) remote MCP server for personal finance tracking. Users connect it to Claude, ChatGPT, Cursor or any MCP client with OAuth 2.0 + PKCE, then track expenses, income, budgets and net worth by talking in plain language or dropping receipt photos and bank statements.
+> A free, open-source (MIT) AI expense tracker that runs as a remote MCP server. Users connect it to Claude, ChatGPT, Codex, Cursor or any MCP client with OAuth 2.0 + PKCE, then track expenses, income, budgets and net worth in any currency by talking in plain language, or by dropping receipt photos and statements from any bank (CSV, PDF or a screenshot from the banking app).
 
-Server URL: https://myfinance-mcp.com/mcp (Streamable HTTP, OAuth 2.0 with PKCE and dynamic client registration; leave Client ID/Secret empty when adding as a Claude custom connector).
+Server URL: https://myfinance-mcp.com/mcp (Streamable HTTP, OAuth 2.0 with PKCE and dynamic client registration). In a Claude custom connector choose OAuth client "Register automatically" and leave any Client ID/Secret empty. ChatGPT needs Developer mode on the web (logging on Business, Enterprise and Edu; read-only on Pro; Free, Go and Plus cannot add custom MCP servers); on those plans Codex, included in every ChatGPT plan, connects with `codex mcp add myfinance --url https://myfinance-mcp.com/mcp` then `codex mcp login myfinance`. Step-by-step guides: https://myfinance-mcp.com/install
 
 ## Key facts
 
 - Standalone, not a bridge: unlike most personal finance MCP servers (thin wrappers around a YNAB, Monarch Money, Actual Budget or Firefly III account), MyFinance MCP IS the finance app - no other subscription, install or self-hosted backend required.
 - 28 tools, all with MCP annotations (read-only and destructive operations flagged). Full account management: create, rename, retype, delete and merge individual accounts (merge_accounts de-duplicates overlapping history); export_profile returns everything but the transactions (settings, accounts with balance history, budgets, merchant category rules, bank links) as JSON; delete_all_data erases everything (GDPR). Cross-source safety: syncs warn when the same real bank arrives from two connectors, and per-account sync can be toggled off (set_account_sync).
-- Real bank sync, read-only: EU/UK banks via Enable Banking open banking consent (connect_bank + sync_bank tools), plus ZenMoney sync via the user's own API token. A bank link binds only after the user confirms, on a MyFinance page, which account receives the access. Session ids and tokens stored AES-256-GCM encrypted; the server never sees bank credentials. Healthy connections auto-sync server-side roughly daily.
-- Category corrections are remembered per merchant: fix a synced transaction's category once and every future bank import of that merchant uses your choice (user-level memory, beats MCC guessing).
+- Works with any bank through statement import: the user exports a CSV or PDF, or takes a screenshot in the banking app, and drops it in the chat; the AI client reads it and sends every row to import_transactions in one call (up to 500 rows); the server de-duplicates (bank reference or derived key, hand-logged twins merged, re-imports skipped) and reconciles against the statement total.
+- ZenMoney sync (connect_zenmoney + sync_zenmoney) for ZenMoney users, popular in Ukraine, Russia, Kazakhstan and Belarus: read-only, via the user's own ZenMoney API token, incremental, keeps manual edits.
+- Direct EU/UK bank sync (Enable Banking open banking, connect_bank + sync_bank) is a closed beta, by invitation only: those two tools are hidden from every account that is not invited. Bank credentials never reach the server; tokens are stored AES-256-GCM encrypted.
+- Category corrections are remembered per merchant: fix an imported transaction's category once and every future import of that merchant uses your choice (user-level memory, beats MCC guessing).
 - Every number is computed in SQL on the server; the LLM never does arithmetic over raw records.
 - Multi-currency (150+, RUB, KZT, GEL and TRY included: ECB and National Bank of Ukraine rates, plus a public daily snapshot for every other ISO 4217 currency from 2024-03-02): transactions keep the original amount and currency; the exchange rate to the user's base currency is frozen at transaction date.
 - Sign-in: Google or a one-time 8-digit code sent to any email address (the first sign-in creates the account). OAuth codes and tokens are stored only as SHA-256 hashes; refresh tokens rotate on every use, and a used one presented again after a 30-second grace window (kept for parallel refreshes) revokes the whole sign-in (replay detection); access tokens live 24 hours.
 - Receipt photos are parsed client-side by the user's own AI; images never reach the server.
-- Bank statement import: hundreds of rows in one call with idempotent deduplication and total reconciliation.
 - Personal vs business entity tagging on accounts and transactions.
 - Privacy: EU data residency (Frankfurt database, Falkenstein server), every query scoped to the user's account by the server, database API closed to the public (deny-all row-level security), TLS to the database, no amounts or merchants in server logs, CSV transaction export plus a JSON profile export, and instant full account deletion that also revokes bank consent (GDPR).
 - Free while in beta. Built by Rteam (https://rteam.agency).
 
 ## Pages
 
-- https://myfinance-mcp.com/ : main landing with install steps for Claude, ChatGPT and other MCP clients
+- https://myfinance-mcp.com/ : main landing (AI expense tracker for Claude, ChatGPT and Cursor) with install tabs for Claude, ChatGPT, Cursor, Codex and other MCP clients
+- https://myfinance-mcp.com/install : hub of step-by-step install guides
+- https://myfinance-mcp.com/install/claude : Claude custom connector setup (every plan; Free allows one custom connector), sign-in, first prompts, troubleshooting
+- https://myfinance-mcp.com/install/chatgpt : ChatGPT setup with Developer mode, plan availability (Business/Enterprise/Edu full, Pro read-only, Free/Go/Plus not available), troubleshooting
+- https://myfinance-mcp.com/install/cursor : Cursor one-click install link and ~/.cursor/mcp.json config, sign-in, troubleshooting
+- https://myfinance-mcp.com/install/codex : Codex CLI (codex mcp add + codex mcp login), IDE extension and ChatGPT desktop app setup, troubleshooting
 - https://myfinance-mcp.com/alternatives : hub comparing MyFinance MCP to finance apps without MCP servers
 - https://myfinance-mcp.com/mint-mcp : Mint alternative (Mint shut down in 2024; CSV imports in one message)
 - https://myfinance-mcp.com/ynab-mcp : YNAB alternative (no official YNAB MCP server)

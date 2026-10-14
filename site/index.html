@@ -4,8 +4,8 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <script defer src="/consent.js"></script>
-<title>MyFinance MCP - Track your money by talking to your AI</title>
-<meta name="description" content="Free, open-source MCP server for personal finance. Connect Claude or ChatGPT and just say what you spent: expenses, budgets and net worth in 150+ currencies.">
+<title>MyFinance MCP - AI Expense Tracker for Claude, ChatGPT &amp; Cursor</title>
+<meta name="description" content="Free AI expense tracker for Claude, ChatGPT and Cursor: log spending by chat, set budgets in any currency and import statements from any bank. Open source.">
 <link rel="canonical" href="https://myfinance-mcp.com/">
 <meta name="theme-color" content="#FAF8F3" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#181712" media="(prefers-color-scheme: dark)">
@@ -17,12 +17,12 @@
 
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://myfinance-mcp.com/">
-<meta property="og:title" content="MyFinance MCP - Track your money by talking to your AI">
-<meta property="og:description" content="Free, open-source MCP server for personal finance. Connect Claude or ChatGPT and just say what you spent.">
+<meta property="og:title" content="MyFinance MCP - AI Expense Tracker for Claude, ChatGPT &amp; Cursor">
+<meta property="og:description" content="Free, open-source AI expense tracker for Claude, ChatGPT and Cursor. Say what you spent, set budgets in any currency, import statements from any bank.">
 <meta property="og:image" content="https://myfinance-mcp.com/og.png">
 <meta name="twitter:card" content="summary_large_image">
-<meta name="twitter:title" content="MyFinance MCP - Track your money by talking to your AI">
-<meta name="twitter:description" content="Free, open-source MCP server for personal finance. Connect Claude or ChatGPT and just say what you spent.">
+<meta name="twitter:title" content="MyFinance MCP - AI Expense Tracker for Claude, ChatGPT &amp; Cursor">
+<meta name="twitter:description" content="Free, open-source AI expense tracker for Claude, ChatGPT and Cursor. Say what you spent, set budgets in any currency, import statements from any bank.">
 <meta name="twitter:image" content="https://myfinance-mcp.com/og.png">
 
 <script type="application/ld+json">
@@ -33,13 +33,18 @@
   "url": "https://myfinance-mcp.com/",
   "applicationCategory": "FinanceApplication",
   "operatingSystem": "Web",
-  "description": "A free, open-source Model Context Protocol server that lets you track expenses, income, budgets and net worth through natural conversation with Claude or ChatGPT.",
+  "description": "A free, open-source AI expense tracker that runs as a Model Context Protocol server: track expenses, income, budgets and net worth in any currency by talking to Claude, ChatGPT, Codex or Cursor, and import statements from any bank.",
   "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
   "license": "https://opensource.org/licenses/MIT",
   "author": { "@type": "Organization", "name": "Rteam", "url": "https://rteam.agency" },
-  "sameAs": ["https://github.com/alex-odoo/myfinance-mcp", "https://smithery.ai/servers/alex-k4kb/MyFinance-MCP"],
+  "sameAs": [
+    "https://github.com/alex-odoo/myfinance-mcp",
+    "https://smithery.ai/servers/alex-k4kb/MyFinance-MCP",
+    "https://glama.ai/mcp/servers/alex-odoo/myfinance-mcp",
+    "https://registry.modelcontextprotocol.io/v0.1/servers/io.github.alex-odoo%2Fmyfinance-mcp/versions/latest"
+  ],
   "datePublished": "2026-07-13",
-  "dateModified": "2026-10-01"
+  "dateModified": "2026-10-14"
 }
 </script>
 <script type="application/ld+json">
@@ -60,14 +65,14 @@
   "@context": "https://schema.org",
   "@type": "FAQPage",
   "mainEntity": [
-    { "@type": "Question", "name": "What is MyFinance MCP?", "acceptedAnswer": { "@type": "Answer", "text": "A free Model Context Protocol server that lets you track expenses, income, budgets and net worth through natural conversation with Claude or ChatGPT. You tell your AI what you spent; it logs everything and the server does the math." } },
+    { "@type": "Question", "name": "What is MyFinance MCP?", "acceptedAnswer": { "@type": "Answer", "text": "A free AI expense tracker that runs as a Model Context Protocol server. You track expenses, income, budgets and net worth by talking to Claude, ChatGPT, Codex or Cursor: you tell your AI what you spent, it logs everything and the server does the math." } },
     { "@type": "Question", "name": "What is the Model Context Protocol (MCP)?", "acceptedAnswer": { "@type": "Answer", "text": "An open standard that lets AI assistants connect to external tools. An MCP server provides specific capabilities, here personal finance tracking, that the AI can use during a conversation. Think of it as a plugin system for AI assistants." } },
-    { "@type": "Question", "name": "Does it work with ChatGPT?", "acceptedAnswer": { "@type": "Answer", "text": "Yes. Settings, then Apps, then create a custom app with the server URL using OAuth. Works on every ChatGPT plan." } },
-    { "@type": "Question", "name": "Which clients are supported?", "acceptedAnswer": { "@type": "Answer", "text": "Any MCP client with OAuth 2.0 + PKCE: Claude.ai, Claude desktop and mobile, Claude Code, Cursor, Windsurf, VS Code." } },
+    { "@type": "Question", "name": "Does it work with ChatGPT?", "acceptedAnswer": { "@type": "Answer", "text": "Yes, in ChatGPT on the web with Developer mode turned on. Full support, logging included, is on ChatGPT Business, Enterprise and Edu. On Pro, OpenAI gives custom MCP servers read-only access, and Free, Go and Plus cannot add custom MCP servers. On any ChatGPT plan, Free included, you can use MyFinance through Codex instead. Both setups are in the ChatGPT guide." } },
+    { "@type": "Question", "name": "Which clients are supported?", "acceptedAnswer": { "@type": "Answer", "text": "Any MCP client with OAuth 2.0 + PKCE: Claude (web, desktop and mobile), Claude Code, ChatGPT (Business, Enterprise and Edu, on the web), Codex, Cursor, Windsurf and VS Code. Each has a step-by-step guide on the install page." } },
     { "@type": "Question", "name": "Do I need a Google account?", "acceptedAnswer": { "@type": "Answer", "text": "No. When you connect, sign in with Google or with a one-time code sent to any email address; the first sign-in creates your account." } },
     { "@type": "Question", "name": "Is it free?", "acceptedAnswer": { "@type": "Answer", "text": "Yes, free while in beta. No ads, no card." } },
     { "@type": "Question", "name": "Is my data private?", "acceptedAnswer": { "@type": "Answer", "text": "Your data is linked to your account and only you can access it. EU hosting, no third-party sharing, no amounts in logs, sign-in tokens stored only as a one-way hash, and you can export (transactions as CSV, the rest of your profile as one file) or delete everything at any time." } },
-    { "@type": "Question", "name": "Can it read my bank account?", "acceptedAnswer": { "@type": "Answer", "text": "Yes, optionally and read-only. In the EU and UK you can connect your bank through licensed open banking (PSD2): you approve access on your bank's own page, confirm which MyFinance account receives it, and new transactions sync in daily. Your bank credentials never touch our server, and you can revoke access at any time. Bank connections are in beta and enabled gradually; voice, receipts and statement import work without any bank link." } },
+    { "@type": "Question", "name": "Can it read my bank account?", "acceptedAnswer": { "@type": "Answer", "text": "It does not need to: it works with any bank through statement import. Export a CSV or PDF, or take a screenshot in your banking app, and drop it in the chat. Your AI reads it, the server imports every row, skips duplicates and checks the total against the statement. ZenMoney users can link ZenMoney for a read-only sync. Direct EU and UK bank sync through licensed open banking is a closed beta, by invitation only." } },
     { "@type": "Question", "name": "What about duplicates when I import a statement?", "acceptedAnswer": { "@type": "Answer", "text": "The importer detects rows you already logged by hand and merges them instead of duplicating, and re-importing the same statement is safe: already-imported rows are skipped and reported." } },
     { "@type": "Question", "name": "Can I split personal and business?", "acceptedAnswer": { "@type": "Answer", "text": "Yes. Accounts and individual transactions carry a personal/business tag; every report can be filtered by it, and the CSV export includes it for your accountant." } },
     { "@type": "Question", "name": "Can I self-host it?", "acceptedAnswer": { "@type": "Answer", "text": "Yes. MIT-licensed, runs from a Dockerfile with your own Postgres (Supabase works). The GitHub repository includes a self-hosting guide." } }
@@ -96,7 +101,7 @@
       MyFinance&nbsp;<b>MCP</b></a>
     <nav class="main" aria-label="Main">
       <a href="#how">How it works</a>
-      <a href="#bank">Bank sync</a>
+      <a href="#import">Statements</a>
       <a href="#install">Install</a>
       <a href="#examples">Examples</a>
       <a href="/alternatives">Alternatives</a>
@@ -116,10 +121,10 @@
         <span class="chip acc">Free</span>
         <span class="chip acc">Open source · MIT</span>
         <span class="chip">OAuth 2.0</span>
-        <span class="chip acc">New · Live bank sync</span>
+        <span class="chip">150+ currencies</span>
       </div>
       <h1>Track your money by <span class="talk">talking</span> to your AI.</h1>
-      <p class="hero-sub">Connect Claude or ChatGPT, then just say what you spent. Expenses, income, budgets and net worth, logged and computed for you, in 150+ currencies. Or <a href="#bank">connect your bank</a> and skip even the typing.</p>
+      <p class="hero-sub">An AI expense tracker that lives in Claude, ChatGPT or Cursor: just say what you spent. Expenses, income, budgets and net worth, logged and computed for you, in 150+ currencies. Got a statement from any bank? <a href="#import">Drop it in the chat</a>.</p>
       <div class="cta-row">
         <a class="btn btn-solid" href="#install">Quick install</a>
         <a class="btn btn-ghost" href="#video">See it in action</a>
@@ -136,7 +141,7 @@
       <div class="demo-body" id="demoBody"></div>
       <div class="demo-foot">
         <div class="demo-chips" id="demoChips" aria-label="Try a demo question">
-          <button data-s="1">Sync my bank</button>
+          <button data-s="1">Import a statement</button>
           <button data-s="2">Restaurants in June?</button>
           <button data-s="3">Net worth?</button>
         </div>
@@ -177,12 +182,12 @@
       <div class="step">
         <span class="n">Step 1 / 3</span>
         <h3>Connect once.</h3>
-        <p>Works with any AI client that supports remote MCP servers: Claude, ChatGPT, Cursor and more. No install, no API keys.</p>
+        <p>Works with any AI client that supports remote MCP servers: Claude, ChatGPT, Codex, Cursor and more. No install, no API keys.</p>
       </div>
       <div class="step">
         <span class="n">Step 2 / 3</span>
         <h3>Just say what you spent.</h3>
-        <p>Plain language, a receipt photo, or a whole bank statement. Categories, currencies and duplicates handled automatically.</p>
+        <p>Plain language, a receipt photo, or a whole statement from any bank. Categories, currencies and duplicates handled automatically.</p>
       </div>
       <div class="step">
         <span class="n">Step 3 / 3</span>
@@ -193,18 +198,18 @@
   </div>
 </section>
 
-<section id="bank">
+<section id="import">
   <span class="swm left" aria-hidden="true">₴</span>
   <div class="wrap">
-    <span class="eyebrow">Bank sync · beta</span>
-    <h2>Connect your bank. Skip even the typing.</h2>
-    <p class="sec-sub">Say "connect my bank" in the chat, approve read-only access on your bank's own page, and new transactions arrive daily on their own. No CSV, no retyping, no separate app.</p>
+    <span class="eyebrow">Any bank · statement import</span>
+    <h2>Works with any bank. Just drop the statement.</h2>
+    <p class="sec-sub">Export a CSV or PDF from your bank, or take a screenshot in your banking app, and drop it into the chat. Your AI reads it, the server imports every row, skips what you already have and checks the result against the statement total.</p>
     <div class="feat-grid cols3 reveal">
-      <div class="feat"><span class="fi num">eu &amp; uk</span><h3>2,700+ banks, including Revolut</h3><p>Open banking coverage across 30 European countries through a licensed provider (Enable Banking). ZenMoney sync covers more; statement import works everywhere.</p></div>
-      <div class="feat"><span class="fi num">read-only</span><h3>Your credentials never touch us</h3><p>You sign in on the bank's own page and grant read-only consent under PSD2; we store no bank passwords. Before anything connects, you see which MyFinance account gets the access, and you can revoke it any time, at the bank or in chat.</p></div>
-      <div class="feat"><span class="fi num">clean data</span><h3>Arrives already tidy</h3><p>Duplicates skipped, hand-logged rows merged instead of doubled, currency exchanges recognized as transfers between your own accounts, balances anchored to what your bank reports.</p></div>
+      <div class="feat"><span class="fi num">any bank</span><h3>CSV, PDF or a screenshot</h3><p>Every bank can export a statement, in any country and any currency. Hundreds of rows go in with one message, each kept in the currency it was paid in.</p></div>
+      <div class="feat"><span class="fi num">no doubles</span><h3>Duplicates skipped, your edits kept</h3><p>Rows you already logged by hand are merged, not doubled, and keep your category. Dropping the same statement twice is safe: already-imported rows are skipped and reported.</p></div>
+      <div class="feat"><span class="fi num">reconciled</span><h3>Checked against the statement</h3><p>Every import ends with a total computed in SQL and compared with the one printed on the statement, so a misread row shows up now, not months later.</p></div>
     </div>
-    <p class="soften">Bank connections are in beta and enabled gradually. Statement import and ZenMoney sync are open to everyone today.</p>
+    <p class="soften">On ZenMoney (popular in Ukraine, Russia, Kazakhstan and Belarus)? Paste your free ZenMoney API token in the chat once and your accounts and transactions sync in, read-only, with your edits kept.</p>
   </div>
 </section>
 
@@ -259,37 +264,64 @@
   <div class="wrap">
     <span class="eyebrow">Quick install</span>
     <h2>Connect in under a minute</h2>
-    <p class="sec-sub">Works with any MCP client that supports OAuth 2.0 with PKCE. You sign in once during the connect step, with Google or with a one-time code sent to your email. There is no separate web login: your AI is the app.</p>
+    <p class="sec-sub">Works with any MCP client that supports OAuth 2.0 with PKCE. You sign in once during the connect step, with Google or with a one-time code sent to your email. There is no separate web login: your AI is the app. Want more detail? See the <a href="/install">step-by-step install guides</a>.</p>
 
     <div class="tabs" role="tablist" aria-label="Install instructions">
       <button class="tab" role="tab" aria-selected="true" data-p="p-claude">Claude</button>
       <button class="tab" role="tab" aria-selected="false" data-p="p-chatgpt">ChatGPT</button>
-      <button class="tab" role="tab" aria-selected="false" data-p="p-other">Other agents</button>
+      <button class="tab" role="tab" aria-selected="false" data-p="p-cursor">Cursor</button>
+      <button class="tab" role="tab" aria-selected="false" data-p="p-codex">Codex</button>
+      <button class="tab" role="tab" aria-selected="false" data-p="p-other">Other</button>
     </div>
 
     <div class="panel on" id="p-claude" role="tabpanel">
       <ol>
-        <li>Open Claude and click <b>Customize</b></li>
-        <li>Click <b>Connectors</b></li>
-        <li>Click <b>+</b>, then <b>Add custom connector</b></li>
-        <li>Name it, for example "MyFinance"</li>
-        <li>Paste <span class="srv-url">https://myfinance-mcp.com/mcp</span> into Remote MCP server URL</li>
-        <li><b>Leave the OAuth Client ID and Client Secret fields empty</b></li>
-        <li>Click <b>Add</b>, then <b>Connect</b> and sign in</li>
+        <li>Open Claude and go to <b>Customize</b>, then <b>Connectors</b></li>
+        <li>Click <b>+ Add</b>, then <b>Add custom connector</b></li>
+        <li>Name it "MyFinance", paste <span class="srv-url">https://myfinance-mcp.com/mcp</span> as the remote MCP server URL and click <b>Continue</b></li>
+        <li>Choose <b>Sign in now</b> and, under OAuth client, <b>Register automatically</b></li>
+        <li>Click <b>Add</b>, then sign in with Google or an email code</li>
       </ol>
-      <div class="warn-line">Filling the Client ID or Secret fields breaks sign-in. Your credentials go on the MyFinance sign-in page instead.</div>
-      <p class="soft">Works on every Claude plan. The free plan allows one connected MCP server at a time.</p>
+      <div class="warn-line">Never pick "Use your own OAuth client" and never fill a Client ID or Secret: that breaks sign-in. MyFinance registers Claude by itself, and your credentials go on the MyFinance sign-in page.</div>
+      <p class="soft">Works on every Claude plan; the Free plan allows one custom connector. <a href="/install/claude">Full Claude guide</a> with first prompts and fixes.</p>
     </div>
 
     <div class="panel" id="p-chatgpt" role="tabpanel">
       <ol>
-        <li>Open <b>Settings</b>, then <b>Apps</b></li>
-        <li>Click <b>Create app</b></li>
-        <li>Paste <span class="srv-url">https://myfinance-mcp.com/mcp</span> as the URL</li>
-        <li>Choose <b>OAuth</b> as authentication</li>
-        <li>Click <b>Create</b>, then sign in</li>
+        <li>Turn on <b>Developer mode</b>: <b>Settings</b>, then <b>Apps</b>, then <b>Advanced settings</b></li>
+        <li>Open <b>Plugins</b>, click <b>+</b>, then <b>Add custom MCP server</b> (on the older menu: <b>Settings</b>, <b>Apps</b>, <b>Create</b>)</li>
+        <li>Name it "MyFinance" and paste <span class="srv-url">https://myfinance-mcp.com/mcp</span> as the server URL</li>
+        <li>Choose <b>OAuth</b> as authentication, leave the client ID and secret empty</li>
+        <li>Accept the risk warning, create it and sign in</li>
+        <li>In a new chat, type <b>@</b> and pick MyFinance</li>
       </ol>
-      <p class="soft">Works right away and shows up in your iOS and Android apps automatically.</p>
+      <div class="warn-line">ChatGPT needs Developer mode on the web. Logging works on Business, Enterprise and Edu; Pro gets read-only access; Free, Go and Plus cannot add custom MCP servers, so use <a href="/install/codex">Codex</a> (in every ChatGPT plan) or Claude.</div>
+      <p class="soft">Web only, not in the ChatGPT mobile apps. <a href="/install/chatgpt">Full ChatGPT guide</a> with plan details and fixes.</p>
+    </div>
+
+    <div class="panel" id="p-cursor" role="tabpanel">
+      <p class="panel-cta"><a class="btn btn-solid" href="https://cursor.com/install-mcp?name=MyFinance&amp;config=eyJ1cmwiOiJodHRwczovL215ZmluYW5jZS1tY3AuY29tL21jcCJ9">Add to Cursor</a></p>
+      <ol>
+        <li>Click <b>Add to Cursor</b> and confirm the install prompt in Cursor</li>
+        <li>Open <b>Customize</b> in the sidebar, find MyFinance under MCP servers and click <b>Connect</b></li>
+        <li>Sign in with Google or an email code, then ask in the Agent chat</li>
+      </ol>
+      <p class="soft">Manual setup: add this to <code class="inline">~/.cursor/mcp.json</code></p>
+<pre class="code">{
+  "mcpServers": {
+    "myfinance": {
+      "url": "<span class="srv-url">https://myfinance-mcp.com/mcp</span>"
+    }
+  }
+}</pre>
+      <p class="soft"><a href="/install/cursor">Full Cursor guide</a> with first prompts and fixes.</p>
+    </div>
+
+    <div class="panel" id="p-codex" role="tabpanel">
+<pre class="code">codex mcp add myfinance \
+  --url <span class="srv-url">https://myfinance-mcp.com/mcp</span>
+codex mcp login myfinance</pre>
+      <p class="soft">The second command opens the MyFinance sign-in page in your browser. Then start <code class="inline">codex</code> and type <code class="inline">/mcp</code> to check the connection. In the Codex IDE extension or the ChatGPT desktop app: <b>MCP servers</b>, then <b>Add server</b>, Streamable HTTP, the same URL, then <b>Authenticate</b>. Codex is included in every ChatGPT plan, Free and Go too. <a href="/install/codex">Full Codex guide</a>.</p>
     </div>
 
     <div class="panel" id="p-other" role="tabpanel">
@@ -314,7 +346,7 @@
     <div class="feat-grid reveal">
       <div class="feat"><span class="fi num">log</span><h3>Plain-language logging</h3><p>Say what you spent or earned; category, currency and date are extracted for you.</p></div>
       <div class="feat"><span class="fi num">scan</span><h3>Receipt photos</h3><p>Snap a receipt; your AI parses it in the chat. Images never reach our server.</p></div>
-      <div class="feat"><span class="fi num">import</span><h3>Bank statement import</h3><p>Drop a CSV or PDF export; hundreds of rows in one call, duplicates detected, totals reconciled.</p></div>
+      <div class="feat"><span class="fi num">import</span><h3>Any bank, by statement</h3><p>Drop a CSV, PDF or a screenshot from your banking app; hundreds of rows in one call, duplicates detected, totals reconciled.</p></div>
       <div class="feat"><span class="fi num">fx</span><h3>150+ currencies</h3><p>Log in the currency you paid in, from EUR and USD to RUB, KZT, GEL or TRY (ECB and National Bank of Ukraine rates, plus a daily snapshot for every other ISO currency since March 2024); summaries answer in your base currency, rate frozen at transaction date.</p></div>
       <div class="feat"><span class="fi num">cap</span><h3>Budgets</h3><p>Monthly caps per category or overall, with live progress. Alerts only when you actually exceed one.</p></div>
       <div class="feat"><span class="fi num">trend</span><h3>Summaries and trends</h3><p>By category, merchant or month; month-over-month deltas computed server-side.</p></div>
@@ -344,13 +376,13 @@
         <h3>MyFinance MCP</h3>
         <ul>
           <li>Say it, snap it, or import the statement</li>
-          <li>Works inside Claude or ChatGPT, free</li>
+          <li>Works inside Claude, ChatGPT or Cursor, free</li>
           <li>Math in SQL, never AI guessing</li>
           <li>150+ currencies, honest totals</li>
         </ul>
       </div>
     </div>
-    <p class="soften">Switching from a specific app? See how MyFinance MCP compares to <a href="/alternatives">Mint, YNAB and other trackers</a>.</p>
+    <p class="soften">Switching from <a href="/ynab-mcp">YNAB</a>, <a href="/mint-mcp">Mint</a>, <a href="/monarch-money-mcp">Monarch Money</a>, <a href="/lunch-money-mcp">Lunch Money</a>, <a href="/copilot-money-mcp">Copilot Money</a>, <a href="/actual-budget-mcp">Actual Budget</a>, <a href="/firefly-iii-mcp">Firefly III</a> or <a href="/pocketguard-mcp">PocketGuard</a>? See how each compares, or browse <a href="/alternatives">all alternatives</a>.</p>
   </div>
 </section>
 
@@ -399,7 +431,7 @@
     <div class="faq reveal">
       <details>
         <summary>What is MyFinance MCP?</summary>
-        <p class="fa">A free Model Context Protocol server that lets you track expenses, income, budgets and net worth through natural conversation with Claude or ChatGPT. You tell your AI what you spent; it logs everything and the server does the math.</p>
+        <p class="fa">A free AI expense tracker that runs as a Model Context Protocol server. You track expenses, income, budgets and net worth by talking to Claude, ChatGPT, Codex or Cursor: you tell your AI what you spent, it logs everything and the server does the math.</p>
       </details>
       <details>
         <summary>What is the Model Context Protocol (MCP)?</summary>
@@ -407,11 +439,11 @@
       </details>
       <details>
         <summary>Does it work with ChatGPT?</summary>
-        <p class="fa">Yes. Settings, then Apps, then create a custom app with the server URL using OAuth. Works on every ChatGPT plan.</p>
+        <p class="fa">Yes, in ChatGPT on the web with Developer mode turned on. Full support, logging included, is on ChatGPT Business, Enterprise and Edu. On Pro, OpenAI gives custom MCP servers read-only access, and Free, Go and Plus cannot add custom MCP servers. On any ChatGPT plan, Free included, you can use MyFinance through <a href="/install/codex">Codex</a> instead. Both setups are in the <a href="/install/chatgpt">ChatGPT guide</a>.</p>
       </details>
       <details>
         <summary>Which clients are supported?</summary>
-        <p class="fa">Any MCP client with OAuth 2.0 + PKCE: Claude.ai, Claude desktop and mobile, Claude Code, Cursor, Windsurf, VS Code.</p>
+        <p class="fa">Any MCP client with OAuth 2.0 + PKCE: Claude (web, desktop and mobile), Claude Code, ChatGPT (Business, Enterprise and Edu, on the web), Codex, Cursor, Windsurf and VS Code. Each has a step-by-step guide on the <a href="/install">install page</a>.</p>
       </details>
       <details>
         <summary>Do I need a Google account?</summary>
@@ -427,7 +459,7 @@
       </details>
       <details>
         <summary>Can it read my bank account?</summary>
-        <p class="fa">Yes, optionally and read-only. In the EU and UK you can connect your bank through licensed open banking (PSD2): you approve access on your bank's own page, confirm which MyFinance account receives it, and new transactions sync in daily. Your bank credentials never touch our server, and you can revoke access at any time. Bank connections are in beta and enabled gradually; voice, receipts and statement import work without any bank link.</p>
+        <p class="fa">It does not need to: it works with any bank through statement import. Export a CSV or PDF, or take a screenshot in your banking app, and drop it in the chat. Your AI reads it, the server imports every row, skips duplicates and checks the total against the statement. ZenMoney users can link ZenMoney for a read-only sync. Direct EU and UK bank sync through licensed open banking is a closed beta, by invitation only.</p>
       </details>
       <details>
         <summary>What about duplicates when I import a statement?</summary>
@@ -470,6 +502,7 @@
 
 <footer class="site">
   <div class="wrap foot-inner">
+    <a href="/install">Install guides</a>
     <a href="/alternatives">Alternatives</a>
     <a href="/blog">Blog</a>
     <a href="https://github.com/alex-odoo/myfinance-mcp" target="_blank" rel="noopener">GitHub</a>

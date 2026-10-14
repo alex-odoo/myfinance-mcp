@@ -2,61 +2,91 @@
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
   <url>
     <loc>https://myfinance-mcp.com/</loc>
-    <lastmod>2026-10-01</lastmod>
+    <lastmod>2026-10-14</lastmod>
     <changefreq>weekly</changefreq>
     <priority>1.0</priority>
   </url>
   <url>
+    <loc>https://myfinance-mcp.com/install</loc>
+    <lastmod>2026-10-14</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+  </url>
+  <url>
+    <loc>https://myfinance-mcp.com/install/claude</loc>
+    <lastmod>2026-10-14</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.7</priority>
+  </url>
+  <url>
+    <loc>https://myfinance-mcp.com/install/chatgpt</loc>
+    <lastmod>2026-10-14</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.7</priority>
+  </url>
+  <url>
+    <loc>https://myfinance-mcp.com/install/cursor</loc>
+    <lastmod>2026-10-14</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.7</priority>
+  </url>
+  <url>
+    <loc>https://myfinance-mcp.com/install/codex</loc>
+    <lastmod>2026-10-14</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.7</priority>
+  </url>
+  <url>
     <loc>https://myfinance-mcp.com/alternatives</loc>
-    <lastmod>2026-07-19</lastmod>
+    <lastmod>2026-10-14</lastmod>
     <changefreq>monthly</changefreq>
     <priority>0.8</priority>
   </url>
   <url>
     <loc>https://myfinance-mcp.com/mint-mcp</loc>
-    <lastmod>2026-10-01</lastmod>
+    <lastmod>2026-10-14</lastmod>
     <changefreq>monthly</changefreq>
     <priority>0.7</priority>
   </url>
   <url>
     <loc>https://myfinance-mcp.com/ynab-mcp</loc>
-    <lastmod>2026-10-01</lastmod>
+    <lastmod>2026-10-14</lastmod>
     <changefreq>monthly</changefreq>
     <priority>0.7</priority>
   </url>
   <url>
     <loc>https://myfinance-mcp.com/monarch-money-mcp</loc>
-    <lastmod>2026-10-01</lastmod>
+    <lastmod>2026-10-14</lastmod>
     <changefreq>monthly</changefreq>
     <priority>0.7</priority>
   </url>
   <url>
     <loc>https://myfinance-mcp.com/lunch-money-mcp</loc>
-    <lastmod>2026-10-01</lastmod>
+    <lastmod>2026-10-14</lastmod>
     <changefreq>monthly</changefreq>
     <priority>0.7</priority>
   </url>
   <url>
     <loc>https://myfinance-mcp.com/copilot-money-mcp</loc>
-    <lastmod>2026-10-01</lastmod>
+    <lastmod>2026-10-14</lastmod>
     <changefreq>monthly</changefreq>
     <priority>0.7</priority>
   </url>
   <url>
     <loc>https://myfinance-mcp.com/actual-budget-mcp</loc>
-    <lastmod>2026-10-01</lastmod>
+    <lastmod>2026-10-14</lastmod>
     <changefreq>monthly</changefreq>
     <priority>0.7</priority>
   </url>
   <url>
     <loc>https://myfinance-mcp.com/firefly-iii-mcp</loc>
-    <lastmod>2026-10-01</lastmod>
+    <lastmod>2026-10-14</lastmod>
     <changefreq>monthly</changefreq>
     <priority>0.7</priority>
   </url>
   <url>
     <loc>https://myfinance-mcp.com/pocketguard-mcp</loc>
-    <lastmod>2026-10-01</lastmod>
+    <lastmod>2026-10-14</lastmod>
     <changefreq>monthly</changefreq>
     <priority>0.7</priority>
   </url>
@@ -68,31 +98,31 @@
   </url>
   <url>
     <loc>https://myfinance-mcp.com/blog</loc>
-    <lastmod>2026-07-20</lastmod>
+    <lastmod>2026-10-14</lastmod>
     <changefreq>weekly</changefreq>
     <priority>0.7</priority>
   </url>
   <url>
     <loc>https://myfinance-mcp.com/blog/track-expenses-with-ai</loc>
-    <lastmod>2026-07-20</lastmod>
+    <lastmod>2026-10-14</lastmod>
     <changefreq>monthly</changefreq>
     <priority>0.6</priority>
   </url>
   <url>
     <loc>https://myfinance-mcp.com/blog/is-it-safe-to-share-financial-data-with-ai</loc>
-    <lastmod>2026-07-20</lastmod>
+    <lastmod>2026-10-14</lastmod>
     <changefreq>monthly</changefreq>
     <priority>0.6</priority>
   </url>
   <url>
     <loc>https://myfinance-mcp.com/blog/import-bank-statement-into-ai</loc>
-    <lastmod>2026-07-20</lastmod>
+    <lastmod>2026-10-14</lastmod>
     <changefreq>monthly</changefreq>
     <priority>0.6</priority>
   </url>
   <url>
     <loc>https://myfinance-mcp.com/blog/what-is-an-mcp-server-for-personal-finance</loc>
-    <lastmod>2026-07-20</lastmod>
+    <lastmod>2026-10-14</lastmod>
     <changefreq>monthly</changefreq>
     <priority>0.6</priority>
   </url>
