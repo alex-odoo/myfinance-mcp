@@ -67,7 +67,7 @@
   "mainEntity": [
     { "@type": "Question", "name": "What is MyFinance MCP?", "acceptedAnswer": { "@type": "Answer", "text": "A free AI expense tracker that runs as a Model Context Protocol server. You track expenses, income, budgets and net worth by talking to Claude, ChatGPT, Codex or Cursor: you tell your AI what you spent, it logs everything and the server does the math." } },
     { "@type": "Question", "name": "What is the Model Context Protocol (MCP)?", "acceptedAnswer": { "@type": "Answer", "text": "An open standard that lets AI assistants connect to external tools. An MCP server provides specific capabilities, here personal finance tracking, that the AI can use during a conversation. Think of it as a plugin system for AI assistants." } },
-    { "@type": "Question", "name": "Does it work with ChatGPT?", "acceptedAnswer": { "@type": "Answer", "text": "Yes, in ChatGPT on the web with Developer mode turned on. Full support, logging included, is on ChatGPT Business, Enterprise and Edu. On Pro, OpenAI gives custom MCP servers read-only access, and Free, Go and Plus cannot add custom MCP servers. On any ChatGPT plan, Free included, you can use MyFinance through Codex instead. Both setups are in the ChatGPT guide." } },
+    { "@type": "Question", "name": "Does it work with ChatGPT?", "acceptedAnswer": { "@type": "Answer", "text": "Yes, in ChatGPT on the web with Developer mode turned on. Full support, logging included, is on ChatGPT Business, Enterprise and Edu. On Pro, OpenAI gives custom MCP servers read-only access; its help center does not list Developer mode for Free, Go or Plus, so if you do not see it there, use Codex (in every ChatGPT plan). On any ChatGPT plan, Free included, you can use MyFinance through Codex instead. Both setups are in the ChatGPT guide." } },
     { "@type": "Question", "name": "Which clients are supported?", "acceptedAnswer": { "@type": "Answer", "text": "Any MCP client with OAuth 2.0 + PKCE: Claude (web, desktop and mobile), Claude Code, ChatGPT (Business, Enterprise and Edu, on the web), Codex, Cursor, Windsurf and VS Code. Each has a step-by-step guide on the install page." } },
     { "@type": "Question", "name": "Do I need a Google account?", "acceptedAnswer": { "@type": "Answer", "text": "No. When you connect, sign in with Google or with a one-time code sent to any email address; the first sign-in creates your account." } },
     { "@type": "Question", "name": "Is it free?", "acceptedAnswer": { "@type": "Answer", "text": "Yes, free while in beta. No ads, no card." } },
@@ -295,7 +295,7 @@
         <li>Accept the risk warning, create it and sign in</li>
         <li>In a new chat, type <b>@</b> and pick MyFinance</li>
       </ol>
-      <div class="warn-line">ChatGPT needs Developer mode on the web. Logging works on Business, Enterprise and Edu; Pro gets read-only access; Free, Go and Plus cannot add custom MCP servers, so use <a href="/install/codex">Codex</a> (in every ChatGPT plan) or Claude.</div>
+      <div class="warn-line">ChatGPT needs Developer mode on the web. Logging works on Business, Enterprise and Edu; Pro gets read-only access. OpenAI does not list Developer mode for Free, Go or Plus: if you do not see it, use <a href="/install/codex">Codex</a> (in every ChatGPT plan) or Claude.</div>
       <p class="soft">Web only, not in the ChatGPT mobile apps. <a href="/install/chatgpt">Full ChatGPT guide</a> with plan details and fixes.</p>
     </div>
 
@@ -439,7 +439,7 @@ codex mcp login myfinance</pre>
       </details>
       <details>
         <summary>Does it work with ChatGPT?</summary>
-        <p class="fa">Yes, in ChatGPT on the web with Developer mode turned on. Full support, logging included, is on ChatGPT Business, Enterprise and Edu. On Pro, OpenAI gives custom MCP servers read-only access, and Free, Go and Plus cannot add custom MCP servers. On any ChatGPT plan, Free included, you can use MyFinance through <a href="/install/codex">Codex</a> instead. Both setups are in the <a href="/install/chatgpt">ChatGPT guide</a>.</p>
+        <p class="fa">Yes, in ChatGPT on the web with Developer mode turned on. Full support, logging included, is on ChatGPT Business, Enterprise and Edu. On Pro, OpenAI gives custom MCP servers read-only access; its help center does not list Developer mode for Free, Go or Plus, so if you do not see it there, use Codex (in every ChatGPT plan). On any ChatGPT plan, Free included, you can use MyFinance through <a href="/install/codex">Codex</a> instead. Both setups are in the <a href="/install/chatgpt">ChatGPT guide</a>.</p>
       </details>
       <details>
         <summary>Which clients are supported?</summary>

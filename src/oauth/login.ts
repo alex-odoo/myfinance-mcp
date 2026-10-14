@@ -18,7 +18,7 @@ export interface LoginClient {
 
 const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
 // Redirect hosts of the AI clients we know (and their subdomains).
-const KNOWN_CLIENT_HOSTS = ["claude.ai", "claude.com", "chatgpt.com", "chat.openai.com"];
+const KNOWN_CLIENT_HOSTS = ["claude.ai", "claude.com", "chatgpt.com", "chat.openai.com", "cursor.com"];
 const THIS_DEVICE = "an app on this device";
 
 /**
