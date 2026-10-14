@@ -8,7 +8,7 @@ import { db, logEvent } from "./db";
 import { OAuthStore } from "./oauth/store";
 import { FinanceOAuthProvider, SUPPORTED_SCOPES, authorizeRequestProblem } from "./oauth/provider";
 import { escapeHtml, loginPage, maskEmail } from "./oauth/login";
-import { bootstrapUser } from "./users";
+import { bootstrapUser, markSettledCurrencies } from "./users";
 import { buildMcpServer, SERVER_NAME, SERVER_VERSION } from "./mcp";
 import { EXPENSE_CATEGORIES, INCOME_CATEGORIES } from "./categories";
 import { instrumentTransport, pruneOldEvents } from "./telemetry";
@@ -43,6 +43,8 @@ await db.category.createMany({
   skipDuplicates: true,
 });
 await bootstrapUser();
+const settled = await markSettledCurrencies();
+if (settled) console.log(`[users] marked ${settled} account(s) as having chosen their base currency`);
 await pruneOldEvents();
 setInterval(() => void pruneOldEvents(), 24 * 60 * 60 * 1000);
 

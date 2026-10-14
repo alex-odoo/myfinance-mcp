@@ -2295,6 +2295,19 @@ async function main(): Promise<void> {
         failed.text
       );
       await f.close();
+      // A pre-0.16 account (chosen UAH, never marked): a failed first entry restores UAH, not EUR
+      const legacy = await fresh({ baseCurrency: "UAH" });
+      const l = await inProcess(legacy.id);
+      await l.tool("log_expense", { amount: 100, currency: "ARS", account: "No Such Account" });
+      ok("an undone adoption restores the base that was there", (await cdb.user.findUniqueOrThrow({ where: { id: legacy.id } })).baseCurrency === "UAH");
+      await l.close();
+      // Choosing the default currency explicitly settles it: no adoption afterwards
+      const explicitEur = await fresh();
+      const ee = await inProcess(explicitEur.id);
+      await ee.tool("update_settings", { base_currency: "EUR" });
+      await ee.tool("log_expense", { amount: 100, currency: "ARS" });
+      ok("an explicit choice of the default currency is never replaced", (await cdb.user.findUniqueOrThrow({ where: { id: explicitEur.id } })).baseCurrency === "EUR");
+      await ee.close();
       const today = new Date().toISOString().slice(0, 10);
       const imp = await a.tool("import_transactions", {
         transactions: [
@@ -2452,6 +2465,24 @@ async function main(): Promise<void> {
       await w.tool("update_settings", { email_digest: "weekly" });
       const quiet = await runDigests(new Date(Date.now() + 8 * 86_400_000), uw.id);
       ok("a week with no records sends nothing", quiet.sent === 0 && quiet.skipped === 1, JSON.stringify(quiet));
+      const uw2 = await fresh({ currencySetAt: new Date() });
+      const w2 = await inProcess(uw2.id);
+      await w2.tool("update_settings", { email_digest: "weekly" });
+      await w2.tool("log_expense", { amount: 30, category: "groceries", merchant: "Lidl" });
+      const nowUtc = new Date();
+      const nextMonday = new Date(
+        Date.UTC(nowUtc.getUTCFullYear(), nowUtc.getUTCMonth(), nowUtc.getUTCDate() + (((8 - nowUtc.getUTCDay()) % 7) || 7), 12)
+      );
+      const mailsBeforeWeekly = sentMail.length;
+      const weekly = await runDigests(nextMonday, uw2.id);
+      const weeklyMail = sentMail.slice(mailsBeforeWeekly).find((m) => m.to === uw2.email);
+      ok(
+        "the weekly summary reads 'Your week of ...' and covers the week just ended",
+        weekly.sent === 1 && !!weeklyMail && /^Your week of [A-Z][a-z]{2} \d{1,2} with MyFinance: 30 EUR spent$/.test(weeklyMail.subject) &&
+          weeklyMail.text.startsWith("Your summary for the week of"),
+        JSON.stringify({ weekly, weeklyMail })
+      );
+      await w2.close();
 
       // Unsubscribe: GET only asks, POST (the button or the mail client's one-click) stops
       const unsubUrl = (welcome?.headers?.["List-Unsubscribe"] ?? "").replace(/^<|>$/g, "");
@@ -2471,6 +2502,17 @@ async function main(): Promise<void> {
       ok(
         "one-click POST unsubscribes",
         oneClick.status === 200 && (await cdb.user.findUniqueOrThrow({ where: { id: ud.id } })).digest === "off"
+      );
+
+      // Boot marks pre-0.16 accounts that chose a currency or hold records
+      const { markSettledCurrencies } = await import("../src/users");
+      const chosenUah = await fresh({ baseCurrency: "UAH" });
+      const untouched = await fresh();
+      await markSettledCurrencies();
+      ok(
+        "boot marks a chosen non-default base as settled, and leaves an untouched new account alone",
+        !!(await cdb.user.findUniqueOrThrow({ where: { id: chosenUah.id } })).currencySetAt &&
+          (await cdb.user.findUniqueOrThrow({ where: { id: untouched.id } })).currencySetAt === null
       );
 
       for (const s of [a, b, c, bank, d, w]) await s.close();

@@ -72,7 +72,12 @@ async function entryCurrency(userId: string, currencies: Array<string | undefine
  * pesos, lei and baht that were totalled in euros. Runs as a base switch, so
  * no writer prices against the old base meanwhile. Returns the adopted code.
  */
-async function adoptFirstCurrency(userId: string, currency: string | undefined): Promise<string | null> {
+interface Adoption {
+  code: string;
+  previous: string;
+}
+
+async function adoptFirstCurrency(userId: string, currency: string | undefined): Promise<Adoption | null> {
   if (!currency) return null;
   const user = await getUser(userId);
   if (user.currencySetAt || user.baseCurrency === currency) return null;
@@ -82,11 +87,12 @@ async function adoptFirstCurrency(userId: string, currency: string | undefined):
     return null; // the write itself reports the currency
   }
   return asBaseSwitch(userId, async () => {
+    const current = await getUser(userId); // an explicit choice may have run first
     const { count } = await db.user.updateMany({
       where: { id: userId, currencySetAt: null, transactions: { none: {} }, budgets: { none: {} } },
       data: { baseCurrency: currency, currencySetAt: new Date() },
     });
-    return count === 1 ? currency : null;
+    return count === 1 ? { code: currency, previous: current.baseCurrency } : null;
   });
 }
 
@@ -94,18 +100,18 @@ async function adoptFirstCurrency(userId: string, currency: string | undefined):
  * Puts the default back when the write that adopted a currency failed: the
  * user's real currency must still be adoptable by the next entry.
  */
-async function undoAdoption(userId: string, adopted: string | null): Promise<void> {
+async function undoAdoption(userId: string, adopted: Adoption | null): Promise<void> {
   if (!adopted) return;
   await asBaseSwitch(userId, () =>
     db.user.updateMany({
-      where: { id: userId, baseCurrency: adopted, transactions: { none: {} }, budgets: { none: {} } },
-      data: { baseCurrency: "EUR", currencySetAt: null },
+      where: { id: userId, baseCurrency: adopted.code, transactions: { none: {} }, budgets: { none: {} } },
+      data: { baseCurrency: adopted.previous, currencySetAt: null },
     })
   ).catch(() => {});
 }
 
 /** Runs a write that may have adopted a currency; a failed write undoes the adoption. */
-async function adoptingWrite<T>(userId: string, adopted: string | null, write: () => Promise<T>): Promise<T> {
+async function adoptingWrite<T>(userId: string, adopted: Adoption | null, write: () => Promise<T>): Promise<T> {
   try {
     return await write();
   } catch (e) {
@@ -115,11 +121,13 @@ async function adoptingWrite<T>(userId: string, adopted: string | null, write: (
 }
 
 /** What a write tells the model about unsettled settings, until they are settled. */
-async function setupNote(userId: string, adopted: string | null): Promise<{ setup?: string }> {
-  const user = await getUser(userId);
+function setupNote(
+  user: { baseCurrency: string; timezone: string; currencySetAt: Date | null },
+  adopted: Adoption | null
+): { setup?: string } {
   const notes = [
     ...(adopted
-      ? [`Base currency set to ${adopted} from this first entry, so totals read in ${adopted}. If the user thinks in another currency, call update_settings.`]
+      ? [`Base currency set to ${adopted.code} from this first entry, so totals read in ${adopted.code}. If the user thinks in another currency, call update_settings.`]
       : !user.currencySetAt
         ? [`Base currency is still the default ${user.baseCurrency}. Ask the user which currency they think in and call update_settings.`]
         : []),
@@ -417,7 +425,7 @@ export function registerFinanceTools(server: McpServer, userId: string, options:
     async (input) => {
       const adopted = await adoptFirstCurrency(userId, await entryCurrency(userId, [input.currency], input.account));
       const logged = await adoptingWrite(userId, adopted, pricing(() => logTransaction(userId, "expense", input as LogInput)));
-      return text({ ...logged, ...(await setupNote(userId, adopted)) });
+      return text({ ...logged, ...setupNote(await getUser(userId), adopted) });
     }
   );
 
@@ -443,7 +451,7 @@ export function registerFinanceTools(server: McpServer, userId: string, options:
     async (input) => {
       const adopted = await adoptFirstCurrency(userId, await entryCurrency(userId, [input.currency], input.account));
       const logged = await adoptingWrite(userId, adopted, pricing(() => logTransaction(userId, "income", input as LogInput)));
-      return text({ ...logged, ...(await setupNote(userId, adopted)) });
+      return text({ ...logged, ...setupNote(await getUser(userId), adopted) });
     }
   );
 
@@ -1012,11 +1020,12 @@ export function registerFinanceTools(server: McpServer, userId: string, options:
       },
     },
     async (args) => {
-      const adopted =
+      let adopted =
         args.dry_run === true
           ? null
           : await adoptFirstCurrency(userId, await entryCurrency(userId, args.transactions.map((t) => t.currency), args.account));
-      return adoptingWrite(userId, adopted, () => pricing(async ({ account, statement_total, dry_run, transactions }: typeof args) => {
+      const result = await adoptingWrite(userId, adopted, pricing(async () => {
+        const { account, statement_total, dry_run, transactions } = args;
         const user = await getUser(userId);
         const acc = await resolveAccount(userId, account);
         const dryRun = dry_run === true;
@@ -1347,7 +1356,7 @@ export function registerFinanceTools(server: McpServer, userId: string, options:
             : []),
         ];
         const alerts = await crossedBudgets(user, budgetAdded).catch(() => []); // best-effort, rows are written
-        return text({
+        return {
           account: acc.name,
           ...(dryRun ? { dry_run: true } : {}),
           imported,
@@ -1365,9 +1374,14 @@ export function registerFinanceTools(server: McpServer, userId: string, options:
           ...(skipped.length > SKIP_REPORT_CAP ? { skipped_not_listed: skipped.length - SKIP_REPORT_CAP } : {}),
           ...(hints.length > 0 ? { hint: hints.join(" ") } : {}),
           ...(spentByCategory.size > 0 ? whereItWent(user, spentByCategory) : {}),
-          ...(await setupNote(userId, adopted)),
-        });
-      })(args));
+        };
+      }));
+      // Nothing written (every row skipped): the statement did not set the base.
+      if (adopted && result.imported === 0) {
+        await undoAdoption(userId, adopted);
+        adopted = null;
+      }
+      return text({ ...result, ...setupNote(await getUser(userId), adopted) });
     }
   );
 
@@ -1501,6 +1515,7 @@ export function registerFinanceTools(server: McpServer, userId: string, options:
         previousRange = { start: prevStart, end: new Date(prevEnd) };
         previous = await summarize(previousRange.start, previousRange.end);
       }
+      const listed = new Set(capped.map(([key]) => key));
       const changePct = (nowValue: number, before: number) => (before > 0 ? round2(((nowValue - before) / before) * 100) : null);
 
       logEvent("summary_run", userId, { period: range.label });
@@ -1523,7 +1538,6 @@ export function registerFinanceTools(server: McpServer, userId: string, options:
         expense_by: group_by ?? "category",
         groups: capped.map(([k, v]) => {
           // "(all others)" compares with the previous period's tail: every key not listed by name.
-          const listed = new Set(capped.map(([key]) => key));
           const before =
             previous && !timeline
               ? k === "(all others)" && capped !== sorted
@@ -1552,7 +1566,7 @@ export function registerFinanceTools(server: McpServer, userId: string, options:
               change_pct_income: changePct(now.income, previous.income),
             }
           : {}),
-        ...(await setupNote(userId, null)),
+        ...setupNote(user, null),
       });
     }
   );
@@ -2108,14 +2122,18 @@ export function registerFinanceTools(server: McpServer, userId: string, options:
         }
       }
       const newBase = base_currency?.toUpperCase();
-      if (newBase && newBase !== user.baseCurrency) {
-        await assertConvertible(newBase);
-        // Exclusive against every tool and sync that prices amounts: running
-        // ones finish first, new ones wait for the commit, so nothing is
-        // written in the old base after the switch.
+      if (newBase) {
+        if (newBase !== user.baseCurrency) await assertConvertible(newBase);
+        // Exclusive against every tool and sync that prices amounts (and the
+        // first-entry adoption): running ones finish first, new ones wait for
+        // the commit, so nothing is written in the old base after the switch
+        // and an explicit choice is never overwritten by a parallel first entry.
         await asBaseSwitch(userId, async () => {
           const current = await getUser(userId); // a switch that ran first may have changed it
-          if (current.baseCurrency === newBase) return;
+          if (current.baseCurrency === newBase) {
+            await db.user.update({ where: { id: userId }, data: { currencySetAt: new Date() } });
+            return;
+          }
           // Price every (currency, day) BEFORE writing anything, then switch
           // rows, budget caps and the base in one transaction: a failure
           // half-way used to leave history in two currencies under one base.
@@ -2167,7 +2185,7 @@ export function registerFinanceTools(server: McpServer, userId: string, options:
                 for (const b of budgets) {
                   await px.budget.update({ where: { id: b.id }, data: { amount: round2(Number(b.amount) * budgetRate) } });
                 }
-                await px.user.update({ where: { id: userId }, data: { baseCurrency: newBase } });
+                await px.user.update({ where: { id: userId }, data: { baseCurrency: newBase, currencySetAt: new Date() } });
               },
               { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead, timeout: 5 * 60_000, maxWait: 15_000 }
             );
@@ -2188,7 +2206,6 @@ export function registerFinanceTools(server: McpServer, userId: string, options:
         where: { id: userId },
         data: {
           ...(timezone ? { timezone } : {}),
-          ...(base_currency ? { currencySetAt: new Date() } : {}),
           ...(email_digest ? { digest: email_digest } : {}),
           // A new subscription starts after the last complete period: it
           // never mails an old one.

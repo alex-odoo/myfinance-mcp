@@ -78,7 +78,7 @@ function lastComplete(kind: Kind, today: string): Period {
     key: `${startDay}/w`,
     start: day(startDay),
     end: day(boundary),
-    label: `the week of ${day(startDay).toLocaleString("en-US", { month: "short", day: "numeric", timeZone: "UTC" })}`,
+    label: `week of ${day(startDay).toLocaleString("en-US", { month: "short", day: "numeric", timeZone: "UTC" })}`,
     boundary,
   };
 }
@@ -151,28 +151,31 @@ export async function buildDigest(
   user: DigestUser,
   kind: Kind | "welcome",
   period: { start: Date; end: Date; label: string },
-  previous: { start: Date; end: Date } | null
+  previous: { start: Date; end: Date } | null,
+  now: Date
 ): Promise<{ subject: string; text: string } | null> {
   const cur = user.baseCurrency;
-  const now = await spending(user.id, period.start, period.end);
-  if (now.records === 0 && kind === "weekly") return null; // a quiet week needs no email
+  // "October 2026" reads as is; "week of Oct 5" needs its article in a sentence.
+  const phrase = kind === "weekly" ? `the ${period.label}` : period.label;
+  const totals = await spending(user.id, period.start, period.end);
+  if (totals.records === 0 && kind === "weekly") return null; // a quiet week needs no email
   const prev = previous ? await spending(user.id, previous.start, previous.end) : null;
   const lines: string[] = [];
 
-  if (now.records === 0) {
-    lines.push(`Nothing was logged for ${period.label}.`);
+  if (totals.records === 0) {
+    lines.push(`Nothing was logged for ${phrase}.`);
   } else {
     const change =
-      prev && prev.expense > 0 ? ` (${now.expense >= prev.expense ? "+" : ""}${Math.round(((now.expense - prev.expense) / prev.expense) * 100)}% vs the period before)` : "";
-    lines.push(`Spent: ${fmt(now.expense, cur)}${change}`);
-    if (now.income > 0) lines.push(`Income: ${fmt(now.income, cur)}`, `Net: ${fmt(round2(now.income - now.expense), cur)}`);
-    const top = [...now.byCategory.entries()].sort((a, b) => b[1] - a[1]).slice(0, TOP_CATEGORIES);
+      prev && prev.expense > 0 ? ` (${totals.expense >= prev.expense ? "+" : ""}${Math.round(((totals.expense - prev.expense) / prev.expense) * 100)}% vs the period before)` : "";
+    lines.push(`Spent: ${fmt(totals.expense, cur)}${change}`);
+    if (totals.income > 0) lines.push(`Income: ${fmt(totals.income, cur)}`, `Net: ${fmt(round2(totals.income - totals.expense), cur)}`);
+    const top = [...totals.byCategory.entries()].sort((a, b) => b[1] - a[1]).slice(0, TOP_CATEGORIES);
     if (top.length) {
       lines.push("", "Where it went:");
       for (const [k, v] of top) {
         const before = prev?.byCategory.get(k);
         const delta = before && before > 0 ? `, ${v >= before ? "+" : ""}${Math.round(((v - before) / before) * 100)}%` : "";
-        lines.push(`- ${label(k)}: ${fmt(round2(v), cur)} (${Math.round((v / now.expense) * 100)}%${delta})`);
+        lines.push(`- ${label(k)}: ${fmt(round2(v), cur)} (${Math.round((v / totals.expense) * 100)}%${delta})`);
       }
     }
   }
@@ -213,9 +216,9 @@ export async function buildDigest(
     }),
     db.bankConnection.count({ where: { userId: user.id, status: "active" } }),
   ]);
-  if (!liveConnections && lastImport && Date.now() - lastImport.createdAt.getTime() > IMPORT_REMINDER_DAYS * DAY_MS) {
+  if (!liveConnections && lastImport && now.getTime() - lastImport.createdAt.getTime() > IMPORT_REMINDER_DAYS * DAY_MS) {
     lines.push("", "Your last statement import was a while ago: export the latest statement from your bank and drop it into your AI chat.");
-  } else if (now.records === 0) {
+  } else if (totals.records === 0) {
     lines.push("", "Tell your AI what you spend, or drop a bank statement into the chat, and the next summary will have numbers.");
   }
 
@@ -229,7 +232,7 @@ export async function buildDigest(
     "Or say \"turn off the MyFinance email summary\" in your AI chat."
   );
 
-  const headline = now.records === 0 ? "nothing logged" : `${fmt(now.expense, cur)} spent`;
+  const headline = totals.records === 0 ? "nothing logged" : `${fmt(totals.expense, cur)} spent`;
   const subject =
     kind === "welcome"
       ? `MyFinance email summary is on: ${period.label} so far`
@@ -237,7 +240,7 @@ export async function buildDigest(
   const intro =
     kind === "welcome"
       ? `Your email summary is on. Here is ${period.label} so far; the next one comes on schedule.`
-      : `Your summary for ${period.label}.`;
+      : `Your summary for ${phrase}.`;
   return { subject, text: [intro, "", ...lines].join("\n") };
 }
 
@@ -271,7 +274,7 @@ export async function sendWelcome(user: DigestUser, now = new Date()): Promise<b
   const start = day(`${today.slice(0, 7)}-01`);
   const end = new Date(day(today).getTime() + DAY_MS);
   const label = start.toLocaleString("en-US", { month: "long", year: "numeric", timeZone: "UTC" });
-  const mail = await buildDigest(user, "welcome", { start, end, label }, null);
+  const mail = await buildDigest(user, "welcome", { start, end, label }, null, now);
   const ok = !!mail && (await send(user, mail));
   logEvent(ok ? "digest_sent" : "digest_failed", user.id, { kind: "welcome" });
   return ok;
@@ -305,7 +308,7 @@ export async function runDigests(now = new Date(), onlyUserId?: string) {
       });
       if (count !== 1) continue;
       claimed = period.key;
-      const mail = await buildDigest(u, kind, period, before(kind, period));
+      const mail = await buildDigest(u, kind, period, before(kind, period), now);
       if (!mail) {
         result.skipped++;
         continue;

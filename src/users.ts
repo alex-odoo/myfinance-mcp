@@ -25,6 +25,24 @@ export async function bootstrapUser(): Promise<void> {
   });
 }
 
+/**
+ * currencySetAt (0.16.0) marks a base currency the user chose. Accounts from
+ * before it read as "never chosen", so a chosen UAH could be replaced by the
+ * first entry's currency and every write asked again. A base other than the
+ * EUR default, or any stored record or budget, means it was chosen (or lived
+ * with): mark those. Idempotent, runs at boot.
+ */
+export async function markSettledCurrencies(): Promise<number> {
+  const { count } = await db.user.updateMany({
+    where: {
+      currencySetAt: null,
+      OR: [{ baseCurrency: { not: "EUR" } }, { transactions: { some: {} } }, { budgets: { some: {} } }],
+    },
+    data: { currencySetAt: new Date() },
+  });
+  return count;
+}
+
 /** The verified email belongs to an account already linked to another Google identity. */
 export class GoogleAccountConflictError extends Error {
   constructor() {
