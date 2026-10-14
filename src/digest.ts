@@ -3,6 +3,7 @@ import { db, logEvent } from "./db";
 import { config } from "./config";
 import { round2 } from "./fx";
 import { mailConfigured, sendMail } from "./mail";
+import { recurringOverview, UPCOMING_DAYS } from "./recurring";
 
 /**
  * Email summaries: the one channel that reaches a user outside the chat (an
@@ -198,6 +199,26 @@ export async function buildDigest(
         const state = used > cap ? `over by ${fmt(round2(used - cap), cur)}` : `${fmt(round2(cap - used), cur)} left`;
         lines.push(`- ${b.categoryKey === "overall" ? "Whole month" : label(b.categoryKey)}: ${fmt(round2(used), cur)} of ${fmt(cap, cur)}, ${state}`);
       }
+    }
+  }
+
+  // What repeats: saved and found recurring payments due soon, so the
+  // summary looks ahead as well as back. Best-effort: a failure here (an FX
+  // lookup) must not cost the user the summary.
+  const recurring = await recurringOverview(user, now).catch(() => null);
+  if (recurring) {
+    const days = kind === "weekly" ? 7 : UPCOMING_DAYS;
+    const until = addDays(recurring.today, days);
+    const soon = recurring.upcoming.filter((u) => u.date <= until).slice(0, 8);
+    if (soon.length) {
+      lines.push("", `Coming up in the next ${days} days:`);
+      for (const u of soon) {
+        const on = day(u.date).toLocaleString("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
+        lines.push(`- ${u.name}: ${fmt(u.amount, u.currency)} on ${on}`);
+      }
+    }
+    if (recurring.monthly_total > 0) {
+      lines.push("", `Recurring payments, saved and found in your records: about ${fmt(recurring.monthly_total, cur)} a month. Ask your AI to list them.`);
     }
   }
 

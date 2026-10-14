@@ -2842,6 +2842,140 @@ async function main(): Promise<void> {
           (await cdb.user.findUniqueOrThrow({ where: { id: untouched.id } })).currencySetAt === null
       );
 
+      // 13d. Recurring payments (0.18.0): found in imported rows, saved,
+      // auto-logged on their date, in the email summary.
+      const rec = await import("../src/recurring");
+      ok(
+        "monthly dates keep their day, clamped in short months",
+        rec.nextCharge("2026-01-31", "monthly", 31) === "2026-02-28" &&
+          rec.nextCharge("2026-02-28", "monthly", 31) === "2026-03-31" &&
+          rec.nextCharge("2026-11-15", "quarterly", 15) === "2027-02-15" &&
+          rec.nextCharge("2026-10-10", "weekly", 10) === "2026-10-17"
+      );
+      ok("merchant keys drop references and dates", rec.merchantKey("SPOTIFY P1234567 12/10") === "spotify p", rec.merchantKey("SPOTIFY P1234567 12/10"));
+      const ur = await fresh({ currencySetAt: new Date(), timezone: "Europe/Madrid" });
+      const r = await inProcess(ur.id);
+      const madridToday = rec.localToday("Europe/Madrid");
+      const ago = (n: number) => new Date(Date.parse(`${madridToday}T00:00:00Z`) - n * 86_400_000).toISOString().slice(0, 10);
+      const series = (merchant: string, amounts: number[], offsets: number[], category: string) =>
+        offsets.map((o, i) => ({ date: ago(o), amount: -amounts[i % amounts.length]!, merchant, category, currency: "EUR" }));
+      const statement = [
+        ...series("Netflix", [12.99], [100, 70, 40, 10], "subscriptions"),
+        ...series("Landlord rent", [800], [102, 72, 42, 12], "housing"),
+        ...series("Iberdrola", [60, 72, 55], [75, 45, 15], "utilities"),
+        ...series("Lidl", [30], [28, 21, 14, 7], "groceries"),
+        ...series("APPLE.COM/BILL", [2.99, 9.99], [68, 68, 38, 38, 8, 8], "subscriptions"),
+        ...series("Old Magazine", [5], [200, 170, 140], "subscriptions"),
+        ...series("Gym yearly", [300], [370, 5], "health"),
+        { date: ago(20), amount: -10.99, merchant: "SPOTIFY P1234567", category: "other", currency: "EUR" },
+      ];
+      const recImport = await r.tool("import_transactions", { transactions: statement });
+      ok(
+        "an import names the recurring payments it found, with a monthly total",
+        !recImport.isError && recImport.json.recurring_found?.count >= 6 && recImport.json.recurring_found.monthly_total > 800 && /recurring/.test(recImport.json.next),
+        recImport.text.slice(0, 600)
+      );
+      const list = await r.tool("get_recurring");
+      const byName = (n: string) => list.json.found.find((f: any) => f.name === n);
+      const apple = list.json.found.filter((f: any) => f.name === "APPLE.COM/BILL");
+      ok(
+        "found: monthly subscription, rent, a varying bill, a yearly fee, each Apple price, a single Spotify charge",
+        byName("Netflix")?.cadence === "monthly" && byName("Netflix")?.next_date === rec.nextCharge(ago(10), "monthly", Number(ago(10).slice(8))) &&
+          byName("Landlord rent")?.amount === 800 &&
+          byName("Iberdrola")?.amount_varies === true &&
+          byName("Gym yearly")?.cadence === "yearly" &&
+          apple.length === 2 &&
+          byName("SPOTIFY P1234567")?.evidence === "subscription_service",
+        JSON.stringify(list.json.found.map((f: any) => [f.name, f.cadence, f.amount, f.evidence]))
+      );
+      ok(
+        "everyday spending and a stopped subscription are not listed",
+        !byName("Lidl") && !byName("Old Magazine"),
+        JSON.stringify(list.json.found.map((f: any) => f.name))
+      );
+      const withStopped = await r.tool("get_recurring", { include_stopped: true });
+      ok(
+        "include_stopped lists the stopped one as stopped",
+        withStopped.json.found.find((f: any) => f.name === "Old Magazine")?.status === "stopped"
+      );
+      ok(
+        "monthly total: rent + Netflix + Apple + Spotify + bill + a twelfth of the gym",
+        Math.abs(list.json.monthly_total - (800 + 12.99 + 2.99 + 9.99 + 10.99 + 60 + 25)) < 0.02 && Math.abs(list.json.yearly_total - list.json.monthly_total * 12) < 0.02,
+        String(list.json.monthly_total)
+      );
+      ok("upcoming lists what is due in 30 days", list.json.upcoming.some((u: any) => u.name === "Netflix" && !u.saved));
+      const tools = await r.names();
+      ok("get_recurring and set_recurring are offered", tools.includes("get_recurring") && tools.includes("set_recurring"));
+
+      // Saving one takes it out of the suggestions
+      const save = await r.tool("set_recurring", { name: "Netflix", amount: 12.99, currency: "EUR", cadence: "monthly", next_date: byName("Netflix").next_date });
+      const afterSave = await r.tool("get_recurring");
+      ok(
+        "a saved payment moves from found to saved",
+        save.json.saved === true && afterSave.json.saved.some((x: any) => x.name === "Netflix" && x.monthly_base === 12.99) && !afterSave.json.found.some((f: any) => f.name === "Netflix"),
+        save.text
+      );
+      const past = await r.tool("set_recurring", { name: "Rent", amount: 800, cadence: "monthly", next_date: ago(12), category: "housing" });
+      ok(
+        "a past next_date rolls forward and says nothing was logged",
+        past.json.next_date >= madridToday && /Nothing was logged/.test(past.json.note ?? ""),
+        past.text
+      );
+      const incomplete = await r.tool("set_recurring", { name: "Mystery", amount: 5 });
+      ok("a new one without cadence and next_date is refused", incomplete.isError && /cadence and next_date/.test(incomplete.text));
+
+      // Auto-log writes the expense on its date, once
+      await r.tool("set_recurring", { name: "Phone plan", amount: 20, cadence: "monthly", next_date: madridToday, category: "utilities", auto_log: true });
+      const first1 = await rec.runRecurring(new Date(), ur.id);
+      const second1 = await rec.runRecurring(new Date(), ur.id);
+      const phoneRows = await cdb.transaction.findMany({ where: { userId: ur.id, merchant: "Phone plan" } });
+      const phoneSaved = await cdb.recurringPayment.findFirstOrThrow({ where: { userId: ur.id, name: "Phone plan" } });
+      ok(
+        "auto_log writes the expense on its date once and moves the date a month on",
+        first1.logged === 1 && second1.logged === 0 && phoneRows.length === 1 && phoneRows[0]!.note === rec.AUTO_LOG_NOTE &&
+          phoneRows[0]!.source === "manual" && phoneRows[0]!.externalId === null &&
+          phoneSaved.nextDate.toISOString().slice(0, 10) === rec.nextCharge(madridToday, "monthly", Number(madridToday.slice(8))),
+        JSON.stringify({ first1, second1, rows: phoneRows.length })
+      );
+      // A charge already in the books only moves the date
+      await r.tool("log_expense", { amount: 30, merchant: "Internet provider", category: "utilities" });
+      await r.tool("set_recurring", { name: "Internet", amount: 30, cadence: "monthly", next_date: madridToday, category: "utilities", auto_log: true });
+      const third1 = await rec.runRecurring(new Date(), ur.id);
+      const internetRows = await cdb.transaction.count({ where: { userId: ur.id, amount: 30, merchant: { startsWith: "Internet" } } });
+      ok("a charge already logged by hand is not logged twice", third1.matched === 1 && third1.logged === 0 && internetRows === 1, JSON.stringify(third1));
+      // Not with a bank or ZenMoney sync connected
+      const synced = await fresh({ currencySetAt: new Date() });
+      await cdb.bankConnection.create({ data: { userId: synced.id, provider: "zenmoney", status: "active" } });
+      const sr = await inProcess(synced.id);
+      const refused = await sr.tool("set_recurring", { name: "Rent", amount: 500, cadence: "monthly", next_date: madridToday, auto_log: true });
+      ok("auto_log is refused while a sync is connected", refused.isError && /sync/.test(refused.text), refused.text);
+      await sr.close();
+
+      // The email summary looks ahead
+      const { buildDigest } = await import("../src/digest");
+      const mail = await buildDigest(
+        { id: ur.id, email: ur.email, baseCurrency: "EUR", timezone: "Europe/Madrid" },
+        "welcome",
+        { start: new Date(Date.parse(`${madridToday.slice(0, 7)}-01T00:00:00Z`)), end: new Date(Date.parse(`${madridToday}T00:00:00Z`) + 86_400_000), label: "this month" },
+        null,
+        new Date()
+      );
+      ok(
+        "the email summary lists what is coming up and the recurring total",
+        !!mail && /Coming up in the next 30 days:/.test(mail.text) && /- Netflix: 12\.99 EUR on /.test(mail.text) && /Recurring payments, saved and found/.test(mail.text),
+        mail?.text.slice(0, 900)
+      );
+      const profile = await r.tool("export_profile");
+      ok("export_profile carries the saved recurring payments", profile.json.recurring_payments?.length === 4, JSON.stringify(profile.json.recurring_payments?.map((x: any) => x.name)));
+      const removed = await r.tool("set_recurring", { name: "netflix", remove: true });
+      const notThere = await r.tool("set_recurring", { name: "Nothing like it", remove: true });
+      ok(
+        "remove deletes by name, case-insensitively, and an unknown name is refused with the list",
+        removed.json.removed === true && removed.json.name === "Netflix" && notThere.isError && /Saved: /.test(notThere.text),
+        removed.text
+      );
+      await r.close();
+
       for (const s of [a, b, c, bank, d, w]) await s.close();
     }
   } else {

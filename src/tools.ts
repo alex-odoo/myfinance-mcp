@@ -15,6 +15,7 @@ import { ebConfigured, ebAspsps, ebStartAuth, ebDeleteSession } from "./enableba
 import { syncEnableBanking } from "./enablebanking/sync";
 import { merchantCategoryMap, normMerchant, rememberMerchantCategory } from "./merchantMemory";
 import type { EbConnectionMeta } from "./enablebanking/sync";
+import { CADENCES, foundAfterImport, localToday, recurringOverview, rollForward, type Cadence } from "./recurring";
 import type { TxType } from "./generated/prisma/enums";
 import { Prisma } from "./generated/prisma/client";
 
@@ -143,7 +144,11 @@ function setupNote(
  * step. A user who imported a statement and saw only row counts never came
  * back.
  */
-function whereItWent(user: { baseCurrency: string; digest: string | null }, spent: Map<string, number>) {
+function whereItWent(
+  user: { baseCurrency: string; digest: string | null },
+  spent: Map<string, number>,
+  recurring: Awaited<ReturnType<typeof foundAfterImport>> = null
+) {
   const total = [...spent.values()].reduce((a, b) => a + b, 0);
   const top = [...spent.entries()]
     .sort((a, b) => b[1] - a[1])
@@ -151,8 +156,14 @@ function whereItWent(user: { baseCurrency: string; digest: string | null }, spen
     .map(([category, sum]) => ({ category, total: round2(sum), share_pct: total > 0 ? round2((sum / total) * 100) : 0 }));
   return {
     where_it_went: { base_currency: user.baseCurrency, imported_spending: round2(total), top_categories: top },
+    ...(recurring ? { recurring_found: recurring } : {}),
     next:
-      "Tell the user where the money went (top categories), then offer ONE next step: a monthly budget for the biggest category (set_budget)" +
+      "Tell the user where the money went (top categories)" +
+      (recurring
+        ? ` and the recurring payments found in their records (recurring_found: ${recurring.count}, about ${recurring.monthly_total} ${recurring.base_currency} a month; get_recurring lists them)`
+        : "") +
+      ", then offer ONE next step: a monthly budget for the biggest category (set_budget)" +
+      (recurring ? ", saving the recurring payments they confirm (set_recurring)" : "") +
       (user.digest === null && digestAvailable() ? ", or a monthly summary by email (update_settings email_digest=monthly)." : "."),
   };
 }
@@ -164,6 +175,8 @@ export interface FinanceToolOptions {
 
 /** One export call stays a readable tool result (~100 bytes per row). */
 const EXPORT_PAGE_ROWS = 2000;
+/** Saved recurring payments per user. */
+const MAX_RECURRING = 100;
 /** get_summary by merchant: bank strings carry store numbers, so a year can hold thousands. */
 const SUMMARY_MAX_GROUPS = 30;
 
@@ -1373,7 +1386,9 @@ export function registerFinanceTools(server: McpServer, userId: string, options:
           ...(skipped.length > 0 ? { skipped: skipped.slice(0, SKIP_REPORT_CAP) } : {}),
           ...(skipped.length > SKIP_REPORT_CAP ? { skipped_not_listed: skipped.length - SKIP_REPORT_CAP } : {}),
           ...(hints.length > 0 ? { hint: hints.join(" ") } : {}),
-          ...(spentByCategory.size > 0 ? whereItWent(user, spentByCategory) : {}),
+          ...(spentByCategory.size > 0
+            ? whereItWent(user, spentByCategory, dryRun ? null : await foundAfterImport(user).catch(() => null))
+            : {}),
         };
       }));
       // Nothing written (every row skipped): the statement did not set the base.
@@ -2064,6 +2079,116 @@ export function registerFinanceTools(server: McpServer, userId: string, options:
   );
 
   server.registerTool(
+    "get_recurring",
+    {
+      title: "Recurring payments",
+      annotations: { readOnlyHint: true, openWorldHint: false },
+      description:
+        "Subscriptions, rent, bills and other payments that repeat: the ones the user saved (set_recurring) and the ones found in their records (charges at one merchant that repeat weekly, monthly, quarterly or yearly at a steady amount, and single recent charges from known subscription services). Each with amount, cadence, next expected date and monthly cost in the base currency; plus the monthly and yearly total and what is coming up in the next 30 days. Call it for 'what subscriptions do I pay', 'my fixed costs', 'what bills are coming'. Found ones are suggestions: offer to save the ones the user confirms (set_recurring).",
+      inputSchema: {
+        include_stopped: z.boolean().optional().describe("Also list found series that seem to have stopped (no charge since the expected date)."),
+      },
+    },
+    async ({ include_stopped }) => {
+      const user = await getUser(userId);
+      const overview = await recurringOverview(user, new Date(), include_stopped === true);
+      const hint =
+        overview.saved.length + overview.found.length === 0
+          ? "Nothing repeats in the records yet. The user can save a payment with set_recurring, or import two or three months of statements so repeats show."
+          : overview.found.length
+            ? "Show the saved and the found payments with the monthly total. Found ones are suggestions: save only the ones the user confirms (set_recurring with name, amount, currency, cadence, next_date)."
+            : undefined;
+      return text({ ...overview, ...(hint ? { hint } : {}) });
+    }
+  );
+
+  server.registerTool(
+    "set_recurring",
+    {
+      title: "Save a recurring payment",
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
+      description:
+        "Save, change or remove a payment the user expects again (a subscription, rent, a bill). Saved ones show in get_recurring and in the email summary's 'Coming up'. With auto_log=true the expense is written on each date automatically: only for a fixed amount, and only for users who log by hand (refused while a bank or ZenMoney sync is connected: the sync brings the charge). A statement import later merges an auto-logged row with the bank's row. Saving again under the same name changes it; remove=true deletes it (expenses already logged stay).",
+      inputSchema: {
+        name: z.string().trim().min(1).max(60).describe("The payment as the user calls it, e.g. Netflix, Rent."),
+        amount: z.number().positive().optional().describe("Amount per charge. Required for a new one."),
+        currency: currencySchema.optional(),
+        cadence: z.enum(CADENCES).optional().describe("How often it is charged. Required for a new one."),
+        next_date: z
+          .string()
+          .regex(DATE_RE)
+          .refine(isCalendarDate, "Not a real calendar date")
+          .optional()
+          .describe("Next expected charge, YYYY-MM-DD. Required for a new one. A past date moves to the next one on or after today; nothing is logged for past dates."),
+        category: z.enum(EXPENSE_CATEGORIES).optional().describe("Default: subscriptions."),
+        account: z.string().optional().describe("Account the auto-logged expense goes to. Default: Manual."),
+        auto_log: z.boolean().optional().describe("Write the expense automatically on each date."),
+        remove: z.boolean().optional().describe("Delete the saved payment with this name."),
+      },
+    },
+    async (args) => {
+      const user = await getUser(userId);
+      const existing = await db.recurringPayment.findFirst({ where: { userId, name: { equals: args.name, mode: "insensitive" } } });
+      if (args.remove) {
+        if (!existing) {
+          const names = (await db.recurringPayment.findMany({ where: { userId }, select: { name: true } })).map((r) => r.name);
+          throw new Error(`No saved recurring payment named "${args.name}". Saved: ${names.join(", ") || "(none)"}.`);
+        }
+        await db.recurringPayment.delete({ where: { id: existing.id } });
+        return text({ removed: true, name: existing.name });
+      }
+      if (!existing && (await db.recurringPayment.count({ where: { userId } })) >= MAX_RECURRING) {
+        throw new Error(`At most ${MAX_RECURRING} recurring payments can be saved. Remove one first (remove=true).`);
+      }
+      const amount = args.amount ?? (existing ? Number(existing.amount) : undefined);
+      const cadence = (args.cadence ?? existing?.cadence) as Cadence | undefined;
+      const given = args.next_date ?? (existing ? existing.nextDate.toISOString().slice(0, 10) : undefined);
+      if (amount === undefined || !cadence || !given) {
+        throw new Error("A new recurring payment needs amount, cadence and next_date (the next expected charge).");
+      }
+      const account = args.account ? await resolveAccount(userId, args.account) : null;
+      const currency = (args.currency ?? existing?.currency ?? account?.currency ?? user.baseCurrency).toUpperCase();
+      await assertConvertible(currency);
+      const autoLog = args.auto_log ?? existing?.autoLog ?? false;
+      if (autoLog && (await db.bankConnection.count({ where: { userId, status: "active" } })) > 0) {
+        throw new Error(
+          "auto_log is off for users with a bank or ZenMoney sync connected: the sync brings this charge itself, and a logged copy would count it twice. Save it without auto_log."
+        );
+      }
+      const anchorDay = args.next_date ? Number(args.next_date.slice(8, 10)) : existing!.anchorDay;
+      const today = localToday(user.timezone);
+      const nextDate = rollForward(given, cadence, anchorDay, today);
+      const data = {
+        name: args.name,
+        amount,
+        currency,
+        cadence,
+        nextDate: parseDate(nextDate),
+        anchorDay,
+        categoryKey: args.category ?? existing?.categoryKey ?? "subscriptions",
+        accountId: account ? account.id : (existing?.accountId ?? null),
+        autoLog,
+      };
+      const saved = existing
+        ? await db.recurringPayment.update({ where: { id: existing.id }, data })
+        : await db.recurringPayment.create({ data: { userId, ...data } });
+      logEvent("recurring_saved", userId, { cadence, auto_log: autoLog, created: !existing });
+      return text({
+        saved: true,
+        name: saved.name,
+        amount,
+        currency,
+        cadence,
+        next_date: nextDate,
+        category: saved.categoryKey,
+        ...(account ? { account: account.name } : {}),
+        auto_log: autoLog,
+        ...(nextDate !== given ? { note: `next_date ${given} is past: moved to ${nextDate}. Nothing was logged for past dates.` } : {}),
+      });
+    }
+  );
+
+  server.registerTool(
     "get_settings",
     {
       title: "Get settings",
@@ -2314,12 +2439,12 @@ export function registerFinanceTools(server: McpServer, userId: string, options:
       title: "Export profile",
       annotations: { readOnlyHint: true, openWorldHint: false },
       description:
-        "Everything except the transactions, as one JSON (GDPR portability, or a backup before moving): settings, accounts with their balance snapshots, budgets, the per-merchant category rules learned from the user's fixes, and bank/ZenMoney links (status and synced accounts; never tokens). Transactions come from export_transactions.",
+        "Everything except the transactions, as one JSON (GDPR portability, or a backup before moving): settings, accounts with their balance snapshots, budgets, saved recurring payments, the per-merchant category rules learned from the user's fixes, and bank/ZenMoney links (status and synced accounts; never tokens). Transactions come from export_transactions.",
       inputSchema: {},
     },
     async () => {
       const user = await getUser(userId);
-      const [accounts, budgets, rules, connections, transactions] = await Promise.all([
+      const [accounts, budgets, rules, connections, transactions, recurring] = await Promise.all([
         db.account.findMany({
           where: { userId },
           orderBy: { name: "asc" },
@@ -2329,6 +2454,7 @@ export function registerFinanceTools(server: McpServer, userId: string, options:
         db.merchantCategory.findMany({ where: { userId }, orderBy: { merchant: "asc" } }),
         db.bankConnection.findMany({ where: { userId }, orderBy: { provider: "asc" } }),
         db.transaction.count({ where: { userId } }),
+        db.recurringPayment.findMany({ where: { userId }, orderBy: { name: "asc" }, include: { account: { select: { name: true } } } }),
       ]);
       return text({
         format: "myfinance-profile/1",
@@ -2356,6 +2482,16 @@ export function registerFinanceTools(server: McpServer, userId: string, options:
           period: b.period,
         })),
         merchant_rules: rules.map((r) => ({ merchant: r.merchant, category: r.categoryKey })),
+        recurring_payments: recurring.map((r) => ({
+          name: r.name,
+          amount: Number(r.amount),
+          currency: r.currency,
+          cadence: r.cadence,
+          next_date: r.nextDate.toISOString().slice(0, 10),
+          category: r.categoryKey,
+          ...(r.account ? { account: r.account.name } : {}),
+          auto_log: r.autoLog,
+        })),
         connections: await Promise.all(
           connections.map(async (c) => {
             const meta = (c.meta ?? {}) as EbConnectionMeta;

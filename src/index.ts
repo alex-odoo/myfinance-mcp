@@ -22,6 +22,7 @@ import { adminGoogleCallback, adminRouter } from "./admin/router";
 import { readCookie, sha256 } from "./httpUtil";
 import { bankSyncOffered } from "./bankAccess";
 import { digestAvailable, runDigests, unsubscribe, validUnsubscribe } from "./digest";
+import { runRecurring } from "./recurring";
 
 assertConfig();
 
@@ -89,6 +90,16 @@ if (config.digestIntervalMs > 0 && digestAvailable()) {
         console.error("[digest] tick failed:", e instanceof Error ? e.message : String(e));
       }),
     config.digestIntervalMs
+  );
+}
+
+if (config.recurringIntervalMs > 0) {
+  setInterval(
+    () =>
+      void runRecurring().catch((e: unknown) => {
+        console.error("[recurring] tick failed:", e instanceof Error ? e.message : String(e));
+      }),
+    config.recurringIntervalMs
   );
 }
 

@@ -67,6 +67,9 @@ export const config = {
     .filter(Boolean),
   // Email summaries: how often the scheduler looks for due ones. 0 = off.
   digestIntervalMs: milliseconds(process.env.DIGEST_INTERVAL_MS, 60 * 60 * 1000),
+  // Saved recurring payments with auto_log are written on their date; how
+  // often the scheduler looks. 0 = off.
+  recurringIntervalMs: milliseconds(process.env.RECURRING_INTERVAL_MS, 60 * 60 * 1000),
   // Bank connections are auto-synced roughly daily; each tick syncs whatever
   // is >20h stale. 0 disables the scheduler (manual sync_bank still works).
   autoSyncIntervalMs: Number(process.env.AUTO_SYNC_INTERVAL_MS ?? 60 * 60 * 1000),

@@ -33,6 +33,7 @@ const SAFE_ARG_VALUES = new Map<string, (v: unknown) => boolean>([
   ["country", isStr(/^[A-Za-z]{2}$/)],
   ["compare", oneOf(["previous"])],
   ["email_digest", oneOf(["off", "weekly", "monthly"])],
+  ["cadence", oneOf(["weekly", "monthly", "quarterly", "yearly"])],
   ["period", isStr(/^\d{4}(-\d{2})?$/)],
   ["from", isDate],
   ["to", isDate],
