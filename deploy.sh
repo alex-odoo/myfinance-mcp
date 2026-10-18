@@ -3,7 +3,10 @@
 # Usage: ./deploy.sh "what changed"
 set -euo pipefail
 
-SERVER="root@23.88.115.126"
+# SSH goes over Tailscale; the box's public port 22 is being closed. The
+# Supabase allowlist still names the public 23.88.115.126: that is the box's
+# egress address, untouched by this.
+SERVER="root@100.66.141.123"
 SSH_KEY="$HOME/.ssh/rteam_hetzner"
 REMOTE_DIR="/opt/myfinance-mcp"
 DOMAIN="myfinance-mcp.com"
