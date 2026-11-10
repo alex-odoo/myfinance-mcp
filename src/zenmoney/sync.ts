@@ -1,6 +1,6 @@
 import { db, logEvent } from "../db";
-import { RowPricer, round2 } from "../fx";
-import { pickFreeName, crossProviderOverlaps, OVERLAP_HINT } from "../accounts";
+import { RowPricer, isIsoCurrency, round2 } from "../fx";
+import { pickFreeName, crossProviderOverlaps, isUniqueViolation, OVERLAP_HINT } from "../accounts";
 import type { OverlapWarning } from "../accounts";
 import { EXPENSE_CATEGORIES, INCOME_CATEGORIES } from "../categories";
 import { merchantCategoryMap, normMerchant } from "../merchantMemory";
@@ -79,13 +79,15 @@ export async function syncZenMoney(userId: string, opts: SyncOptions = {}) {
   } catch (e) {
     // Only a rejected token is the user's to fix: status "error" drops the
     // connection from autosync until they paste a fresh one. Anything else (a
-    // 5xx, a timeout, an FX outage, a bug) records lastError, stays "active",
-    // and the next autosync tick retries.
+    // 5xx, a timeout, an FX outage, a bug) records lastError and lastFailedAt
+    // and stays "active"; autosync retries after its backoff (autosync.ts).
+    // Guarded by the token this sync ran on: a token pasted meanwhile must
+    // not be marked rejected by the old one's 401.
     const message = e instanceof Error ? e.message : String(e);
     await db.bankConnection
-      .update({
-        where: { id: connection.id },
-        data: { ...(e instanceof ZenAuthError ? { status: "error" } : {}), lastError: message.slice(0, 500) },
+      .updateMany({
+        where: { id: connection.id, tokenEnc: connection.tokenEnc },
+        data: { ...(e instanceof ZenAuthError ? { status: "error" } : {}), lastError: message.slice(0, 500), lastFailedAt: new Date() },
       })
       .catch(() => {});
     throw e;
@@ -136,6 +138,17 @@ async function runSync(connection: BankConnection, user: User, opts: SyncOptions
       continue;
     }
     const currency = currencyOf(zen.instrument);
+    // ZenMoney also tracks crypto and custom instruments (USDT, BTC, bonus
+    // points). No rate source prices them, and a 4-letter code does not even
+    // fit our currency column: inserting one failed the whole sync on every
+    // tick. Such an account is skipped with its reason; transfers to or from
+    // it stay one-legged on the synced side. An account linked before this
+    // rule keeps its link (its unpriced rows are skipped and counted, as
+    // before): dropping it would be the user's call, not a sync's.
+    if (currency && !isIsoCurrency(currency)) {
+      skippedAccounts.push({ title: zen.title, reason: `currency "${currency}" is not supported (ISO currencies only, no crypto)` });
+      continue;
+    }
     // Adopt an existing same-name account (user pre-created it by hand) unless
     // it is already claimed by another ZenMoney account. A sync NEVER adopts
     // an account owned by a different bank provider: two live feeds on one
@@ -157,7 +170,10 @@ async function runSync(connection: BankConnection, user: User, opts: SyncOptions
       created = await db.account.create({
         data: { userId, name, type, provider: "zenmoney", externalId: zen.id, currency },
       });
-    } catch {
+    } catch (e) {
+      // Only a unique violation is a name clash; anything else keeps its own
+      // message (a catch-all once blamed a too-long currency on the name).
+      if (!isUniqueViolation(e)) throw e;
       throw new Error(
         `Cannot create account "${name}" for ZenMoney account "${zen.title}": the name is already taken. ` +
           `Rename or delete the clashing account (manage_account action=update or action=delete), then sync again.`
@@ -181,7 +197,10 @@ async function runSync(connection: BankConnection, user: User, opts: SyncOptions
   // Persist the map right away: a failure later in the sync must not orphan
   // the accounts just created (same-name adoption entries included).
   if (accountsCreated > 0 || Object.keys(accountMap).length > Object.keys((connection.accountMap ?? {}) as object).length) {
-    await db.bankConnection.update({ where: { id: connection.id }, data: { accountMap: accountMap as object } });
+    await db.bankConnection.updateMany({
+      where: { id: connection.id, tokenEnc: connection.tokenEnc },
+      data: { accountMap: accountMap as object },
+    });
   }
 
   const ourAccountId = (zenId: string | null | undefined): string | undefined => {
@@ -426,8 +445,10 @@ async function runSync(connection: BankConnection, user: User, opts: SyncOptions
   }
 
   if (!dryRun) {
-    await db.bankConnection.update({
-      where: { id: connection.id },
+    // Guarded by the token this sync ran on: a token pasted meanwhile (maybe
+    // another ZenMoney account) must not inherit this account's cursor.
+    await db.bankConnection.updateMany({
+      where: { id: connection.id, tokenEnc: connection.tokenEnc },
       data: {
         serverTimestamp: diff.serverTimestamp,
         status: "active",

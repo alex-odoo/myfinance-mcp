@@ -8,6 +8,7 @@ import { resolveAccount, computeBalance, connectionAccounts, setAccountSync, ACC
 import { SERVER_VERSION } from "./version";
 import { DIGEST_CHOICES, digestAvailable, sendWelcome, startingPoint } from "./digest";
 import { DASHBOARD_TOOL_META } from "./ui";
+import { bankNoticeField, consentPhase } from "./bankNotice";
 import { asBaseSwitch, asBaseWriter } from "./baseGate";
 import { detectZenHost } from "./zenmoney/client";
 import { encryptToken, decryptToken } from "./zenmoney/crypto";
@@ -15,7 +16,7 @@ import { syncZenMoney } from "./zenmoney/sync";
 import { ebConfigured, ebAspsps, ebStartAuth, ebDeleteSession } from "./enablebanking/client";
 import { syncEnableBanking } from "./enablebanking/sync";
 import { merchantCategoryMap, normMerchant, rememberMerchantCategory } from "./merchantMemory";
-import type { EbConnectionMeta } from "./enablebanking/sync";
+import { stripAttempt, type EbConnectionMeta } from "./enablebanking/sync";
 import { CADENCES, foundAfterImport, localToday, recurringOverview, rollForward, type Cadence } from "./recurring";
 import type { TxType } from "./generated/prisma/enums";
 import { Prisma } from "./generated/prisma/client";
@@ -235,6 +236,16 @@ const itemsSchema = z
     })
   )
   .describe("Receipt line items, when logging from a receipt photo.");
+
+/** For bank action=status: how to renew a consent that is ending or has ended. */
+function renewHint(c: Parameters<typeof consentPhase>[0]): { renew?: string } {
+  const phase = consentPhase(c);
+  if (!phase) return {};
+  const until = ((c.meta ?? {}) as EbConnectionMeta).validUntil?.slice(0, 10);
+  return {
+    renew: `The consent ${phase === "ended" ? "has ended" : `ends on ${until}`}. Renew with action=start and the same bank_name and country; do NOT disconnect (that drops the link and its per-account settings).`,
+  };
+}
 
 function text(payload: unknown) {
   return { content: [{ type: "text" as const, text: JSON.stringify(payload) }] };
@@ -874,6 +885,7 @@ export function registerFinanceTools(server: McpServer, userId: string, options:
       },
     },
     async ({ entity }) => {
+      const notice = bankNoticeField(userId); // alongside the balances; never rejects
       const user = await getUser(userId);
       const accounts = await db.account.findMany({
         where: { userId, ...(entity ? { entity } : {}) },
@@ -927,6 +939,7 @@ export function registerFinanceTools(server: McpServer, userId: string, options:
         ...(entity ? {} : Object.keys(byEntity).length > 1 ? { net_worth_by_entity: byEntity } : {}),
         accounts: out,
         hint: hints.length ? hints.join(" ") : undefined,
+        ...(await notice),
       });
     }
   );
@@ -1505,6 +1518,7 @@ export function registerFinanceTools(server: McpServer, userId: string, options:
         }
         return delegate("get_trends", { months: trend_months, category, entity }, extra);
       }
+      const notice = bankNoticeField(userId); // alongside the period queries; never rejects
       const user = await getUser(userId);
       const range = periodRange(user.timezone, period, from, to);
       const target = currency?.toUpperCase();
@@ -1649,6 +1663,9 @@ export function registerFinanceTools(server: McpServer, userId: string, options:
               change_pct_income: changePct(now.income, previous.income),
             }
           : {}),
+        // A bank link that stopped explains a short period better than a
+        // missing statement does: the client relays it.
+        ...(await notice),
         ...setupNote(user, null),
       });
     }
@@ -2682,7 +2699,7 @@ export function registerFinanceTools(server: McpServer, userId: string, options:
       const tokenEnc = encryptToken(token);
       await db.bankConnection.upsert({
         where: { userId_provider: { userId, provider: "zenmoney" } },
-        update: { tokenEnc, apiBase, status: "active", lastError: null },
+        update: { tokenEnc, apiBase, status: "active", lastError: null, lastFailedAt: null },
         create: { userId, provider: "zenmoney", tokenEnc, apiBase },
       });
       logEvent("bank_connected", userId, { provider: "zenmoney" });
@@ -2727,7 +2744,7 @@ export function registerFinanceTools(server: McpServer, userId: string, options:
         // Not idempotent: each start opens a new consent link.
         annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
         description:
-          "Link a real bank account via open banking (Enable Banking, EU/UK/EEA coverage) for read-only transaction sync. If the user's country or bank is not listed, stop here and import a statement instead (import_transactions). Flow: action=list_banks with the user's country (and optional search) to find the exact bank name -> action=start with bank_name + country -> give the user the returned authorize_url to open and approve at their bank -> after they confirm they are done, run sync_bank. action=status shows connection health, consent expiry and the synced accounts list. action=set_account_sync with account + enabled turns syncing of ONE account on or off, for example when the same bank is also connected via another source. action=disconnect revokes the session and removes the link; imported transactions stay. Only one bank connection at a time for now; connecting a different bank replaces the previous one after disconnect.",
+          "Link a real bank account via open banking (Enable Banking, EU/UK/EEA coverage) for read-only transaction sync. If the user's country or bank is not listed, stop here and import a statement instead (import_transactions). Flow: action=list_banks with the user's country (and optional search) to find the exact bank name -> action=start with bank_name + country -> give the user the returned authorize_url to open and approve at their bank -> after they confirm they are done, run sync_bank. action=status shows connection health, consent expiry and the synced accounts list. action=set_account_sync with account + enabled turns syncing of ONE account on or off, for example when the same bank is also connected via another source. action=disconnect revokes the session and removes the link; imported transactions stay. Only one bank connection at a time for now; connecting a different bank replaces the previous one after disconnect. To renew the consent of the same bank (ending soon or ended), run action=start again with the same bank_name and country: no disconnect (that drops the link and its per-account settings).",
         inputSchema: {
           action: z.enum(["list_banks", "start", "status", "disconnect", "set_account_sync"]),
           country: z
@@ -2798,6 +2815,7 @@ export function registerFinanceTools(server: McpServer, userId: string, options:
             accounts_synced: Object.values(map).filter((m) => m.enabled).length,
             accounts: await connectionAccounts(existing),
             auto_sync: "Healthy connections are synced server-side roughly daily.",
+            ...renewHint(existing),
           });
         }
 
@@ -2825,8 +2843,18 @@ export function registerFinanceTools(server: McpServer, userId: string, options:
 
         // action=start
         if (!country || !bank_name) throw new Error("action=start requires bank_name and country.");
-        if (existing && existing.status === "active") {
-          throw new Error("A bank is already connected. Run bank action=disconnect first to replace it.");
+        // Renewal: in a consent's last week the same bank may be started again
+        // without a disconnect (the reminder email and bank_notice offer it).
+        const liveAspsp = (existing?.meta as EbConnectionMeta | null)?.aspsp;
+        const renewing =
+          !!existing &&
+          !!consentPhase(existing) &&
+          liveAspsp?.name.toLowerCase() === bank_name.toLowerCase() &&
+          liveAspsp.country.toUpperCase() === country.toUpperCase();
+        if (existing && existing.status === "active" && !renewing) {
+          throw new Error(
+            "A bank is already connected. Run bank action=disconnect first to replace it (renewing the same bank needs no disconnect in its consent's last 7 days)."
+          );
         }
         const banks = await ebAspsps(country);
         const bank = banks.find((b) => b.name.toLowerCase() === bank_name.toLowerCase());
@@ -2836,10 +2864,30 @@ export function registerFinanceTools(server: McpServer, userId: string, options:
           );
         }
         const state = crypto.randomUUID();
-        // Consent window: 90 days or whatever shorter maximum the bank enforces.
-        const maxSeconds = Math.min(bank.maximum_consent_validity ?? 90 * 86_400, 90 * 86_400);
+        // Consent window: as long as the bank allows, up to the 180 days PSD2
+        // gives in the EU (Revolut grants all 180); 90 days when the bank does
+        // not say. A 90-day cap once halved every user's time between renewals.
+        const maxSeconds = Math.min(bank.maximum_consent_validity ?? 90 * 86_400, 180 * 86_400);
         const validUntil = new Date(Date.now() + maxSeconds * 1000).toISOString();
         const { url } = await ebStartAuth({ aspspName: bank.name, country, state, validUntil });
+        if (renewing && existing) {
+          // The current consent keeps syncing until the new one is confirmed:
+          // the attempt lives in meta beside it, the confirm swaps the session
+          // (and revokes the old one), and an abandoned renewal changes nothing.
+          const keep = stripAttempt((existing.meta ?? {}) as Record<string, unknown>);
+          await db.bankConnection.update({
+            where: { id: existing.id },
+            data: { meta: { ...keep, state, startedAt: Date.now(), renewal: true } as object },
+          });
+          logEvent("bank_connected", userId, { provider: "enablebanking", renewal: true });
+          return text({
+            authorize_url: url,
+            bank: bank.name,
+            renewal: true,
+            instructions:
+              "Show authorize_url to the user as a clickable link. They open it, sign in at their bank and approve read-only access again, then confirm on our page. The current access keeps syncing until then. The link works once, within 30 minutes.",
+          });
+        }
         await db.bankConnection.upsert({
           where: { userId_provider: { userId, provider: "enablebanking" } },
           // accountMap survives a consent renewal: it carries which accounts the
@@ -2906,7 +2954,7 @@ export function registerFinanceTools(server: McpServer, userId: string, options:
     async () => {
       // A bank consent outlives our row: revoke it at Enable Banking first, as
       // disconnect does (the cascade alone would leave read access to the
-      // user's bank valid for up to 90 days). Best-effort, never blocks erasure.
+      // user's bank valid for up to 180 days). Best-effort, never blocks erasure.
       const eb = await db.bankConnection.findUnique({
         where: { userId_provider: { userId, provider: "enablebanking" } },
       });
@@ -3012,7 +3060,7 @@ export function registerFinanceTools(server: McpServer, userId: string, options:
         // disconnect revokes the consent and drops the link.
         annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
         description:
-          "Read-only sync with a real bank via open banking (Enable Banking, EU/UK/EEA). If the user's country or bank is not listed, stop and import a statement instead (import_transactions). Flow: action=list_banks with the country (and optional search) for the exact bank name; action=start with bank_name + country returns an authorize_url the user opens and approves at the bank; when they are done, action=sync (first sync takes months_back of history, default 3; later ones are incremental; the server also syncs healthy connections daily). action=status: health, consent expiry, synced accounts. action=set_account_sync with account + enabled turns ONE account on or off (relay any overlap_warnings: the same bank via ZenMoney duplicates). action=disconnect revokes the session; imported rows stay. One bank connection at a time.",
+          "Read-only sync with a real bank via open banking (Enable Banking, EU/UK/EEA). If the user's country or bank is not listed, stop and import a statement instead (import_transactions). Flow: action=list_banks with the country (and optional search) for the exact bank name; action=start with bank_name + country returns an authorize_url the user opens and approves at the bank; when they are done, action=sync (first sync takes months_back of history, default 3; later ones are incremental; the server also syncs healthy connections daily). action=status: health, consent expiry, synced accounts. action=set_account_sync with account + enabled turns ONE account on or off (relay any overlap_warnings: the same bank via ZenMoney duplicates). action=disconnect revokes the session; imported rows stay. One bank connection at a time. To renew its consent (ending soon or ended), run action=start with the same bank_name and country: never disconnect first (that drops the link and its per-account settings).",
         inputSchema: {
           action: z.enum(["list_banks", "start", "sync", "status", "set_account_sync", "disconnect"]),
           country: z.string().length(2).optional().describe("2-letter country code (FI, DE, FR, ...). Required for list_banks and start."),

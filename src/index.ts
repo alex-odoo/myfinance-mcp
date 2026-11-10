@@ -15,6 +15,7 @@ import { buildMcpServer, SERVER_NAME, SERVER_VERSION } from "./mcp";
 import { EXPENSE_CATEGORIES, INCOME_CATEGORIES } from "./categories";
 import { instrumentTransport, pruneOldEvents } from "./telemetry";
 import { ebCreateSession, ebDeleteSession } from "./enablebanking/client";
+import { stripAttempt } from "./enablebanking/sync";
 import { runAutoSync } from "./autosync";
 import { decryptToken, encryptToken } from "./zenmoney/crypto";
 import { GOOGLE_CALLBACK_PATH } from "./oauth/google";
@@ -474,24 +475,30 @@ type BankLinkMeta = Record<string, unknown> & {
   pendingCode?: string; // the bank's authorization code, encrypted like session ids
   codeAt?: number;
   confirmHash?: string;
+  renewal?: boolean;
 };
 
 async function pendingBankLink(state: string) {
-  const link = (await db.bankConnection.findMany({ where: { provider: "enablebanking" } })).find(
-    (c) => ((c.meta ?? {}) as BankLinkMeta).state === state
-  );
+  // Looked up in the query: the page is public, any ?state reaches here.
+  const link = await db.bankConnection.findFirst({
+    where: { provider: "enablebanking", meta: { path: ["state"], equals: state } },
+  });
   if (!link) return undefined;
   const meta = (link.meta ?? {}) as BankLinkMeta;
   // A consent link is good for one attempt: expiry, a decline, a cancel or a
   // failure drops the state (and any code held for the confirm step), so
   // whoever still holds the URL cannot complete it later.
-  const { state: _state, pendingCode: _code, codeAt: _codeAt, confirmHash: _confirm, ...rest } = meta;
+  const rest = stripAttempt(meta);
+  // A renewal (recorded at start) of a link that has a session ends without
+  // touching it: the current consent keeps syncing until it runs out, and an
+  // error a sync recorded meanwhile (the consent ran out) stays as it was.
+  const renewal = meta.renewal === true && !!link.tokenEnc;
   const endAttempt = (lastError: string) =>
     db.bankConnection.update({
       where: { id: link.id },
-      data: { status: "error", lastError: lastError.slice(0, 500), meta: rest as object },
+      data: renewal ? { meta: rest as object } : { status: "error", lastError: lastError.slice(0, 500), meta: rest as object },
     });
-  return { link, meta, rest, endAttempt };
+  return { link, meta, rest, endAttempt, renewal };
 }
 
 app.get(`${BANK_PATH}/callback`, async (req, res) => {
@@ -568,7 +575,7 @@ app.post(`${BANK_PATH}/confirm`, express.urlencoded({ extended: false }), async 
       "If you just confirmed, go back to your AI chat and ask it to sync your bank. Otherwise restart the connection from the chat."
     );
   }
-  const { link, meta, rest, endAttempt } = pending;
+  const { link, meta, rest, endAttempt, renewal } = pending;
   const browserKey = readCookie(req, BANK_CONFIRM_COOKIE);
   if (!browserKey || !timingSafeEqual(sha256(browserKey), Buffer.from(meta.confirmHash!, "hex"))) {
     return fail(400, "Different browser", "Confirm in the browser where you approved access at your bank, or restart from your AI chat.");
@@ -636,6 +643,7 @@ app.post(`${BANK_PATH}/confirm`, express.urlencoded({ extended: false }), async 
         tokenEnc: encryptToken(session.session_id),
         status: "active",
         lastError: null,
+        lastFailedAt: null,
         meta: JSON.parse(
           JSON.stringify({
             aspsp: session.aspsp ?? rest.aspsp,
@@ -645,6 +653,15 @@ app.post(`${BANK_PATH}/confirm`, express.urlencoded({ extended: false }), async 
         ),
       },
     });
+    if (renewal) {
+      // The renewed session replaced the old one: end the old consent at the
+      // bank too, as disconnect would. Best effort: it expires on its own.
+      try {
+        await ebDeleteSession(decryptToken(link.tokenEnc));
+      } catch (e) {
+        console.error("[enablebanking] old session revoke failed:", e instanceof Error ? e.message : String(e));
+      }
+    }
     return res
       .type("html")
       .send(

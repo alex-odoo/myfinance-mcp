@@ -1,5 +1,5 @@
 import { db, logEvent } from "../db";
-import { pickFreeName, crossProviderOverlaps, OVERLAP_HINT } from "../accounts";
+import { pickFreeName, crossProviderOverlaps, isUniqueViolation, OVERLAP_HINT } from "../accounts";
 import type { OverlapWarning } from "../accounts";
 import { convert, round2 } from "../fx";
 import { EXPENSE_CATEGORIES, INCOME_CATEGORIES } from "../categories";
@@ -36,9 +36,22 @@ interface AccountMapEntry {
 
 export interface EbConnectionMeta {
   state?: string; // pending auth nonce, cleared once the link is confirmed, cancelled or expired
+  startedAt?: number; // bank action=start; the link's 30 minutes run from here
   aspsp?: { name: string; country: string };
   validUntil?: string;
   accountsInfo?: EbAccount[];
+  consentReminded?: string; // the validUntil the last-week reminder email went out for
+  renewal?: boolean; // this attempt renews a link that has a session: an attempt that fails leaves it as it was
+}
+
+/**
+ * Meta without the keys of one authorization attempt (start, the bank's
+ * return, confirm): an attempt that ends, or a new one, drops them all, so a
+ * held code or browser key never outlives its attempt.
+ */
+export function stripAttempt(meta: Record<string, unknown>): Record<string, unknown> {
+  const { state: _s, pendingCode: _p, codeAt: _c, confirmHash: _h, renewal: _r, ...rest } = meta;
+  return rest;
 }
 
 export interface SyncOptions {
@@ -93,7 +106,11 @@ export async function syncEnableBanking(userId: string, opts: SyncOptions = {}) 
   // without spending one of the bank's few daily accesses on a certain 401.
   if (meta.validUntil && Date.parse(meta.validUntil) <= Date.now()) {
     const message = `Bank consent expired on ${meta.validUntil.slice(0, 10)}. Reconnect with bank action=start to resume syncing.`;
-    await db.bankConnection.update({ where: { id: connection.id }, data: { status: "error", lastError: message } });
+    // Guarded by the session: a renewal confirmed meanwhile must not be marked dead.
+    await db.bankConnection.updateMany({
+      where: { id: connection.id, tokenEnc: connection.tokenEnc },
+      data: { status: "error", lastError: message, lastFailedAt: new Date() },
+    });
     throw new EbAuthError(message);
   }
 
@@ -105,10 +122,12 @@ export async function syncEnableBanking(userId: string, opts: SyncOptions = {}) 
     // bugs: record lastError and stay "active"; autosync waits 6 h before the
     // next unattended try (PSD2 allows few a day), a manual sync_bank always runs.
     const message = e instanceof Error ? e.message : String(e);
+    // Guarded by the session this sync ran on: a renewal confirmed while it
+    // ran revokes that session, and its 401 must not mark the NEW one dead.
     await db.bankConnection
-      .update({
-        where: { id: connection.id },
-        data: { ...(e instanceof EbAuthError ? { status: "error" } : {}), lastError: message.slice(0, 500) },
+      .updateMany({
+        where: { id: connection.id, tokenEnc: connection.tokenEnc },
+        data: { ...(e instanceof EbAuthError ? { status: "error" } : {}), lastError: message.slice(0, 500), lastFailedAt: new Date() },
       })
       .catch(() => {});
     throw e;
@@ -221,7 +240,8 @@ async function runSync(connection: BankConnection, user: User, meta: EbConnectio
           currency,
         },
       });
-    } catch {
+    } catch (e) {
+      if (!isUniqueViolation(e)) throw e; // a name clash only, never any failure
       throw new Error(
         `Cannot create account "${name}" for bank sub-account ${iban ?? acc.uid}: the name is already taken. ` +
           `Rename or delete the clashing account (manage_account action=update or action=delete), then sync again.`
@@ -244,7 +264,10 @@ async function runSync(connection: BankConnection, user: User, meta: EbConnectio
   // Persist the map right away: a failure later in the sync must not orphan
   // the accounts just created, re-attached or re-keyed.
   if (mapDirty) {
-    await db.bankConnection.update({ where: { id: connection.id }, data: { accountMap: accountMap as object } });
+    await db.bankConnection.updateMany({
+      where: { id: connection.id, tokenEnc: connection.tokenEnc },
+      data: { accountMap: accountMap as object },
+    });
   }
   // Stamp the identity on account rows that predate it (one write each, once).
   for (const [uid, entry] of Object.entries(accountMap)) {
@@ -588,8 +611,10 @@ async function runSync(connection: BankConnection, user: User, meta: EbConnectio
   }
 
   if (!dryRun) {
-    await db.bankConnection.update({
-      where: { id: connection.id },
+    // Guarded by the session this sync ran on: a renewal confirmed while it
+    // ran owns the row now, and the next sync re-keys the map to it.
+    await db.bankConnection.updateMany({
+      where: { id: connection.id, tokenEnc: connection.tokenEnc },
       data: {
         status: "active",
         lastError: pricer.lastError(),

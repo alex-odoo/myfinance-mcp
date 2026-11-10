@@ -1,5 +1,6 @@
 import { db } from "./db";
 import { convert, round2 } from "./fx";
+import { Prisma } from "./generated/prisma/client";
 
 export const ACCOUNT_TYPES = ["cash", "bank", "card", "investment", "manual"] as const;
 
@@ -15,6 +16,11 @@ export function pickFreeName(base: string, takenLower: Set<string>, suffixes: st
     const c = `${base} (${i})`;
     if (!takenLower.has(c.toLowerCase())) return c;
   }
+}
+
+/** The (userId, name) unique index refused the row: a real name clash, nothing else. */
+export function isUniqueViolation(e: unknown): boolean {
+  return e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002";
 }
 
 export async function resolveAccount(userId: string, name?: string) {

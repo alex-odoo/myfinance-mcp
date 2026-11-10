@@ -224,6 +224,10 @@ model BankConnection {
   status          String    @default("active") // active | error
   lastSyncAt      DateTime?
   lastError       String?
+  // When a sync last failed. The autosync backoff and the "sync failing"
+  // notice read this, never updatedAt: any write (a toggle, a reminder)
+  // bumps updatedAt, and a successful sync can leave an informational lastError.
+  lastFailedAt    DateTime?
   // zenAccountId -> { accountId, enabled } (small, per-user; a table would be
   // overkill for one connection with a dozen accounts)
   accountMap      Json      @default("{}")

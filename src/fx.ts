@@ -19,6 +19,11 @@ const FALLBACK_FIRST_DAY = "2024-03-02";
 const FALLBACK_DAYS_BACK = 3; // a day's file appears after midnight UTC
 const ISO_CURRENCIES = new Set(Intl.supportedValuesOf("currency"));
 
+/** An ISO 4217 code: the only kind any rate source here prices (crypto never is). */
+export function isIsoCurrency(code: string): boolean {
+  return ISO_CURRENCIES.has(code);
+}
+
 function dateKey(d: Date): string {
   return d.toISOString().slice(0, 10);
 }

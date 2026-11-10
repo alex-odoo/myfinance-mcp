@@ -1,7 +1,7 @@
 {
   "serverInfo": {
     "name": "myfinancemcp",
-    "version": "0.18.0"
+    "version": "0.19.0"
   },
   "authentication": {
     "required": true,
@@ -1159,7 +1159,7 @@
     {
       "name": "bank",
       "title": "Bank sync",
-      "description": "Read-only sync with a real bank via open banking (Enable Banking, EU/UK/EEA). If the user's country or bank is not listed, stop and import a statement instead (import_transactions). Flow: action=list_banks with the country (and optional search) for the exact bank name; action=start with bank_name + country returns an authorize_url the user opens and approves at the bank; when they are done, action=sync (first sync takes months_back of history, default 3; later ones are incremental; the server also syncs healthy connections daily). action=status: health, consent expiry, synced accounts. action=set_account_sync with account + enabled turns ONE account on or off (relay any overlap_warnings: the same bank via ZenMoney duplicates). action=disconnect revokes the session; imported rows stay. One bank connection at a time.",
+      "description": "Read-only sync with a real bank via open banking (Enable Banking, EU/UK/EEA). If the user's country or bank is not listed, stop and import a statement instead (import_transactions). Flow: action=list_banks with the country (and optional search) for the exact bank name; action=start with bank_name + country returns an authorize_url the user opens and approves at the bank; when they are done, action=sync (first sync takes months_back of history, default 3; later ones are incremental; the server also syncs healthy connections daily). action=status: health, consent expiry, synced accounts. action=set_account_sync with account + enabled turns ONE account on or off (relay any overlap_warnings: the same bank via ZenMoney duplicates). action=disconnect revokes the session; imported rows stay. One bank connection at a time. To renew its consent (ending soon or ended), run action=start with the same bank_name and country: never disconnect first (that drops the link and its per-account settings).",
       "inputSchema": {
         "type": "object",
         "properties": {

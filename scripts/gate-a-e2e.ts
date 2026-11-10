@@ -222,12 +222,16 @@ let ebFxCredit = "0.00";
  * anything else (incl. the token-validation call with cursor=now) -> empty diff.
  */
 function startZenStub() {
-  const instruments = [{ id: 3, shortTitle: "EUR" }];
+  const instruments = [
+    { id: 3, shortTitle: "EUR" },
+    { id: 9, shortTitle: "USDT" }, // crypto: no 3-letter code
+  ];
   const accounts = [
     { id: "za-card", title: "Zen Card", type: "ccard", instrument: 3, balance: 900 },
     { id: "za-cash", title: "Zen Cash", type: "cash", instrument: 3, balance: 100 },
     { id: "za-loan", title: "Zen Loan", type: "loan", instrument: 3, balance: -5000 },
     { id: "za-arch", title: "Old Card", type: "ccard", instrument: 3, balance: 0, archive: true },
+    { id: "za-usdt", title: "MEXC Spot", type: "ccard", instrument: 9, balance: 42 },
   ];
   const tags = [
     { id: "zt-food", title: "Продукты" },
@@ -266,6 +270,7 @@ function startZenStub() {
             tx({ id: "zt4", date: "2026-07-11", outcome: 100, outcomeAccount: "za-card", outcomeInstrument: 3, income: 100, incomeAccount: "za-cash", incomeInstrument: 3 }),
             tx({ id: "zt5", date: "2026-07-12", outcome: 30, outcomeAccount: "za-loan", outcomeInstrument: 3 }),
             tx({ id: "zt6", date: "2026-07-12", outcome: 15, outcomeAccount: "za-card", outcomeInstrument: 3, mcc: 5812, payee: "Trattoria" }),
+            tx({ id: "zt7", date: "2026-07-12", outcome: 40, outcomeAccount: "za-card", outcomeInstrument: 3, income: 42, incomeAccount: "za-usdt", incomeInstrument: 9 }),
           ],
         });
       }
@@ -297,6 +302,9 @@ function startZenStub() {
  * (EUR debit + USD credit, FX-tolerance matched), one pending row.
  */
 let ebCodesIssued = 0;
+let ebLastValidUntil = ""; // the consent window the server asked for in its last /auth
+let ebLastSessionId = ""; // the last Mock Bank session handed out
+const ebSessionsDeleted: string[] = [];
 const ebCodesUsed = new Set<string>();
 
 function startEbStub() {
@@ -312,14 +320,15 @@ function startEbStub() {
         const country = url.searchParams.get("country") ?? "FI";
         return Response.json({
           aspsps: [
-            { name: "Mock Bank", country, maximum_consent_validity: 7_776_000 },
+            { name: "Mock Bank", country, maximum_consent_validity: 15_552_000 }, // 180 days, as Revolut
             // Approves the sign-in but shares no account (the restricted tier).
             { name: "Empty Mock Bank", country, maximum_consent_validity: 7_776_000 },
           ],
         });
       }
       if (url.pathname === "/auth" && req.method === "POST") {
-        const body = (await req.json()) as { state: string; redirect_url: string; aspsp?: { name?: string } };
+        const body = (await req.json()) as { state: string; redirect_url: string; aspsp?: { name?: string }; access?: { valid_until?: string } };
+        ebLastValidUntil = body.access?.valid_until ?? "";
         const empty = body.aspsp?.name === "Empty Mock Bank" ? "empty-" : "";
         return Response.json({ url: `${body.redirect_url}?code=e2e-eb-code-${empty}${++ebCodesIssued}&state=${body.state}` });
       }
@@ -337,8 +346,9 @@ function startEbStub() {
             accounts: [],
           });
         }
+        ebLastSessionId = `e2e-eb-session-${body.code}`;
         return Response.json({
-          session_id: "e2e-eb-session",
+          session_id: ebLastSessionId,
           aspsp: { name: "Mock Bank", country: "FI" },
           access: { valid_until: new Date(Date.now() + 90 * 86_400_000).toISOString() },
           accounts: [
@@ -395,6 +405,7 @@ function startEbStub() {
         return Response.json({ balances: [{ balance_type: "CLBD", balance_amount: eur("1200.00") }] });
       }
       if (url.pathname.startsWith("/sessions/") && req.method === "DELETE") {
+        ebSessionsDeleted.push(decodeURIComponent(url.pathname.slice("/sessions/".length)));
         return Response.json({ deleted: true });
       }
       return new Response("not found", { status: 404 });
@@ -1975,9 +1986,9 @@ async function main(): Promise<void> {
       zs1.first_sync === true &&
         zs1.accounts_created === 2 &&
         zs1.accounts_synced === 2 &&
-        zs1.accounts_skipped?.length === 2 &&
+        zs1.accounts_skipped?.length === 3 &&
         zs1.imported === 3 &&
-        zs1.transfers === 1 &&
+        zs1.transfers === 2 &&
         zs1.manual_twins_merged === 1 &&
         zs1.rows_on_unsynced_accounts === 1 &&
         zs1.balances_anchored === 2,
@@ -1996,6 +2007,42 @@ async function main(): Promise<void> {
         zs1.overlap_warnings[0].existing_provider === "enablebanking",
       JSON.stringify(zs1.overlap_warnings)
     );
+
+    ok(
+      "zen skips a crypto account with its reason instead of failing the sync",
+      zs1.accounts_skipped?.some((a: any) => a.title === "MEXC Spot" && /USDT/.test(a.reason) && /ISO/.test(a.reason)),
+      JSON.stringify(zs1.accounts_skipped)
+    );
+    const zenCrypto = await pdb.transaction.findFirst({ where: { userId: zenUser.id, externalId: "zenmoney:zt7" } });
+    ok(
+      "a transfer into the skipped crypto account stays one-legged on the synced side",
+      zenCrypto?.type === "transfer" && zenCrypto.currency === "EUR" && zenCrypto.counterAccountId === null && /MEXC Spot \(not synced\)/.test(zenCrypto.note ?? ""),
+      JSON.stringify({ type: zenCrypto?.type, currency: zenCrypto?.currency, note: zenCrypto?.note })
+    );
+
+    // A sync failing for days: the read tools say so, autosync backs off
+    const zenRow = await pdb.bankConnection.findFirstOrThrow({ where: { userId: zenUser.id, provider: "zenmoney" } });
+    await pdb.bankConnection.update({
+      where: { id: zenRow.id },
+      data: { lastError: "ZenMoney answered 503", lastFailedAt: new Date(), lastSyncAt: new Date(Date.now() - 3 * 86_400_000) },
+    });
+    const zenFailing = payload(await call("get_summary", {}));
+    ok(
+      "get_summary carries sync_failing for a link failing for days",
+      zenFailing.bank_notice?.length === 1 &&
+        zenFailing.bank_notice[0].problem === "sync_failing" &&
+        zenFailing.bank_notice[0].source === "ZenMoney" &&
+        zenFailing.bank_notice[0].detail === "ZenMoney answered 503",
+      JSON.stringify(zenFailing.bank_notice)
+    );
+    const { runAutoSync: zenAuto } = await import("../src/autosync");
+    const zenBack = await zenAuto(zenUser.id);
+    ok("autosync backs off a ZenMoney link that just failed", zenBack.due === 0 && zenBack.backoff === 1, JSON.stringify(zenBack));
+    // An informational lastError after a success (skipped unpriced rows) is not a failure
+    await pdb.bankConnection.update({ where: { id: zenRow.id }, data: { lastFailedAt: null } });
+    const zenNoted = payload(await call("get_summary", {}));
+    ok("a lastError without a failure raises no notice", zenNoted.bank_notice === undefined, JSON.stringify(zenNoted.bank_notice));
+    await pdb.bankConnection.update({ where: { id: zenRow.id }, data: { lastError: zenRow.lastError, lastSyncAt: zenRow.lastSyncAt } });
 
     const zenAccs = payload(await call("get_accounts", {}));
     const zenCard = zenAccs.accounts.find((a: any) => a.name === "Zen Card");
@@ -2304,6 +2351,123 @@ async function main(): Promise<void> {
     ok("set_account_sync re-enables", togOn.enabled === true, JSON.stringify(togOn));
     const ebs6 = payload(await call("sync_bank", {}));
     ok("re-enabled account pulls again", ebs6.imported === 1, JSON.stringify(ebs6));
+
+    // 12eb6. Consent ending (0.19.0): the bank's full window, a notice in the
+    // read tools, one reminder email, renewal without a disconnect
+    ok(
+      "consent asks for the bank's own maximum (180 days), not a 90-day cap",
+      Math.abs(Date.parse(ebLastValidUntil) - Date.now() - 180 * 86_400_000) < 3_600_000,
+      ebLastValidUntil
+    );
+    const ebQuiet = payload(await call("get_summary", {}));
+    ok("no bank notice while the link is healthy", ebQuiet.bank_notice === undefined, JSON.stringify(ebQuiet.bank_notice));
+    ok(
+      "start on a healthy link is refused outside the consent's last week",
+      isErr(await call("connect_bank", { action: "start", country: "FI", bank_name: "Mock Bank" }))
+    );
+    const ebLive = await odb.bankConnection.findFirstOrThrow({ where: { userId: testUser.id, provider: "enablebanking" } });
+    const endsSoon = new Date(Date.now() + 3 * 86_400_000).toISOString();
+    await odb.bankConnection.update({ where: { id: ebLive.id }, data: { meta: { ...(ebLive.meta as object), validUntil: endsSoon } } });
+    const ebSoon = payload(await call("get_summary", {}));
+    ok(
+      "get_summary carries consent_ending with the date and the renewal",
+      ebSoon.bank_notice?.length === 1 &&
+        ebSoon.bank_notice[0].problem === "consent_ending" &&
+        ebSoon.bank_notice[0].ends_on === endsSoon.slice(0, 10) &&
+        /bank action=start with bank_name "Mock Bank" and country "FI"/.test(ebSoon.bank_notice[0].action),
+      JSON.stringify(ebSoon.bank_notice)
+    );
+    const ebStatusSoon = payload(await call("connect_bank", { action: "status" }));
+    ok(
+      "bank status says how to renew, and not to disconnect",
+      /ends on/.test(ebStatusSoon.renew ?? "") && /action=start/.test(ebStatusSoon.renew ?? "") && /do NOT disconnect/.test(ebStatusSoon.renew ?? ""),
+      JSON.stringify(ebStatusSoon.renew)
+    );
+    const { remindBankConsents } = await import("../src/bankNotice");
+    // A renewal link in progress holds the email back; one never opened does not, after its 30 minutes
+    payload(await call("connect_bank", { action: "start", country: "FI", bank_name: "Mock Bank" }));
+    ok("no reminder while a renewal link is in progress", (await remindBankConsents(testUser.id)) === 0);
+    const unopened = await odb.bankConnection.findFirstOrThrow({ where: { userId: testUser.id, provider: "enablebanking" } });
+    await odb.bankConnection.update({
+      where: { id: unopened.id },
+      data: { meta: { ...(unopened.meta as object), startedAt: Date.now() - 31 * 60_000 } },
+    });
+    const mailMark = sentMail.length;
+    const remind1 = await remindBankConsents(testUser.id);
+    const remind2 = await remindBankConsents(testUser.id);
+    const reminders = sentMail.slice(mailMark);
+    ok(
+      "one reminder email per consent, naming the bank and the date",
+      remind1 === 1 &&
+        remind2 === 0 &&
+        reminders.length === 1 &&
+        reminders[0]!.to === testUser.email &&
+        reminders[0]!.subject === `Mock Bank sync stops on ${endsSoon.slice(0, 10)}` &&
+        reminders[0]!.text.includes("Renew my bank connection") &&
+        !/\d+[.,]\d{2}/.test(reminders[0]!.text),
+      JSON.stringify({ remind1, remind2, n: reminders.length, subject: reminders[0]?.subject })
+    );
+    ok(
+      "renewal is for the same bank only",
+      isErr(await call("connect_bank", { action: "start", country: "FI", bank_name: "Empty Mock Bank" }))
+    );
+    ok(
+      "renewal is for the same bank in the same country only",
+      isErr(await call("connect_bank", { action: "start", country: "SE", bank_name: "Mock Bank" }))
+    );
+    const oldSession = ebLastSessionId;
+    // An abandoned renewal changes nothing: the current consent keeps syncing
+    const ebRenewDropped = payload(await call("connect_bank", { action: "start", country: "FI", bank_name: "Mock Bank" }));
+    ok("renewal starts in the consent's last week, no disconnect", ebRenewDropped.renewal === true && typeof ebRenewDropped.authorize_url === "string", JSON.stringify(ebRenewDropped));
+    ok("a started renewal keeps the link active", payload(await call("connect_bank", { action: "status" })).status === "active");
+    ok("a started renewal keeps syncing on the current consent", !isErr(await call("sync_bank", {})));
+    const dropped = await (await bankLink(ebRenewDropped.authorize_url)).confirm("cancel");
+    ok("a cancelled renewal is reported as not connected", dropped.status === 200 && (await dropped.text()).includes("Not connected"));
+    const afterDrop = payload(await call("connect_bank", { action: "status" }));
+    const dropNotice = payload(await call("get_summary", {})).bank_notice;
+    ok(
+      "a cancelled renewal leaves the live link and its notice as they were",
+      afterDrop.status === "active" && ebSessionsDeleted.length === 0 && dropNotice?.[0]?.problem === "consent_ending",
+      JSON.stringify({ status: afterDrop.status, deleted: ebSessionsDeleted, dropNotice })
+    );
+    const ebRenew = payload(await call("connect_bank", { action: "start", country: "FI", bank_name: "Mock Bank" }));
+    const renewLink = await bankLink(ebRenew.authorize_url);
+    const renewed = await renewLink.confirm("connect");
+    ok("renewed consent connects", renewed.status === 200 && (await renewed.text()).includes("Bank connected"));
+    ok(
+      "renewal revokes the replaced session at the bank",
+      ebLastSessionId !== oldSession && ebSessionsDeleted.includes(oldSession) && !ebSessionsDeleted.includes(ebLastSessionId),
+      JSON.stringify({ oldSession, ebLastSessionId, ebSessionsDeleted })
+    );
+    const ebs7 = await call("sync_bank", {});
+    ok("renewed consent syncs without duplicates", !isErr(ebs7) && payload(ebs7).imported === 0, JSON.stringify(payload(ebs7)));
+    const ebFresh = payload(await call("get_accounts", {}));
+    ok("renewed consent clears the notice", ebFresh.bank_notice === undefined, JSON.stringify(ebFresh.bank_notice));
+
+    const ebRenewedRow = await odb.bankConnection.findFirstOrThrow({ where: { userId: testUser.id, provider: "enablebanking" } });
+    await odb.bankConnection.update({
+      where: { id: ebRenewedRow.id },
+      data: { meta: { ...(ebRenewedRow.meta as object), validUntil: new Date(Date.now() - 86_400_000).toISOString() } },
+    });
+    // Ended but still active until a sync notices: already a reconnect notice, and renewable
+    const endedActive = payload(await call("get_summary", {}));
+    ok(
+      "an ended consent on a still-active link is reconnect_needed at once",
+      endedActive.bank_notice?.[0]?.problem === "reconnect_needed" && /no disconnect needed/.test(endedActive.bank_notice[0].action),
+      JSON.stringify(endedActive.bank_notice)
+    );
+    ok("no reminder email for a consent that already ended", (await remindBankConsents(testUser.id)) === 0);
+    ok("sync after the consent ended errors", isErr(await call("sync_bank", {})));
+    const ebEnded = payload(await call("get_accounts", {}));
+    ok(
+      "get_accounts carries reconnect_needed with the bank and country",
+      ebEnded.bank_notice?.length === 1 &&
+        ebEnded.bank_notice[0].problem === "reconnect_needed" &&
+        /Bank consent expired/.test(ebEnded.bank_notice[0].detail ?? "") &&
+        /bank_name "Mock Bank" and country "FI"/.test(ebEnded.bank_notice[0].action) &&
+        !!ebEnded.bank_notice[0].last_sync,
+      JSON.stringify(ebEnded.bank_notice)
+    );
 
     const ebDisc = payload(await call("connect_bank", { action: "disconnect" }));
     ok("eb disconnect", ebDisc.disconnected === true);
