@@ -134,19 +134,25 @@ fi
 SHA=$(git rev-parse --short=12 HEAD)
 
 echo "==> Rsync code to $SERVER:$REMOTE_DIR"
+# The box's secrets live only there: refuse before rsync can touch anything.
+remote "test -f $REMOTE_DIR/app.env" || { echo "FATAL: $REMOTE_DIR/app.env missing on the box before rsync (restore it first)" >&2; exit 1; }
 # .gitignore is the exclude list: secrets, node_modules, the local Prisma
-# client and agent worktrees never leave the Mac (excluded files on the box,
-# such as app.env, are also kept by --delete).
+# client and agent worktrees never leave the Mac, and excluded files on the
+# box (app.env) are kept by --delete. --exclude-from, never the dir-merge
+# filter ':- .gitignore': macOS 26+ ships openrsync as /usr/bin/rsync, which
+# does not pass dir-merge rules to the receiver, so --delete wiped app.env on
+# 2026-11-10. app.env is also excluded by name, whatever .gitignore says.
 rsync -az --delete \
   -e "ssh -i $SSH_KEY" \
-  --exclude '.git' --exclude 'state-e2e' --filter=':- .gitignore' \
+  --exclude '.git' --exclude 'state-e2e' --exclude 'app.env' --exclude-from=.gitignore \
   ./ "$SERVER:$REMOTE_DIR/"
+remote "test -f $REMOTE_DIR/app.env" || { echo "FATAL: rsync removed $REMOTE_DIR/app.env (restore it from the running container's env)" >&2; exit 1; }
 
 # The landing font is not in git (Fontshare's licence forbids redistribution),
 # so the .gitignore filter above skips it (and keeps the box's copy); it ships
 # from this Mac's working copy instead.
 if ls site/fonts/Switzer-*.woff2 >/dev/null 2>&1; then
-  rsync -az -e "ssh -i $SSH_KEY" site/fonts/Switzer-*.woff2 "$SERVER:$REMOTE_DIR/site/fonts/"
+  rsync -az -e "ssh -i $SSH_KEY" site/fonts/Switzer-*.woff2 $(ls site/fonts/FFL.txt 2>/dev/null) "$SERVER:$REMOTE_DIR/site/fonts/"
 else
   echo "    (no site/fonts/Switzer-*.woff2 here: the box keeps its copy, a fresh box falls back to system fonts)"
 fi
