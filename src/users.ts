@@ -8,6 +8,28 @@ export interface SessionUser {
 }
 
 /**
+ * The operator's own addresses (the env account and ADMIN_EMAILS), plus-aliases
+ * included (alex+probe@...: the operator's test sign-ups): left out of every
+ * usage total.
+ */
+export function isOperatorEmail(email: string): boolean {
+  const e = email.toLowerCase();
+  const own = (a: string) => !!a && (a === config.userEmail || config.adminEmails.includes(a));
+  return own(e) || own(e.replace(/\+[^@]*@/, "@"));
+}
+
+/**
+ * Who an account belongs to, for usage counts: the operator, a test account
+ * (a reserved test domain, RFC 2606/6761: the e2e suite and probes use them),
+ * or a real user. account_deleted carries it, so /admin counts users' own
+ * erasures and not the test runs (125 of the first 126 were ours).
+ */
+export function accountKind(email: string): "operator" | "test" | "user" {
+  if (isOperatorEmail(email)) return "operator";
+  return /[@.](local|localhost|test|invalid|example)$|[@.]example\.(com|net|org)$/i.test(email) ? "test" : "user";
+}
+
+/**
  * The env-configured operator account (email + password), upserted at boot.
  * Everyone else signs up with Google or a one-time code sent by email.
  */

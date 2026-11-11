@@ -176,6 +176,160 @@ async function ensureRates(date: Date, needed: string[]): Promise<DayRates> {
   return { rates: new Map([...cached, ...fresh]), fallbackAnswered };
 }
 
+/** Fewer days than this are cheaper one request each (the per-day path). */
+const PREFETCH_MIN_DAYS = 5;
+/**
+ * A series is worth one download only when the days it serves are dense
+ * enough: at least one needed day per this many days of span (16 years of
+ * series is ~2 MB; five days scattered over them are cheaper one by one).
+ */
+const PREFETCH_SPAN_PER_DAY = 60;
+const PREFETCH_ROWS_PER_INSERT = 5_000;
+/** Fallback day files downloaded at once (one file per day: the source has no ranges). */
+const PREFETCH_FALLBACK_PARALLEL = 6;
+const DAY_MS = 86_400_000;
+const ECB_MARKER = "USD"; // USD present = the day's ECB set is stored (ensureRates reads it so)
+
+const atMidnight = (day: string) => new Date(`${day}T00:00:00.000Z`);
+type RateRow = { date: Date; quote: string; rate: number };
+
+/** The days of `days` (sorted, distinct) without `quote` cached, or [] when too few or too sparse for a series. */
+async function daysWorthASeries(days: string[], quote: string): Promise<string[]> {
+  if (days.length < PREFETCH_MIN_DAYS) return [];
+  const cached = await db.fxRate.findMany({ where: { quote, date: { in: days.map(atMidnight) } }, select: { date: true } });
+  const have = new Set(cached.map((r) => dateKey(r.date)));
+  const missing = days.filter((d) => !have.has(d));
+  if (missing.length < PREFETCH_MIN_DAYS) return [];
+  const spanDays = (Date.parse(missing.at(-1)!) - Date.parse(missing[0]!)) / DAY_MS + 1;
+  return missing.length * PREFETCH_SPAN_PER_DAY >= spanDays ? missing : [];
+}
+
+async function storeRates(rows: RateRow[]): Promise<void> {
+  for (let i = 0; i < rows.length; i += PREFETCH_ROWS_PER_INSERT) {
+    await db.fxRate.createMany({ data: rows.slice(i, i + PREFETCH_ROWS_PER_INSERT), skipDuplicates: true });
+  }
+}
+
+/**
+ * The ECB set for `days`, from one frankfurter time-series request. A day ECB
+ * did not publish (weekend, holiday) takes the last published day before it,
+ * as the single-day endpoint answers (2019-01-05 -> 2019-01-04); the series
+ * opens with the business day before the range, so a range that starts on a
+ * weekend is covered too. The marker (USD) of every day goes in last: a day
+ * shows its marker only once its whole set is stored, so a failed or
+ * concurrent insert never leaves a day that looks complete with part missing.
+ */
+async function prefetchEcb(days: string[]): Promise<void> {
+  const missing = await daysWorthASeries(days, ECB_MARKER);
+  if (!missing.length) return;
+  const res = await fetch(`https://api.frankfurter.dev/v1/${missing[0]}..${missing.at(-1)}?base=EUR`, {
+    signal: AbortSignal.timeout(30_000),
+  });
+  if (!res.ok) return;
+  const series = ((await res.json()) as { rates?: Record<string, Record<string, number>> }).rates ?? {};
+  const published = Object.keys(series).sort();
+  const rest: RateRow[] = [];
+  const markers: RateRow[] = [];
+  let at = -1; // the last published day on or before `day`
+  for (const day of missing) {
+    while (at + 1 < published.length && published[at + 1]! <= day) at++;
+    if (at < 0) continue; // before the series: the per-day path asks
+    for (const [quote, rate] of Object.entries(series[published[at]!]!)) {
+      if (typeof rate === "number" && rate > 0) (quote === ECB_MARKER ? markers : rest).push({ date: atMidnight(day), quote, rate });
+    }
+  }
+  await storeRates(rest);
+  await storeRates(markers);
+}
+
+/** UAH per EUR for `days`, from one NBU range request (NBU publishes every calendar day). */
+async function prefetchUah(days: string[]): Promise<void> {
+  const missing = await daysWorthASeries(days, "UAH");
+  if (!missing.length) return;
+  const compact = (d: string) => d.replaceAll("-", "");
+  const res = await fetch(
+    `https://bank.gov.ua/NBU_Exchange/exchange_site?start=${compact(missing[0]!)}&end=${compact(missing.at(-1)!)}&valcode=eur&sort=exchangedate&order=asc&json`,
+    { signal: AbortSignal.timeout(30_000) }
+  );
+  if (!res.ok) return;
+  const byDay = new Map<string, number>();
+  for (const r of (await res.json()) as Array<{ exchangedate?: string; rate_per_unit?: number }>) {
+    const m = /^(\d{2})\.(\d{2})\.(\d{4})$/.exec(r.exchangedate ?? "");
+    if (m && typeof r.rate_per_unit === "number" && r.rate_per_unit > 0) byDay.set(`${m[3]}-${m[2]}-${m[1]}`, r.rate_per_unit);
+  }
+  await storeRates(missing.filter((d) => byDay.has(d)).map((d) => ({ date: atMidnight(d), quote: "UAH", rate: byDay.get(d)! })));
+}
+
+/**
+ * Currencies ECB does not publish on a day (RUB since 2022-03, KZT, GEL, ...)
+ * come from the fallback's one file per day: no range exists, so after the
+ * ECB set is stored the days still missing one of `currencies` are fetched a
+ * few at a time instead of one by one in the pricing loop, and only the
+ * currencies asked for are stored (as ensureRates does).
+ */
+async function prefetchFallback(days: string[], currencies: string[]): Promise<void> {
+  const fbDays = days.filter((d) => d >= FALLBACK_FIRST_DAY);
+  if (fbDays.length < PREFETCH_MIN_DAYS || !currencies.length) return;
+  const stored = await db.fxRate.findMany({
+    where: { date: { in: fbDays.map(atMidnight) }, quote: { in: [ECB_MARKER, ...currencies] } },
+    select: { date: true, quote: true },
+  });
+  const byDay = new Map<string, Set<string>>();
+  for (const r of stored) {
+    const key = dateKey(r.date);
+    byDay.set(key, (byDay.get(key) ?? new Set()).add(r.quote));
+  }
+  // Only days whose ECB set is stored: on those a currency still missing is one ECB did not publish.
+  const todo = fbDays.filter((d) => byDay.get(d)?.has(ECB_MARKER) && currencies.some((c) => !byDay.get(d)!.has(c)));
+  for (let i = 0; i < todo.length; i += PREFETCH_FALLBACK_PARALLEL) {
+    const batch = todo.slice(i, i + PREFETCH_FALLBACK_PARALLEL);
+    const files = await Promise.all(batch.map((d) => fetchFallback(d)));
+    const rows: RateRow[] = [];
+    batch.forEach((day, k) => {
+      for (const c of currencies) {
+        const rate = files[k]?.[c];
+        if (rate && !byDay.get(day)!.has(c)) rows.push({ date: atMidnight(day), quote: c, rate });
+      }
+    });
+    await storeRates(rows);
+  }
+}
+
+/**
+ * Caches, before a batch of rows is priced, the rates of their days with ONE
+ * request per source instead of one per day: a first ZenMoney sync of
+ * 2010-2020 history asked for 1,260 days one by one, and one failed request
+ * stopped it (2026-11-11). ECB (frankfurter) and NBU (UAH) publish ranges;
+ * other currencies come from the fallback's day files, a few at a time. Each
+ * source gets only the days of rows that need it; rows already in `base` need
+ * no rate. Best effort: whatever is still missing goes the per-day way, so
+ * this never makes a conversion fail.
+ */
+export async function prefetchRates(rows: Array<{ currency: string; date: Date }>, base: string): Promise<void> {
+  const ecbDays = new Set<string>();
+  const uahDays = new Set<string>();
+  const others = new Set<string>();
+  for (const r of rows) {
+    if (r.currency === base || Number.isNaN(r.date.getTime())) continue;
+    const day = dateKey(r.date);
+    for (const c of [r.currency, base]) {
+      if (c === "EUR") continue;
+      if (c === "UAH") uahDays.add(day);
+      else {
+        ecbDays.add(day); // the ECB set first, also to learn which codes it lacks that day
+        if (ISO_CURRENCIES.has(c)) others.add(c);
+      }
+    }
+  }
+  const sorted = (days: Set<string>) => [...days].sort();
+  try {
+    await Promise.all([prefetchEcb(sorted(ecbDays)), prefetchUah(sorted(uahDays))]);
+    await prefetchFallback(sorted(ecbDays), [...others]);
+  } catch {
+    /* the per-day path fetches what is still missing */
+  }
+}
+
 /** No FX source publishes this currency (as opposed to the sources being down). */
 export class UnknownCurrencyError extends Error {
   constructor(readonly currency: string) {

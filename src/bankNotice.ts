@@ -12,7 +12,17 @@ export const CONSENT_WARN_MS = 7 * DAY;
 /** A sync failing for this long (or never once succeeding) is worth telling the user. */
 const FAILING_FOR_MS = 2 * DAY;
 /** An authorization link lives 30 minutes: a connection still pending after that was abandoned. */
-const PENDING_DEAD_MS = 30 * 60_000;
+export const PENDING_DEAD_MS = 30 * 60_000;
+
+/**
+ * A bank approval that may still complete: its link lives 30 minutes from
+ * meta.startedAt; a row without a start time counts as in progress. The read
+ * tools and these notices share it, so they never disagree about one row.
+ */
+export function approvalInProgress(meta: unknown, now = Date.now()): boolean {
+  const startedAt = ((meta ?? {}) as EbConnectionMeta).startedAt;
+  return !startedAt || now - startedAt <= PENDING_DEAD_MS;
+}
 
 export interface BankNotice {
   source: string;
@@ -108,8 +118,7 @@ export async function bankNotices(userId: string, now = Date.now()): Promise<Ban
         action: `Tell the user that ${source} stopped syncing${since} and nothing new arrives from it until they reconnect. ${reconnectAction(c)}`,
       });
     } else if (c.status === "pending") {
-      const startedAt = metaOf(c).startedAt;
-      if (!startedAt || now - startedAt <= PENDING_DEAD_MS) continue; // a link in progress
+      if (approvalInProgress(c.meta, now)) continue; // a link in progress
       out.push({
         source,
         problem: "reconnect_needed",

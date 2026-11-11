@@ -40,6 +40,8 @@ model User {
   digest        String?
   // The last period a summary went out for ("2026-09" or "2026-W41"), claimed before sending.
   digestSentFor String?
+  // When a write carried the account's one offer of the email summary (null = not yet).
+  digestOfferedAt DateTime?
   // The AI client this account signed up from, e.g. "Claude @ claude.ai".
   signupClient  String?
 

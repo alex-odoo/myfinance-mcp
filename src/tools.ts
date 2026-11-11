@@ -2,13 +2,13 @@ import { z } from "zod";
 import type { McpServer, RegisteredTool } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { db, logEvent } from "./db";
-import { assertConvertible, convert, round2, UnknownCurrencyError } from "./fx";
+import { assertConvertible, convert, prefetchRates, round2, UnknownCurrencyError } from "./fx";
 import { EXPENSE_CATEGORIES, INCOME_CATEGORIES } from "./categories";
 import { resolveAccount, computeBalance, connectionAccounts, setAccountSync, ACCOUNT_TYPES } from "./accounts";
 import { SERVER_VERSION } from "./version";
 import { DIGEST_CHOICES, digestAvailable, sendWelcome, startingPoint } from "./digest";
 import { DASHBOARD_TOOL_META } from "./ui";
-import { bankNoticeField, consentPhase } from "./bankNotice";
+import { approvalInProgress, bankNoticeField, consentPhase } from "./bankNotice";
 import { asBaseSwitch, asBaseWriter } from "./baseGate";
 import { detectZenHost } from "./zenmoney/client";
 import { encryptToken, decryptToken } from "./zenmoney/crypto";
@@ -20,6 +20,7 @@ import { stripAttempt, type EbConnectionMeta } from "./enablebanking/sync";
 import { CADENCES, foundAfterImport, localToday, recurringOverview, rollForward, type Cadence } from "./recurring";
 import type { TxType } from "./generated/prisma/enums";
 import { Prisma } from "./generated/prisma/client";
+import { accountKind } from "./users";
 
 const ALL_CATEGORIES = new Set<string>([...EXPENSE_CATEGORIES, ...INCOME_CATEGORIES]);
 
@@ -142,14 +143,130 @@ function setupNote(
 }
 
 /**
+ * What the browsing tools say while nothing is stored. Of 18 sign-ups by
+ * 2026-11-11, 8 never saved a record (6 of 7 on ChatGPT): the client set the
+ * currency, opened empty lists and described features instead of asking for
+ * a first record. The record names its currency: without one it is stored in
+ * the base currency.
+ */
+const FIRST_RECORD_NEXT =
+  "No transactions are stored yet. Do not list features: ask the user for one recent purchase (what, how much, in which currency, when) and save it with log_expense including its currency, or ask them to export a statement from their bank's app (CSV, PDF or screenshots) and import every row with ONE import_transactions call.";
+
+/**
+ * Users known to hold records: the check below never runs for them again in
+ * this process, so an active user pays one query per process for it. Only
+ * records are remembered: a budget or a bank link can go away with nothing
+ * stored, and one who deletes every record gets no next until a restart.
+ */
+const hasRecords = new Set<string>();
+/** Users seen holding something other than records (a budget, a bank link): rechecked after HOLDS_TTL_MS. */
+const holdsSeen = new Map<string, number>();
+const HOLDS_TTL_MS = 5 * 60_000;
+
+/**
+ * `{ next }` while the account holds nothing a read could show: no record, no
+ * balance, no budget, no saved payment, no active bank link, and no bank
+ * approval in progress (approvalInProgress, shared with bankNotice; an
+ * abandoned one does not count). Never rejects: a
+ * read tool must not fail over a hint.
+ *
+ * Each browsing handler spreads it itself (get_accounts, get_summary,
+ * get_transactions, get_trends, get_recurring, get_budget_progress,
+ * get_settings, update_settings). Decided on review 2026-11-11, after a pass
+ * for a define() wrapper and a pass against it: the handlers that say
+ * something else on an empty account (budget, recurring, settings hints) have
+ * to read it anyway, and a wrapper re-parsed every result to merge one field.
+ * A new browsing tool adds the same spread.
+ */
+async function firstRecordNext(userId: string): Promise<{ next?: string }> {
+  if (hasRecords.has(userId)) return {};
+  const seen = holdsSeen.get(userId);
+  if (seen && Date.now() - seen < HOLDS_TTL_MS) return {};
+  try {
+    if (await db.transaction.findFirst({ where: { userId }, select: { id: true } })) {
+      if (hasRecords.size >= 100_000) hasRecords.clear();
+      hasRecords.add(userId);
+      return {};
+    }
+    const holds = await db.user.findFirst({
+      where: {
+        id: userId,
+        OR: [
+          { budgets: { some: {} } },
+          { recurringPayments: { some: {} } },
+          { accounts: { some: { snapshots: { some: {} } } } },
+          { bankConnections: { some: { status: "active" } } },
+        ],
+      },
+      select: { id: true },
+    });
+    if (holds) {
+      if (holdsSeen.size >= 100_000) holdsSeen.clear();
+      holdsSeen.set(userId, Date.now());
+      return {};
+    }
+    const pending = await db.bankConnection.findMany({ where: { userId, status: "pending" }, select: { meta: true } });
+    return pending.some((c) => approvalInProgress(c.meta)) ? {} : { next: FIRST_RECORD_NEXT };
+  } catch {
+    return {};
+  }
+}
+
+/** Records after which a manual logger is offered the email summary. */
+const DIGEST_OFFER_AFTER = 10;
+const DIGEST_OFFER =
+  "After answering, offer once, in one short sentence: a weekly or monthly email with their spending summary (update_settings email_digest=weekly or monthly). Turn it on only after a clear yes.";
+
+/**
+ * Claims the account's one offer of the email summary: on the write (or
+ * get_summary, for records that came by sync) that finds DIGEST_OFFER_AFTER
+ * records, or on any import that wrote rows while the offer is unclaimed. A line in the server instructions was never acted
+ * on (0 of 18 users chose by 2026-11-11), and an option inside an import's
+ * next step repeated on every import and lost to the budget; the write that
+ * crosses the line carries it once, as its own `offer` field. Claimed before
+ * the answer leaves: a lost response loses the offer, which beats repeating
+ * it. Accounts from before 0.20 get it once as well: the old option inside an
+ * import's next step was never taken. `user` is the row the caller already
+ * holds. Never rejects.
+ */
+async function claimDigestOffer(
+  user: { id: string; digest: string | null; digestOfferedAt: Date | null },
+  imported = false
+): Promise<boolean> {
+  if (!digestAvailable() || user.digest !== null || user.digestOfferedAt) return false;
+  try {
+    if (!imported && (await db.transaction.count({ where: { userId: user.id }, take: DIGEST_OFFER_AFTER })) < DIGEST_OFFER_AFTER) {
+      return false;
+    }
+    const { count } = await db.user.updateMany({
+      where: { id: user.id, digest: null, digestOfferedAt: null },
+      data: { digestOfferedAt: new Date() },
+    });
+    return count === 1;
+  } catch {
+    return false;
+  }
+}
+
+/** `{ offer }` for a write's payload when it claims the email-summary offer. */
+async function digestOfferField(
+  user: Parameters<typeof claimDigestOffer>[0],
+  imported = false
+): Promise<{ offer?: string }> {
+  return (await claimDigestOffer(user, imported)) ? { offer: DIGEST_OFFER } : {};
+}
+
+/**
  * After an import: the biggest categories of what it wrote, and one next
  * step. A user who imported a statement and saw only row counts never came
- * back.
+ * back. On the import that claimed the account's one offer of the email
+ * summary (claimDigestOffer), that offer is the step: one step per answer.
  */
 function whereItWent(
-  user: { baseCurrency: string; digest: string | null },
+  user: { baseCurrency: string },
   spent: Map<string, number>,
-  recurring: Awaited<ReturnType<typeof foundAfterImport>> = null
+  recurring: Awaited<ReturnType<typeof foundAfterImport>> = null,
+  offerDigest = false
 ) {
   const total = [...spent.values()].reduce((a, b) => a + b, 0);
   const top = [...spent.entries()]
@@ -164,9 +281,11 @@ function whereItWent(
       (recurring
         ? ` and the recurring payments found in their records (recurring_found${recurring.count ? `: ${recurring.count} repeating, about ${recurring.monthly_total} ${recurring.base_currency} a month` : ""}${recurring.seen_once ? `; subscriptions charged once in these rows: ask how often` : ""}; get_recurring lists them)`
         : "") +
-      ", then offer ONE next step: a monthly budget for the biggest category (set_budget)" +
-      (recurring ? ", saving the recurring payments they confirm (set_recurring)" : "") +
-      (user.digest === null && digestAvailable() ? ", or a monthly summary by email (update_settings email_digest=monthly)." : "."),
+      (offerDigest
+        ? ", then make the offer in offer (the email summary) as the one next step; a budget can wait for a later answer."
+        : ", then offer ONE next step: a monthly budget for the biggest category (set_budget)" +
+          (recurring ? ", saving the recurring payments they confirm (set_recurring)" : "") +
+          "."),
   };
 }
 
@@ -199,6 +318,10 @@ export interface FinanceToolOptions {
 
 /** One export call stays a readable tool result (~100 bytes per row). */
 const EXPORT_PAGE_ROWS = 2000;
+/** get_transactions rows per call. */
+const TX_PAGE_MAX = 100;
+/** get_summary trend_months (get_trends months): the longest trend. */
+const TREND_MONTHS_MAX = 24;
 /** Saved recurring payments per user. */
 const MAX_RECURRING = 100;
 /** get_summary by merchant: bank strings carry store numbers, so a year can hold thousands. */
@@ -493,7 +616,8 @@ export function registerFinanceTools(server: McpServer, userId: string, options:
     async (input) => {
       const adopted = await adoptFirstCurrency(userId, await entryCurrency(userId, [input.currency], input.account));
       const logged = await adoptingWrite(userId, adopted, pricing(() => logTransaction(userId, "expense", input as LogInput)));
-      return text({ ...logged, ...setupNote(await getUser(userId), adopted) });
+      const after = await getUser(userId);
+      return text({ ...logged, ...setupNote(after, adopted), ...(await digestOfferField(after)) });
     }
   );
 
@@ -519,7 +643,8 @@ export function registerFinanceTools(server: McpServer, userId: string, options:
     async (input) => {
       const adopted = await adoptFirstCurrency(userId, await entryCurrency(userId, [input.currency], input.account));
       const logged = await adoptingWrite(userId, adopted, pricing(() => logTransaction(userId, "income", input as LogInput)));
-      return text({ ...logged, ...setupNote(await getUser(userId), adopted) });
+      const after = await getUser(userId);
+      return text({ ...logged, ...setupNote(after, adopted), ...(await digestOfferField(after)) });
     }
   );
 
@@ -886,6 +1011,7 @@ export function registerFinanceTools(server: McpServer, userId: string, options:
     },
     async ({ entity }) => {
       const notice = bankNoticeField(userId); // alongside the balances; never rejects
+      const empty = firstRecordNext(userId); // likewise
       const user = await getUser(userId);
       const accounts = await db.account.findMany({
         where: { userId, ...(entity ? { entity } : {}) },
@@ -940,6 +1066,7 @@ export function registerFinanceTools(server: McpServer, userId: string, options:
         accounts: out,
         hint: hints.length ? hints.join(" ") : undefined,
         ...(await notice),
+        ...(await empty),
       });
     }
   );
@@ -1177,6 +1304,13 @@ export function registerFinanceTools(server: McpServer, userId: string, options:
           where: { userId, type: "transfer", counterAccountId: acc.id, counterExternalId: null, accountId: { not: acc.id }, occurredAt: span },
         });
         const monthRange = periodRange(user.timezone);
+        // A year of statement rows in another currency: their rates in one request per source, not one per day.
+        if (!dryRun) {
+          await prefetchRates(
+            transactions.map((r) => ({ currency: (r.currency ?? acc.currency ?? user.baseCurrency).toUpperCase(), date: parseDate(r.date) })),
+            user.baseCurrency
+          );
+        }
 
         for (const [idx, row] of transactions.entries()) {
           rowsSum += row.amount;
@@ -1433,6 +1567,7 @@ export function registerFinanceTools(server: McpServer, userId: string, options:
             : []),
         ];
         const alerts = await crossedBudgets(user, budgetAdded).catch(() => []); // best-effort, rows are written
+        const offer = !dryRun && imported > 0 ? await digestOfferField(user, true) : {};
         return {
           account: acc.name,
           ...(dryRun ? { dry_run: true } : {}),
@@ -1451,8 +1586,9 @@ export function registerFinanceTools(server: McpServer, userId: string, options:
           ...(skipped.length > SKIP_REPORT_CAP ? { skipped_not_listed: skipped.length - SKIP_REPORT_CAP } : {}),
           ...(hints.length > 0 ? { hint: hints.join(" ") } : {}),
           ...(spentByCategory.size > 0
-            ? whereItWent(user, spentByCategory, dryRun ? null : await foundAfterImport(user).catch(() => null))
+            ? whereItWent(user, spentByCategory, dryRun ? null : await foundAfterImport(user).catch(() => null), !!offer.offer)
             : {}),
+          ...offer,
         };
       }));
       // Nothing written (every row skipped): the statement did not set the base.
@@ -1502,9 +1638,8 @@ export function registerFinanceTools(server: McpServer, userId: string, options:
           .number()
           .int()
           .min(2)
-          .max(24)
           .optional()
-          .describe("Month-by-month expense and income for the last N months instead of one period (optionally one expense category or one entity): 'how did my spending change since spring'."),
+          .describe(`Month-by-month expense and income for the last N months (at most ${TREND_MONTHS_MAX}) instead of one period (optionally one expense category or one entity): 'how did my spending change since spring'.`),
       },
     },
     async ({ period, from, to, type, group_by, category, exclude_categories, entity, compare, currency, trend_months }, extra) => {
@@ -1519,6 +1654,7 @@ export function registerFinanceTools(server: McpServer, userId: string, options:
         return delegate("get_trends", { months: trend_months, category, entity }, extra);
       }
       const notice = bankNoticeField(userId); // alongside the period queries; never rejects
+      const empty = firstRecordNext(userId); // likewise
       const user = await getUser(userId);
       const range = periodRange(user.timezone, period, from, to);
       const target = currency?.toUpperCase();
@@ -1666,7 +1802,11 @@ export function registerFinanceTools(server: McpServer, userId: string, options:
         // A bank link that stopped explains a short period better than a
         // missing statement does: the client relays it.
         ...(await notice),
+        ...(await empty),
         ...setupNote(user, null),
+        // Records that arrive by bank or ZenMoney sync never pass a write
+        // tool: the summary is where such a user meets the offer.
+        ...(await digestOfferField(user)),
       });
     }
   );
@@ -1685,11 +1825,14 @@ export function registerFinanceTools(server: McpServer, userId: string, options:
         merchant: z.string().optional().describe("Substring match, case-insensitive."),
         query: z.string().optional().describe("Searches note and merchant."),
         entity: entitySchema.optional().describe("personal or business only."),
-        limit: z.number().int().min(1).max(100).optional().describe("Default 20."),
+        // No max in the schema: a larger ask is served as one capped page
+        // (models asked for 200 and got a bare validation error).
+        limit: z.number().int().min(1).optional().describe(`Default 20, at most ${TX_PAGE_MAX} per call: page on with offset=next_offset.`),
         offset: z.number().int().min(0).max(100_000).optional().describe("Skip this many matches (paging). Default 0."),
       },
     },
     async ({ from, to, category, merchant, query, entity, limit, offset }) => {
+      const empty = firstRecordNext(userId); // alongside the query; never rejects
       const user = await getUser(userId);
       const where = {
         userId,
@@ -1716,7 +1859,7 @@ export function registerFinanceTools(server: McpServer, userId: string, options:
           // back in a different order per page and paging skips or repeats them.
           orderBy: [{ occurredAt: "desc" }, { createdAt: "desc" }, { id: "desc" }],
           skip,
-          take: limit ?? 20,
+          take: Math.min(limit ?? 20, TX_PAGE_MAX),
           include: { account: { select: { name: true } } },
         }),
         db.transaction.count({ where }),
@@ -1728,6 +1871,10 @@ export function registerFinanceTools(server: McpServer, userId: string, options:
         total,
         has_more: hasMore,
         ...(hasMore ? { next_offset: skip + txs.length } : {}),
+        ...(hasMore && limit && limit > TX_PAGE_MAX
+          ? { note: `At most ${TX_PAGE_MAX} rows per call: page on with offset=next_offset while has_more is true.` }
+          : {}),
+        ...(await empty),
         transactions: txs.map((t) => ({
           id: t.id,
           date: t.occurredAt.toISOString().slice(0, 10),
@@ -2051,14 +2198,16 @@ export function registerFinanceTools(server: McpServer, userId: string, options:
       annotations: { readOnlyHint: true, openWorldHint: false },
       description: "Month-over-month expense/income dynamics, optionally for one category or scope.",
       inputSchema: {
-        months: z.number().int().min(2).max(24).optional().describe("How many months back. Default 6."),
+        // No max in the schema: a longer ask gets the longest trend and a note, not a validation error.
+        months: z.number().int().min(2).optional().describe(`How many months back, at most ${TREND_MONTHS_MAX}. Default 6.`),
         category: z.enum(EXPENSE_CATEGORIES).optional(),
         entity: entitySchema.optional().describe("personal or business only. Omit for everything."),
       },
     },
     async ({ months, category, entity }) => {
+      const empty = firstRecordNext(userId); // alongside the query; never rejects
       const user = await getUser(userId);
-      const n = months ?? 6;
+      const n = Math.min(months ?? 6, TREND_MONTHS_MAX);
       const [ty, tm] = todayIn(user.timezone).split("-").map(Number);
       const start = new Date(Date.UTC(ty!, tm! - 1 - (n - 1), 1));
       const rows = await db.transaction.findMany({
@@ -2091,7 +2240,16 @@ export function registerFinanceTools(server: McpServer, userId: string, options:
           expense_change_pct: prev && prev > 0 ? round2(((v.expense - prev) / prev) * 100) : null,
         };
       });
-      return text({ base_currency: user.baseCurrency, category: category ?? "all", entity: entity ?? "all", months: series });
+      return text({
+        base_currency: user.baseCurrency,
+        category: category ?? "all",
+        entity: entity ?? "all",
+        months: series,
+        ...(months && months > TREND_MONTHS_MAX
+          ? { note: `At most ${TREND_MONTHS_MAX} months per trend: this one covers the last ${TREND_MONTHS_MAX}, not ${months}.` }
+          : {}),
+        ...(await empty),
+      });
     }
   );
 
@@ -2132,7 +2290,12 @@ export function registerFinanceTools(server: McpServer, userId: string, options:
     async () => {
       const user = await getUser(userId);
       const budgets = await db.budget.findMany({ where: { userId } });
-      if (budgets.length === 0) return text({ budgets: [], hint: "No budgets set. Use set_budget." });
+      if (budgets.length === 0) {
+        // An empty account starts with a record, not a budget: a budget first
+        // would also keep the first record's currency from becoming the base.
+        const { next } = await firstRecordNext(userId);
+        return text(next ? { budgets: [], next } : { budgets: [], hint: "No budgets set. Use set_budget." });
+      }
       const range = periodRange(user.timezone);
       const rows = await db.transaction.findMany({
         where: { userId, type: "expense", entity: "personal", occurredAt: { gte: range.start, lt: range.end } },
@@ -2177,6 +2340,9 @@ export function registerFinanceTools(server: McpServer, userId: string, options:
     async ({ include_stopped }) => {
       const user = await getUser(userId);
       const overview = await recurringOverview(user, new Date(), include_stopped === true);
+      // An empty account starts with a record, not a saved payment.
+      const { next } = overview.saved.length + overview.found.length === 0 ? await firstRecordNext(userId) : {};
+      if (next) return text({ ...overview, next });
       const hint =
         overview.saved.length + overview.found.length === 0
           ? "Nothing repeats in the records yet. The user can save a payment with set_recurring, or import two or three months of statements so repeats show."
@@ -2319,22 +2485,28 @@ export function registerFinanceTools(server: McpServer, userId: string, options:
       inputSchema: {},
     },
     async () => {
+      const empty = firstRecordNext(userId); // alongside the read; never rejects
       const user = await getUser(userId);
+      const { next } = await empty;
+      // New accounts start on EUR/UTC; dates and "this month" follow the
+      // timezone, so the first conversation sets both, then makes a first record.
+      const askCurrency = !user.currencySetAt;
       return text({
         email: user.email,
         server_version: SERVER_VERSION,
         base_currency: user.baseCurrency,
         timezone: user.timezone,
         email_digest: user.digest ?? "not_chosen",
-        // New accounts start on EUR/UTC; dates and "this month" follow the
-        // timezone, so the first conversation should set both.
-        ...(!user.currencySetAt && user.timezone === "UTC"
+        ...(askCurrency && user.timezone === "UTC"
           ? { hint: "Settings are still the defaults. Ask the user which currency they think in and where they live, then call update_settings with base_currency and timezone." }
-          : !user.currencySetAt
+          : askCurrency
             ? { hint: `Base currency is still the default ${user.baseCurrency}. Ask the user which currency they think in and call update_settings with base_currency.` }
           : user.timezone === "UTC"
-            ? { hint: "Timezone is UTC. Unless the user lives on UTC, ask where they live and call update_settings with timezone." }
+            ? {
+                hint: "Timezone is UTC. Unless the user lives on UTC, ask where they live and call update_settings with timezone.",
+              }
             : {}),
+        ...(next ? { next } : {}),
       });
     }
   );
@@ -2401,6 +2573,7 @@ export function registerFinanceTools(server: McpServer, userId: string, options:
             select: { currency: true, occurredAt: true },
             distinct: ["currency", "occurredAt"],
           });
+          await prefetchRates(pairs.map((p) => ({ currency: p.currency, date: p.occurredAt })), newBase); // one request per source, not one per day
           for (const p of pairs) await rateTo(p.currency, p.occurredAt);
           // Budget caps are amounts in the base currency too (today's rate;
           // no lookup at all without budgets). set_budget is a base writer,
@@ -2471,6 +2644,8 @@ export function registerFinanceTools(server: McpServer, userId: string, options:
           : welcome
             ? { confirmation_email: `sent to ${updated.email}` }
             : { confirmation_email: "could not be sent now; the summaries still go out on schedule" }),
+        // Settings were the first step of most new users who then left with nothing stored.
+        ...(await firstRecordNext(userId)),
       });
     }
   );
@@ -2959,6 +3134,7 @@ export function registerFinanceTools(server: McpServer, userId: string, options:
         where: { userId_provider: { userId, provider: "enablebanking" } },
       });
       if (eb?.tokenEnc) await revokeEbSession(eb.tokenEnc);
+      const { email } = await getUser(userId);
       await db.$transaction([
         db.oauthAccessToken.deleteMany({ where: { userId } }),
         db.oauthRefreshToken.deleteMany({ where: { userId } }),
@@ -2968,7 +3144,8 @@ export function registerFinanceTools(server: McpServer, userId: string, options:
         db.event.deleteMany({ where: { userId } }),
         db.user.delete({ where: { id: userId } }),
       ]);
-      logEvent("account_deleted");
+      // Whose erasure, never who: /admin counts users' own, not test runs.
+      logEvent("account_deleted", undefined, { by: accountKind(email) });
       return text({ deleted: true, note: "All data erased. The connector is now disconnected." });
     }
   );

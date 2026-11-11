@@ -6,7 +6,7 @@ import { EXPENSE_CATEGORIES, INCOME_CATEGORIES } from "../categories";
 import { merchantCategoryMap, normMerchant } from "../merchantMemory";
 import type { BankConnection, User } from "../generated/prisma/client";
 import { mccCategory } from "../zenmoney/mapping";
-import { RowPricer } from "../fx";
+import { RowPricer, prefetchRates } from "../fx";
 import { ebTransactions, ebBalances, ebDerivedId, EbAuthError } from "./client";
 import type { EbTransaction, EbAccount } from "./client";
 
@@ -442,6 +442,14 @@ async function runSync(connection: BankConnection, user: User, meta: EbConnectio
   // day's FX rate within FX_PAIR_TOLERANCE (banks apply their own spread), and
   // the pair must be unique in BOTH directions - anything ambiguous stays two
   // plain rows the user can still glue with update_transaction.
+  // A first sync brings up to 180 days: their rates in one request per source,
+  // not one per day, before this pass and the pricing below ask for them.
+  if (!dryRun) {
+    await prefetchRates(
+      fresh.map((r) => ({ currency: r.currency, date: new Date(`${r.date}T00:00:00.000Z`) })),
+      user.baseCurrency
+    );
+  }
   const fxDebits = fresh.filter((d) => d.isDebit && !pairedCredit.has(d));
   const fxCredits = fresh.filter((c) => !c.isDebit && !takenCredits.has(c));
   const fxCandidates = new Map<NewRow, NewRow[]>(); // debit -> matching credits

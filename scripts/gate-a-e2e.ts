@@ -2823,9 +2823,20 @@ async function main(): Promise<void> {
       const uberRow = await cdb.transaction.findFirst({ where: { userId: ua.id, externalId: "e2e-13c-1" } });
       ok("an imported row of a known merchant takes the learned category", uberRow?.categoryKey === "transport", imp.text);
       ok(
-        "an import says where the money went and offers one next step",
-        imp.json.where_it_went?.top_categories?.[0]?.category === "restaurants" && /email_digest=monthly/.test(imp.json.next ?? ""),
+        "an import says where the money went, and on the first import the email summary is its one next step",
+        imp.json.where_it_went?.top_categories?.[0]?.category === "restaurants" &&
+          /make the offer in offer/.test(imp.json.next ?? "") &&
+          !/set_budget/.test(imp.json.next ?? "") &&
+          /email_digest=weekly or monthly/.test(imp.json.offer ?? ""),
         imp.text
+      );
+      const imp2 = await a.tool("import_transactions", {
+        transactions: [{ date: today, amount: -1200, currency: "ARS", category: "groceries", merchant: "Dia", external_id: "e2e-13c-3" }],
+      });
+      ok(
+        "a later import never offers the email summary again, and offers a budget as its one next step",
+        imp2.json.imported === 1 && /set_budget/.test(imp2.json.next ?? "") && !/email_digest|offer in offer/.test(imp2.json.next ?? "") && !imp2.json.offer,
+        imp2.text
       );
       const adoptByImport = await fresh();
       const c = await inProcess(adoptByImport.id);
@@ -3011,6 +3022,283 @@ async function main(): Promise<void> {
         "one-click POST unsubscribes",
         oneClick.status === 200 && (await cdb.user.findUniqueOrThrow({ where: { id: ud.id } })).digest === "off"
       );
+
+      // 0.20.0: an empty account leads to its first record (8 of 18 sign-ups
+      // never saved one; the client toured empty lists instead).
+      const ue = await fresh();
+      const em = await inProcess(ue.id);
+      const eSettings = await em.tool("get_settings");
+      ok(
+        "get_settings of an empty account asks for the settings and then a first record, with its currency",
+        /log_expense/.test(eSettings.json.next ?? "") &&
+          /import_transactions/.test(eSettings.json.next ?? "") &&
+          /in which currency/.test(eSettings.json.next ?? "") &&
+          /which currency they think in and where they live/.test(eSettings.json.hint ?? ""),
+        eSettings.text
+      );
+      const readNames = ["get_accounts", "get_summary", "get_transactions", "get_budget_progress", "get_recurring"];
+      const eReads = await Promise.all([...readNames.map((n) => em.tool(n)), em.tool("get_summary", { trend_months: 6 })]);
+      ok(
+        "every read tool of an empty account carries the first-record next",
+        eReads.every((r) => !r.isError && /Do not list features/.test(r.json?.next ?? "")),
+        eReads.map((r, i) => `${readNames[i] ?? "trend"}: ${r.text.slice(0, 160)}`).join(" | ")
+      );
+      const eExport = await em.tool("export_data", { what: "profile" });
+      const ePing = await em.tool("ping");
+      ok(
+        "an export and ping carry only their own content, never the first-record next",
+        !eExport.isError && !eExport.json?.next && !ePing.isError && !ePing.json?.next,
+        `${eExport.text.slice(0, 160)} | ${ePing.text.slice(0, 160)}`
+      );
+      ok(
+        "get_budget_progress of an empty account steers to the first record, not to a budget",
+        !/set_budget/.test(eReads[3]!.json.hint ?? "") && /log_expense/.test(eReads[3]!.json.next ?? ""),
+        eReads[3]!.text
+      );
+      ok(
+        "get_recurring of an empty account steers to the first record, not to set_recurring",
+        !/set_recurring/.test(eReads[4]!.json.hint ?? "") && /log_expense/.test(eReads[4]!.json.next ?? ""),
+        eReads[4]!.text
+      );
+      const eUpd = await em.tool("update_settings", { timezone: "America/Bogota" });
+      ok("update_settings on an empty account points to the first record", /log_expense/.test(eUpd.json.next ?? ""), eUpd.text);
+      const eFirst = await em.tool("log_expense", { amount: 12000, currency: "COP", category: "restaurants", merchant: "Juan Valdez" });
+      ok("the first record's currency becomes the base", /Base currency set to COP/.test(eFirst.json.setup ?? ""), eFirst.text);
+      const eAfter = await Promise.all(["get_settings", ...readNames, "update_settings"].map((n) => em.tool(n)));
+      ok(
+        "after the first record no tool says the account is empty, and settings ask nothing",
+        eAfter.every((r) => !r.isError && !r.json?.next) && !eAfter[0]!.json.hint,
+        eAfter.map((r) => r.text.slice(0, 120)).join(" | ")
+      );
+      await em.close();
+      // A bank link that is bringing records is not an empty account.
+      const uLinked = await fresh();
+      await cdb.bankConnection.create({ data: { userId: uLinked.id, provider: "zenmoney", status: "active", tokenEnc: "e2e" } });
+      const linkedSession = await inProcess(uLinked.id);
+      ok("an account with an active bank link gets no first-record next", !(await linkedSession.tool("get_accounts")).json.next);
+      await linkedSession.close();
+      // A budget is data: the account is not empty.
+      const uBudget = await fresh();
+      const ob = await inProcess(uBudget.id);
+      await ob.tool("set_budget", { amount: 300, category: "groceries" });
+      ok("an account holding only a budget gets no first-record next", !(await ob.tool("get_settings")).json.next && !(await ob.tool("get_accounts")).json.next);
+      await ob.close();
+      // A bank approval in progress is about to bring records; an abandoned one (past its 30-minute link) is not.
+      const uPending = await fresh();
+      const pend = await cdb.bankConnection.create({
+        data: { userId: uPending.id, provider: "enablebanking", status: "pending", meta: { state: "e2e", startedAt: Date.now() } },
+      });
+      const op = await inProcess(uPending.id);
+      ok("a bank approval in progress gets no first-record next", !(await op.tool("get_accounts")).json.next);
+      // The approval link was opened two hours ago: abandoned (bankNotice reads startedAt the same way).
+      await cdb.bankConnection.update({ where: { id: pend.id }, data: { meta: { state: "e2e", startedAt: Date.now() - 2 * 3_600_000 } } });
+      ok("an abandoned bank approval leaves the account empty", /log_expense/.test((await op.tool("get_accounts")).json.next ?? ""));
+      await op.close();
+
+      // 0.20.0: the email summary is offered once, by the write that reaches 10 records.
+      const uo = await fresh({ timezone: "Europe/Madrid", currencySetAt: new Date() });
+      const o = await inProcess(uo.id);
+      const offeredOn: number[] = [];
+      for (let i = 1; i <= 11; i++) {
+        const r = await (i === 5 ? o.tool("log_income", { amount: 900, category: "salary" }) : o.tool("log_expense", { amount: 3 + i, category: "groceries", merchant: `Shop ${i}` }));
+        if (r.json?.offer) offeredOn.push(i);
+        if (i === 10) ok("the offer names both schedules and asks for a clear yes", /email_digest=weekly or monthly/.test(r.json?.offer ?? "") && /clear yes/.test(r.json?.offer ?? ""), r.text);
+      }
+      ok("the email summary is offered once, on the 10th record", offeredOn.length === 1 && offeredOn[0] === 10, JSON.stringify(offeredOn));
+      ok("the offer is recorded on the account", !!(await cdb.user.findUniqueOrThrow({ where: { id: uo.id } })).digestOfferedAt);
+      const bigPage = await o.tool("get_transactions", { limit: 200 });
+      ok(
+        "get_transactions serves a limit over 100 as one page, not a validation error, and notes nothing when all rows fit",
+        !bigPage.isError && bigPage.json.count === 11 && !bigPage.json.note,
+        bigPage.text.slice(0, 300)
+      );
+      // 105 rows: a limit of 200 serves 100 and says to page on.
+      const filler = await o.tool("import_transactions", {
+        transactions: Array.from({ length: 94 }, (_, i) => ({
+          date: `2026-01-${String(1 + (i % 28)).padStart(2, "0")}`,
+          amount: -(1 + i),
+          category: "groceries",
+          merchant: `Filler ${i}`,
+          external_id: `e2e-020-filler-${i}`,
+        })),
+      });
+      const cappedPage = await o.tool("get_transactions", { limit: 200 });
+      ok(
+        "a limit over 100 on more rows serves 100 and says to page on",
+        filler.json?.imported === 94 && cappedPage.json.count === 100 && cappedPage.json.has_more === true && /At most 100 rows/.test(cappedPage.json.note ?? ""),
+        `${filler.text.slice(0, 120)} | ${cappedPage.text.slice(0, 200)}`
+      );
+      // Records that came by sync never pass a write tool: get_summary carries the offer for them.
+      await cdb.user.update({ where: { id: uo.id }, data: { digestOfferedAt: null } });
+      const syncedSummary = await o.tool("get_summary");
+      ok(
+        "get_summary offers the email summary once to an account with records and no offer yet",
+        /email_digest=weekly or monthly/.test(syncedSummary.json.offer ?? "") && !(await o.tool("get_summary")).json.offer,
+        syncedSummary.text.slice(0, 300)
+      );
+      const longTrend = await o.tool("get_summary", { trend_months: 36 });
+      ok(
+        "get_summary trend_months over 24 gives the 24-month trend and says so, not a validation error",
+        !longTrend.isError && longTrend.json.months?.length === 24 && /At most 24 months/.test(longTrend.json.note ?? ""),
+        longTrend.text.slice(0, 300)
+      );
+      await o.close();
+      const uChosen = await fresh({ digest: "off", currencySetAt: new Date() });
+      const oc = await inProcess(uChosen.id);
+      let chosenOffers = 0;
+      for (let i = 1; i <= 10; i++) if ((await oc.tool("log_expense", { amount: i, category: "groceries" })).json?.offer) chosenOffers++;
+      ok("a user who chose (even off) is never offered the email summary", chosenOffers === 0);
+      await oc.close();
+      const uIncome = await fresh({ currencySetAt: new Date() });
+      const oi = await inProcess(uIncome.id);
+      const incomeImp = await oi.tool("import_transactions", {
+        transactions: [{ date: today, amount: 2500, category: "salary", merchant: "Employer" }],
+      });
+      ok("an import with no spending carries the offer as its own field", /email_digest/.test(incomeImp.json.offer ?? ""), incomeImp.text);
+      await oi.close();
+      const uDry = await fresh({ currencySetAt: new Date() });
+      const od = await inProcess(uDry.id);
+      const dryImp = await od.tool("import_transactions", {
+        dry_run: true,
+        transactions: [{ date: today, amount: -40, category: "groceries", merchant: "Lidl" }],
+      });
+      ok(
+        "a dry run never spends the offer",
+        !/email_digest/.test(dryImp.json.next ?? "") && !dryImp.json.offer && !(await cdb.user.findUniqueOrThrow({ where: { id: uDry.id } })).digestOfferedAt,
+        dryImp.text
+      );
+      await od.close();
+
+      // 0.20.0: a span of days is cached from ONE request per source (a first
+      // ZenMoney sync of ten years asked 1,260 single days, and one failure stopped it).
+      // These checks talk to the live sources; an outage skips them instead of blocking a deploy.
+      const { prefetchRates } = await import("../src/fx");
+      const at = (d: string) => new Date(`${d}T00:00:00.000Z`);
+      const live = async (url: string) => {
+        const res = await fetch(url, { signal: AbortSignal.timeout(15_000) });
+        if (!res.ok) throw new Error(`${url} -> ${res.status}`);
+        return res.json();
+      };
+      const ecbSat = "https://api.frankfurter.dev/v1/2012-03-03?base=EUR";
+      const nbuSat = "https://bank.gov.ua/NBUStatService/v1/statdirectory/exchange?valcode=EUR&date=20120603&json";
+      const fbSat = "https://cdn.jsdelivr.net/npm/@fawazahmed0/currency-api@2025-01-04/v1/currencies/eur.min.json";
+      const sources = await Promise.all([live(ecbSat), live(nbuSat), live(fbSat)]).catch((e: unknown) => e as Error);
+      if (sources instanceof Error) {
+        console.log(`  skip FX prefetch checks: a rate source is unreachable (${sources.message})`);
+      } else {
+        const [ecbSingle, nbuSingle, fbSingle] = sources as [{ rates: { USD: number } }, Array<{ rate: number }>, { eur: Record<string, number> }];
+        const week = (first: string) => Array.from({ length: 7 }, (_, i) => new Date(Date.parse(`${first}T00:00:00.000Z`) + i * 86_400_000));
+        const rateOn = async (days: Date[], quote: string) =>
+          new Map((await cdb.fxRate.findMany({ where: { date: { in: days }, quote } })).map((r) => [r.date.toISOString().slice(0, 10), Number(r.rate)]));
+
+        const ecbWeek = week("2012-03-01");
+        await cdb.fxRate.deleteMany({ where: { date: { in: ecbWeek } } });
+        await prefetchRates(ecbWeek.map((date) => ({ currency: "USD", date })), "EUR");
+        const usdOn = await rateOn(ecbWeek, "USD");
+        const perDay = await cdb.fxRate.groupBy({ by: ["date"], where: { date: { in: ecbWeek } }, _count: { _all: true } });
+        ok(
+          "one ECB series caches every day of a span, a weekend at the business day before it, as the single-day answer",
+          usdOn.size === 7 &&
+            perDay.length === 7 &&
+            perDay.every((g) => g._count._all >= 30) &&
+            usdOn.get("2012-03-03") === usdOn.get("2012-03-02") &&
+            usdOn.get("2012-03-04") === usdOn.get("2012-03-02") &&
+            usdOn.get("2012-03-05") !== usdOn.get("2012-03-02") &&
+            Math.abs(ecbSingle.rates.USD - usdOn.get("2012-03-03")!) < 1e-9,
+          JSON.stringify([...usdOn])
+        );
+
+        const uahWeek = week("2012-06-01");
+        await cdb.fxRate.deleteMany({ where: { date: { in: uahWeek } } });
+        await prefetchRates(uahWeek.map((date) => ({ currency: "UAH", date })), "EUR");
+        const uahOn = await rateOn(uahWeek, "UAH");
+        ok(
+          "one NBU range caches UAH for every day of a span, as the single-day answer, and fetches no ECB set for UAH-only rows",
+          uahOn.size === 7 && Math.abs(nbuSingle[0]!.rate - uahOn.get("2012-06-03")!) < 1e-9 && (await rateOn(uahWeek, "USD")).size === 0,
+          JSON.stringify([...uahOn])
+        );
+
+        const kztWeek = week("2025-01-01");
+        await cdb.fxRate.deleteMany({ where: { date: { in: kztWeek } } });
+        await prefetchRates(kztWeek.map((date) => ({ currency: "KZT", date })), "EUR");
+        const kztOn = await rateOn(kztWeek, "KZT");
+        ok(
+          "a currency ECB lacks comes from the fallback's day files, after the day's ECB set, as the per-day path stores it",
+          kztOn.size === 7 && (await rateOn(kztWeek, "USD")).size === 7 && Math.abs(fbSingle.eur.kzt! - kztOn.get("2025-01-04")!) < 1e-9,
+          JSON.stringify([...kztOn])
+        );
+
+        const fewDays = [at("2012-04-02"), at("2012-04-03")];
+        const sparse = ["2011-05-02", "2013-05-02", "2015-05-04", "2017-05-02", "2019-05-02"].map(at);
+        const baseOnly = week("2012-05-01");
+        await cdb.fxRate.deleteMany({ where: { date: { in: [...fewDays, ...sparse, ...baseOnly] } } });
+        await prefetchRates(fewDays.map((date) => ({ currency: "USD", date })), "EUR");
+        await prefetchRates(sparse.map((date) => ({ currency: "USD", date })), "EUR");
+        await prefetchRates(baseOnly.map((date) => ({ currency: "EUR", date })), "EUR");
+        ok(
+          "a couple of days, days scattered over years and rows in the base currency are left to the per-day path",
+          (await cdb.fxRate.count({ where: { date: { in: [...fewDays, ...sparse, ...baseOnly] } } })) === 0
+        );
+      }
+
+      // 0.20.0: /admin counts users' own erasures, not test runs, and activation per client.
+      const { computeAdminStats } = await import("../src/admin/stats");
+      // uo (a test domain) and realGpt (a real-looking address) both come from ChatGPT; only realGpt counts.
+      await cdb.event.create({ data: { type: "client_init", userId: uo.id, meta: { client: "openai-mcp", version: "e2e" } } });
+      const deletedBefore = (await computeAdminStats()).totals.deletedAccounts;
+      const realEmails = [`e2e-${randomBytes(4).toString("hex")}@mailbox.org`, `e2e-${randomBytes(4).toString("hex")}@mailbox.org`];
+      const realIds: string[] = [];
+      try {
+        const realish = await fresh({ email: realEmails[0] });
+        const realGpt = await fresh({ email: realEmails[1], currencySetAt: new Date() });
+        realIds.push(realish.id, realGpt.id);
+        const g = await inProcess(realGpt.id);
+        await g.tool("log_expense", { amount: 5, category: "groceries" });
+        await g.close();
+        await cdb.event.create({ data: { type: "client_init", userId: realGpt.id, meta: { client: "openai-mcp", version: "e2e" } } });
+        const testish = await fresh();
+        const delStart = new Date();
+        for (const victim of [realish, testish]) {
+          const v = await inProcess(victim.id);
+          await v.tool("delete_all_data", { confirm: "DELETE" });
+          await v.close();
+        }
+        // logEvent is fire-and-forget: wait for both rows (up to 10 s), never a fixed sleep.
+        let delEvents: Array<{ meta: unknown }> = [];
+        for (let waited = 0; waited < 10_000; waited += 100) {
+          delEvents = await cdb.event.findMany({ where: { type: "account_deleted", createdAt: { gte: delStart } }, select: { meta: true } });
+          if (delEvents.length >= 2) break;
+          await Bun.sleep(100);
+        }
+        ok(
+          "an erasure records whose it was: a real address by=user, a test domain by=test, never the address",
+          delEvents.length === 2 &&
+            delEvents.some((e) => (e.meta as Record<string, unknown>)?.by === "user") &&
+            delEvents.some((e) => (e.meta as Record<string, unknown>)?.by === "test") &&
+            !JSON.stringify(delEvents).includes("mailbox.org"),
+          JSON.stringify(delEvents)
+        );
+        const adminAfter = await computeAdminStats();
+        ok("/admin counts users' own erasures and leaves test runs out", adminAfter.totals.deletedAccounts === deletedBefore + 1, `${deletedBefore} -> ${adminAfter.totals.deletedAccounts}`);
+        const gpt = adminAfter.clients.find((c) => c.family === "ChatGPT / Codex");
+        ok(
+          "/admin activation per client: users, saved and came back, each a subset of the one before",
+          !!gpt && gpt.users >= 1 && gpt.saved >= 1 && adminAfter.clients.every((c) => c.saved <= c.users && c.cameBack <= c.saved),
+          JSON.stringify(adminAfter.clients)
+        );
+        ok(
+          "/admin lists a test-domain account as test and leaves it out of the totals",
+          adminAfter.users.find((u) => u.email === uo.email)?.kind === "test" &&
+            adminAfter.users.find((u) => u.email === realGpt.email)?.kind === "user" &&
+            adminAfter.totals.users === adminAfter.users.filter((u) => u.kind === "user").length,
+          JSON.stringify(adminAfter.totals)
+        );
+      } finally {
+        // Their addresses are not on the test domain the final cleanup sweeps: a failed run must leave
+        // neither them nor their events behind (events carry the id without a relation).
+        await cdb.user.deleteMany({ where: { email: { in: realEmails } } });
+        if (realIds.length) await cdb.event.deleteMany({ where: { userId: { in: realIds } } });
+      }
 
       // Boot marks pre-0.16 accounts that chose a currency or hold records
       const { markSettledCurrencies } = await import("../src/users");

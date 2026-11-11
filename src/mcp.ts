@@ -9,16 +9,16 @@ import { SERVER_NAME, SERVER_VERSION } from "./version";
 
 /**
  * Read by clients at initialize. New accounts start on EUR/UTC, and "today",
- * "this month" and every total depend on both, so the first conversation sets
- * them instead of the server guessing.
+ * "this month" and every total depend on both: get_settings says what to ask,
+ * and the reads of an empty account then steer to a first record, not a tour.
  */
 const instructions = (digest: boolean) =>
   "MyFinance MCP stores the user's money records and computes every total server-side: answer money questions with get_summary, get_budget_progress, get_recurring and get_accounts, never by adding up rows yourself. " +
-  "On first use call get_settings; if it reports default settings, ask the user which currency they think in and where they live, then call update_settings once with base_currency and timezone. " +
+  "On first use call get_settings and follow its hint and next: they say what to ask the user (a new account starts with its first record, not with a tour of features). " +
   "Bank statements go to import_transactions as ONE call with every row; single purchases go to log_expense. " +
   "No bank connection is needed: for bank data from any bank, ask the user for a statement export (CSV, PDF or screenshots) and import it." +
   (digest
-    ? " When the user has a few records and get_settings shows email_digest not_chosen, you may offer a weekly or monthly email summary once; turn it on only after a clear yes."
+    ? " When a tool result carries offer, make that offer once after your answer; turn the email summary on only after a clear yes."
     : "");
 
 export function buildMcpServer(userId: string, options: FinanceToolOptions): McpServer {

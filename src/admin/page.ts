@@ -124,8 +124,8 @@ function userRow(u: AdminUserRow, now: Date): string {
   const tools = u.topTools.length
     ? u.topTools.map((t) => `<span class="chip">${e(t.tool)} ${fmt(t.calls)}</span>`).join("")
     : `<span class="empty">-</span>`;
-  return `<tr${u.operator ? ` class="op"` : ""}>
-  <td>${e(u.email)}${u.operator ? ` <span class="chip">operator</span>` : ""}
+  return `<tr${u.kind !== "user" ? ` class="op"` : ""}>
+  <td>${e(u.email)}${u.kind !== "user" ? ` <span class="chip">${u.kind}</span>` : ""}
     <span class="sub">${e(u.method)} · ${e(u.baseCurrency)} · ${e(u.timezone)}${u.digest === "weekly" || u.digest === "monthly" ? ` · ${e(u.digest)} email` : ""}</span>
     ${u.signupClient ? `<span class="sub">via ${e(u.signupClient)}</span>` : ""}</td>
   <td title="${e(stamp(u.joined))}">${e(day(u.joined))}</td>
@@ -150,7 +150,7 @@ export function adminDashboardPage(stats: AdminStats, signedInAs: string): strin
     [`${fmt(t.active7)} / ${fmt(t.active30)}`, "Active, 7 / 30 days"],
     [fmt(t.withRecords), "Have records"],
     [fmt(t.records), "Records stored"],
-    [fmt(t.deletedAccounts), "Deleted accounts, all time"],
+    [fmt(t.deletedAccounts), "Deleted by users, since 0.20"],
   ];
   const signedUp = stats.funnel[0]?.count ?? 0;
   const weekMax = Math.max(1, ...stats.signupsByWeek.map((w) => w.count));
@@ -185,8 +185,8 @@ export function adminDashboardPage(stats: AdminStats, signedInAs: string): strin
     stats.funnel.map((f) => ({ label: f.label, value: f.count, note: `${pct(f.count, signedUp)}%` })),
     signedUp
   )}</div>
-  <div class="card"><h2>AI clients (users)</h2>${bars(
-    stats.clients.map((c) => ({ label: c.family, value: c.users })),
+  <div class="card"><h2>Sign-up client: users, saved data, came back</h2>${bars(
+    stats.clients.map((c) => ({ label: c.family, value: c.users, note: `${fmt(c.saved)} saved · ${fmt(c.cameBack)} back` })),
     clientMax
   )}</div>
   <div class="card"><h2>Sign-ups per week</h2><div class="weeks">${stats.signupsByWeek
@@ -206,7 +206,7 @@ export function adminDashboardPage(stats: AdminStats, signedInAs: string): strin
   <div class="card"><h2>Failed calls, 30 days</h2><div class="scroll">${errorsTable}</div></div>
 </div>
 
-<footer>Counts only: amounts, merchants and notes never reach this page. Activity (calls, active days, clients, tools) comes from usage events, kept ${stats.windowDays} days. Totals, funnel, clients, tools and failures leave out operator accounts; the users table lists them greyed out. Last record includes daily bank syncs, last call is the user's own activity.</footer>
+<footer>Counts only: amounts, merchants and notes never reach this page. Activity (calls, active days, clients, tools) comes from usage events, kept ${stats.windowDays} days. Totals, funnel, clients, tools and failures leave out operator and test accounts; the users table lists them greyed out. Last record includes daily bank syncs, last call is the user's own activity.</footer>
 </main>`
   );
 }

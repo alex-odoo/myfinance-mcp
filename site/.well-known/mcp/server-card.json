@@ -1,7 +1,7 @@
 {
   "serverInfo": {
     "name": "myfinancemcp",
-    "version": "0.19.0"
+    "version": "0.20.0"
   },
   "authentication": {
     "required": true,
@@ -460,8 +460,7 @@
           "trend_months": {
             "type": "integer",
             "minimum": 2,
-            "maximum": 24,
-            "description": "Month-by-month expense and income for the last N months instead of one period (optionally one expense category or one entity): 'how did my spending change since spring'."
+            "description": "Month-by-month expense and income for the last N months (at most 24) instead of one period (optionally one expense category or one entity): 'how did my spending change since spring'."
           }
         },
         "additionalProperties": false,
@@ -536,8 +535,7 @@
           "limit": {
             "type": "integer",
             "minimum": 1,
-            "maximum": 100,
-            "description": "Default 20."
+            "description": "Default 20, at most 100 per call: page on with offset=next_offset."
           },
           "offset": {
             "type": "integer",

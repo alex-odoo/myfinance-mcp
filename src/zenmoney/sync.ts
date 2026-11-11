@@ -1,5 +1,5 @@
 import { db, logEvent } from "../db";
-import { RowPricer, isIsoCurrency, round2 } from "../fx";
+import { RowPricer, isIsoCurrency, prefetchRates, round2 } from "../fx";
 import { pickFreeName, crossProviderOverlaps, isUniqueViolation, OVERLAP_HINT } from "../accounts";
 import type { OverlapWarning } from "../accounts";
 import { EXPENSE_CATEGORIES, INCOME_CATEGORIES } from "../categories";
@@ -235,6 +235,20 @@ async function runSync(connection: BankConnection, user: User, opts: SyncOptions
     userId,
     rows.map((t) => (t.merchant ? merchantById.get(t.merchant) : undefined) ?? t.payee ?? undefined)
   );
+
+  // A first sync can bring years of history: their rates in one request, not
+  // one per day (1,260 day requests, one failed, stopped a sync on 2026-11-11).
+  if (!dryRun) {
+    await prefetchRates(
+      rows.flatMap((t) => {
+        const date = new Date(`${t.date}T00:00:00.000Z`);
+        return [currencyOf(t.outcomeInstrument), currencyOf(t.incomeInstrument)]
+          .filter((c): c is string => !!c)
+          .map((currency) => ({ currency, date }));
+      }),
+      user.baseCurrency
+    );
+  }
 
   for (const t of rows) {
     const isTransfer = t.income > 0 && t.outcome > 0 && !!t.incomeAccount && !!t.outcomeAccount;

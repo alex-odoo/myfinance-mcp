@@ -1,7 +1,6 @@
 import { db } from "../db";
-import { config } from "../config";
 import { EVENT_RETENTION_DAYS } from "../telemetry";
-import { otherSignIn } from "../users";
+import { accountKind, otherSignIn } from "../users";
 
 /**
  * The operator overview behind /admin: who signed up, which AI client they
@@ -19,8 +18,8 @@ const TOP_TOOLS_PER_USER = 5;
 
 export interface AdminUserRow {
   email: string;
-  /** The operator's own accounts: listed, but left out of every total. */
-  operator: boolean;
+  /** The operator's own accounts and test accounts (reserved test domains): listed, but left out of every total. */
+  kind: "operator" | "test" | "user";
   joined: Date;
   method: "google" | "email" | "password";
   baseCurrency: string;
@@ -57,10 +56,12 @@ export interface AdminStats {
     active30: number;
     withRecords: number;
     records: number;
+    /** Erased by real users (account_deleted by=user, recorded since 0.20.0; earlier ones were mostly test runs). */
     deletedAccounts: number;
   };
   funnel: Array<{ label: string; count: number }>;
-  clients: Array<{ family: string; users: number }>;
+  /** Per sign-up client family (each user once): users, how many saved data, how many came back on another day. */
+  clients: Array<{ family: string; users: number; saved: number; cameBack: number }>;
   signupsByWeek: Array<{ weekStart: string; count: number }>;
   tools: Array<{ tool: string; calls30: number; users30: number; errors30: number; calls90: number }>;
   errors: Array<{ tool: string; error: string; count: number; users: number }>;
@@ -121,11 +122,11 @@ export async function computeAdminStats(now = new Date()): Promise<AdminStats> {
     db.event.findMany({
       where: { type: { in: ["tool_call", "client_init"] }, userId: { not: null }, createdAt: { gte: since } },
       select: { userId: true, type: true, meta: true, createdAt: true },
+      orderBy: { createdAt: "asc" }, // a user's first client comes first in row.clients
     }),
-    db.event.count({ where: { type: "account_deleted" } }),
+    db.event.count({ where: { type: "account_deleted", meta: { path: ["by"], equals: "user" } } }),
   ]);
 
-  const operatorEmails = new Set([config.userEmail, ...config.adminEmails].filter(Boolean));
   const t7 = now.getTime() - 7 * DAY_MS;
   const t30 = now.getTime() - 30 * DAY_MS;
 
@@ -133,7 +134,7 @@ export async function computeAdminStats(now = new Date()): Promise<AdminStats> {
   for (const u of users) {
     rows.set(u.id, {
       email: u.email,
-      operator: operatorEmails.has(u.email.toLowerCase()),
+      kind: accountKind(u.email),
       joined: u.createdAt,
       method: otherSignIn(u) ?? "email",
       baseCurrency: u.baseCurrency,
@@ -202,7 +203,7 @@ export async function computeAdminStats(now = new Date()): Promise<AdminStats> {
     perTool.set(tool, (perTool.get(tool) ?? 0) + 1);
     toolsByUser.set(e.userId!, perTool);
 
-    if (row.operator) continue;
+    if (row.kind !== "user") continue;
     const entry = toolTable.get(tool) ?? { calls30: 0, users30: new Set<string>(), errors30: 0, calls90: 0 };
     entry.calls90++;
     if (at.getTime() >= t30) {
@@ -229,7 +230,7 @@ export async function computeAdminStats(now = new Date()): Promise<AdminStats> {
   }
 
   const all = [...rows.values()].sort((a, b) => b.joined.getTime() - a.joined.getTime());
-  const external = all.filter((r) => !r.operator);
+  const external = all.filter((r) => r.kind === "user");
   const activeSince = (t: number) => external.filter((r) => r.lastCallAt && r.lastCallAt.getTime() >= t).length;
   const saved = (r: AdminUserRow) => r.records > 0 || r.accounts > 0;
   // Each stage is a subset of the one before, so the bars read as conversion.
@@ -240,8 +241,20 @@ export async function computeAdminStats(now = new Date()): Promise<AdminStats> {
   const cameBack = savedData.filter((r) => r.activeDays >= 2);
   const stillActive = cameBack.filter((r) => r.lastCallAt && r.lastCallAt.getTime() >= t7);
 
-  const clientUsers = new Map<string, number>();
-  for (const r of external) for (const f of r.clients) clientUsers.set(f, (clientUsers.get(f) ?? 0) + 1);
+  // Activation by the client a user signed up from (else the first one seen),
+  // each user once: on 2026-11-11 one of 7 ChatGPT users had saved anything,
+  // which a users-only bar hid. Saving and coming back are the user's, from
+  // any client: telemetry does not tie a call to a client.
+  const clientUsers = new Map<string, { users: number; saved: number; cameBack: number }>();
+  for (const r of external) {
+    const f = r.signupClient ? clientFamily(r.signupClient) : r.clients[0];
+    if (!f) continue;
+    const c = clientUsers.get(f) ?? { users: 0, saved: 0, cameBack: 0 };
+    c.users++;
+    if (saved(r)) c.saved++;
+    if (saved(r) && r.activeDays >= 2) c.cameBack++;
+    clientUsers.set(f, c);
+  }
 
   // Weeks with no signups still get a row: a gap is the point of the chart.
   const weeks = new Map<string, number>();
@@ -271,7 +284,7 @@ export async function computeAdminStats(now = new Date()): Promise<AdminStats> {
       { label: "Came back on another day", count: cameBack.length },
       { label: "Still active, last 7 days", count: stillActive.length },
     ],
-    clients: [...clientUsers].sort((a, b) => b[1] - a[1]).map(([family, n]) => ({ family, users: n })),
+    clients: [...clientUsers].sort((a, b) => b[1].users - a[1].users).map(([family, c]) => ({ family, ...c })),
     signupsByWeek: [...weeks].map(([w, count]) => ({ weekStart: w, count })),
     tools: [...toolTable]
       .map(([tool, t]) => ({ tool, calls30: t.calls30, users30: t.users30.size, errors30: t.errors30, calls90: t.calls90 }))
