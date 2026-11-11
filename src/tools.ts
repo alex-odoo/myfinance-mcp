@@ -320,6 +320,14 @@ export interface FinanceToolOptions {
 const EXPORT_PAGE_ROWS = 2000;
 /** get_transactions rows per call. */
 const TX_PAGE_MAX = 100;
+/** categorize: rows per database transaction, and how many remaining merchants an answer lists. */
+const CATEGORIZE_ROWS_PER_TX = 200;
+const CATEGORIZE_LIST_NEXT = 30;
+/** What categorize may set: an expense category, never other (leave a merchant out instead). */
+const SORT_TARGETS: ReadonlySet<string> = new Set(EXPENSE_CATEGORIES.filter((c) => c !== "other"));
+/** get_summary says sort_other when this share of a period's spending, and at least this many records, sit in other with a merchant. */
+const SORT_OTHER_SHARE = 0.3;
+const SORT_OTHER_MIN_RECORDS = 5;
 /** get_summary trend_months (get_trends months): the longest trend. */
 const TREND_MONTHS_MAX = 24;
 /** Saved recurring payments per user. */
@@ -1706,14 +1714,26 @@ export function registerFinanceTools(server: McpServer, userId: string, options:
         await priceDays(rows.map((r) => r.occurredAt));
         let expense = 0;
         let income = 0;
+        // Gross spending and the part of it categorize can sort (in other, with
+        // a merchant): refunds would skew a share of the net total.
+        let spentGross = 0;
+        let sortable = 0;
+        let sortableCount = 0;
         const groups = new Map<string, number>();
         for (const r of rows) {
           const v = valueOf(r);
           if (r.type === "income") income += v;
           else expense += v;
+          if (r.type === "expense" && v > 0) {
+            spentGross += v;
+            if ((r.categoryKey ?? "other") === "other" && r.merchant?.trim()) {
+              sortable += v;
+              sortableCount++;
+            }
+          }
           if (r.type === groupedType) groups.set(key(r), (groups.get(key(r)) ?? 0) + v);
         }
-        return { count: rows.length, expense: round2(expense), income: round2(income), groups };
+        return { count: rows.length, expense: round2(expense), income: round2(income), groups, spentGross, sortable, sortableCount };
       };
 
       const now = await summarize(range.start, range.end);
@@ -1750,6 +1770,17 @@ export function registerFinanceTools(server: McpServer, userId: string, options:
       }
       const listed = new Set(capped.map(([key]) => key));
       const changePct = (nowValue: number, before: number) => (before > 0 ? round2(((nowValue - before) / before) * 100) : null);
+      // Most of the spending in other makes every category answer meaningless
+      // (Alex's October 2026: 90%, Revolut via Enable Banking sends no category).
+      const otherShare = now.spentGross > 0 ? now.sortable / now.spentGross : 0;
+      // The listing must cover the same period and scope as this summary.
+      const sameScope = [period && `period=${period}`, from && `from=${from}`, to && `to=${to}`, entity && `entity=${entity}`].filter(Boolean).join(" ");
+      const sortOther =
+        !category && otherShare >= SORT_OTHER_SHARE && now.sortableCount >= SORT_OTHER_MIN_RECORDS
+          ? {
+              sort_other: `${Math.round(otherShare * 100)}% of this period's spending (${now.sortableCount} records with a merchant) is in other, so the categories say little. Offer to sort it: get_summary category=other group_by=merchant${sameScope ? ` ${sameScope}` : ""} lists the merchants, then call categorize ONCE with a category for each merchant you can tell${period ? ` (and period=${period}, so its answer lists the next ones of this period)` : " (its answer lists the next ones)"}. Future bank syncs and imports keep these categories whenever they bring none of their own.`,
+            }
+          : {};
 
       logEvent("summary_run", userId, { period: range.label });
       return text({
@@ -1804,9 +1835,11 @@ export function registerFinanceTools(server: McpServer, userId: string, options:
         ...(await notice),
         ...(await empty),
         ...setupNote(user, null),
+        ...sortOther,
         // Records that arrive by bank or ZenMoney sync never pass a write
-        // tool: the summary is where such a user meets the offer.
-        ...(await digestOfferField(user)),
+        // tool: the summary is where such a user meets the offer. One offer
+        // per answer: sorting other comes first, the email summary waits.
+        ...(sortOther.sort_other ? {} : await digestOfferField(user)),
       });
     }
   );
@@ -2188,6 +2221,165 @@ export function registerFinanceTools(server: McpServer, userId: string, options:
       logEvent("bulk_deleted", userId, { requested: ids.length, deleted: res.count });
       return text({ deleted: res.count, not_found: ids.length - res.count });
     }
+  );
+
+  define(
+    "categorize",
+    {
+      title: "Categorize by merchant",
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
+      description:
+        "Sort spending into categories by merchant, many merchants in ONE call: each expense of a merchant still in other (scope=all: every expense of it) takes the category, and future bank syncs and imports put that merchant there whenever they bring no category of their own. Use it when spending sits in other (get_summary says sort_other): get_summary category=other group_by=merchant lists the merchants, and each answer here lists the next ones (still_in_other). Pass each name exactly as listed, with an expense category you can tell from it; leave out the ones you cannot. Income and transfers are never touched. Never one call per merchant.",
+      inputSchema: {
+        rules: z
+          .array(
+            z.object({
+              merchant: z.string().max(500).describe("The merchant exactly as listed by get_summary group_by=merchant or still_in_other."),
+              category: categoryFilterSchema.describe("An expense category (not other). Leave out a merchant you cannot place."),
+            })
+          )
+          .min(1)
+          .max(100),
+        scope: z
+          .enum(["other", "all"])
+          .optional()
+          .describe("other (default): only expenses still in other, so earlier choices stay. all: every expense of the merchant."),
+        period: z
+          .string()
+          .optional()
+          .describe("Only for the still_in_other listing: the period the user is looking at, YYYY-MM or YYYY. The rules apply to every expense of the merchant."),
+      },
+    },
+    pricing(async ({ rules, scope, period }) => {
+      const user = await getUser(userId);
+      const listRange = period ? periodRange(user.timezone, period) : null; // a bad period fails before any write
+      const inOther = { OR: [{ categoryKey: "other" }, { categoryKey: null }] };
+
+      // A rule that cannot apply is answered on its own, never by refusing the whole batch.
+      const skipped: Array<{ merchant: string; reason: string }> = [];
+      const wanted = new Map<string, { merchant: string; category: string }>(); // the last rule for a merchant wins
+      for (const rule of rules) {
+        const key = normMerchant(rule.merchant);
+        if (!key || key === "(no merchant)" || key === "(all others)") skipped.push({ merchant: rule.merchant, reason: "not a merchant name" });
+        else if (rule.category === "other") skipped.push({ merchant: rule.merchant, reason: "other is not a target: leave the merchant out" });
+        else if (!SORT_TARGETS.has(rule.category)) skipped.push({ merchant: rule.merchant, reason: `${rule.category} is not an expense category` });
+        else wanted.set(key, { merchant: rule.merchant, category: rule.category });
+      }
+
+      // One read of the expenses the rules may change, grouped the way merchant memory keys them.
+      const rows = wanted.size
+        ? await db.transaction.findMany({
+            where: { userId, type: "expense", merchant: { not: null }, ...(scope === "all" ? {} : inOther) },
+            select: { id: true, merchant: true, categoryKey: true, entity: true, occurredAt: true, amountBase: true, updatedAt: true },
+          })
+        : [];
+      const byMerchant = new Map<string, typeof rows>();
+      for (const r of rows) {
+        const key = normMerchant(r.merchant ?? "");
+        if (!key) continue;
+        const list = byMerchant.get(key);
+        if (list) list.push(r);
+        else byMerchant.set(key, [r]);
+      }
+
+      const month = periodRange(user.timezone);
+      const moved = new Map<string, number>(); // this month's base-currency sums, by category: budget alerts
+      const merchants: Array<{ merchant: string; category: string; updated: number }> = [];
+      const notFound: string[] = [];
+      for (const [key, rule] of wanted) {
+        const mine = byMerchant.get(key);
+        if (!mine) {
+          // Nothing of it to change: already sorted, or no expense has this name at all.
+          const named = await db.transaction.findMany({
+            where: { userId, type: "expense", merchant: { contains: rule.merchant.trim(), mode: "insensitive" } },
+            select: { merchant: true },
+            take: 50,
+          });
+          if (!named.some((t) => normMerchant(t.merchant ?? "") === key)) {
+            notFound.push(rule.merchant);
+            continue;
+          }
+        }
+        const todo = (mine ?? []).filter((r) => r.categoryKey !== rule.category);
+        let updated = 0;
+        for (let i = 0; i < todo.length; i += CATEGORIZE_ROWS_PER_TX) {
+          const chunk = todo.slice(i, i + CATEGORIZE_ROWS_PER_TX);
+          // Row by row, each guarded by what was read (a parallel edit wins).
+          // A row the bank left in other keeps its updatedAt: the syncs go on
+          // applying the bank's corrections to it, and merchant memory gives
+          // them this category. Re-sorting a category already chosen is the
+          // user's edit, so that row's updatedAt moves like any edit's.
+          const results = await db.$transaction(
+            chunk.map((row) =>
+              db.transaction.updateMany({
+                where: { id: row.id, userId, categoryKey: row.categoryKey, updatedAt: row.updatedAt },
+                data: { categoryKey: rule.category, ...((row.categoryKey ?? "other") === "other" ? { updatedAt: row.updatedAt } : {}) },
+              })
+            )
+          );
+          chunk.forEach((row, k) => {
+            if (results[k]!.count !== 1) return;
+            updated++;
+            const at = { type: "expense" as const, entity: row.entity, occurredAt: row.occurredAt, amountBase: Number(row.amountBase) };
+            for (const [c, v] of budgetDelta(user, { ...at, categoryKey: rule.category }, month)) moved.set(c, (moved.get(c) ?? 0) + v);
+            for (const [c, v] of budgetDelta(user, { ...at, categoryKey: row.categoryKey }, month)) moved.set(c, (moved.get(c) ?? 0) - v);
+          });
+        }
+        merchants.push({ merchant: rule.merchant, category: rule.category, updated });
+      }
+      if (merchants.length) {
+        await db.$transaction(
+          merchants.map((m) => {
+            const merchant = normMerchant(m.merchant);
+            return db.merchantCategory.upsert({
+              where: { userId_merchant: { userId, merchant } },
+              update: { categoryKey: m.category },
+              create: { userId, merchant, categoryKey: m.category },
+            });
+          })
+        );
+      }
+      const alerts = await crossedBudgets(user, moved).catch(() => []); // best-effort: the categories are written
+
+      // What is left in other, from SQL sums, merged per merchant key, so the next call needs no new listing.
+      const span = listRange ? { occurredAt: { gte: listRange.start, lt: listRange.end } } : {};
+      const groups = await db.transaction.groupBy({
+        by: ["merchant"],
+        where: { userId, type: "expense", merchant: { not: null }, ...inOther, ...span },
+        _sum: { amountBase: true },
+        _count: { _all: true },
+      });
+      const left = new Map<string, { merchant: string; records: number; total: number }>();
+      for (const g of groups) {
+        const key = normMerchant(g.merchant ?? "");
+        if (!key) continue;
+        const entry = left.get(key) ?? { merchant: g.merchant!, records: 0, total: 0 };
+        entry.records += g._count._all;
+        entry.total += Number(g._sum.amountBase ?? 0);
+        left.set(key, entry);
+      }
+      const stillInOther = [...left.values()].sort((a, b) => b.total - a.total);
+      const withoutMerchant = await db.transaction.count({
+        where: { userId, type: "expense", AND: [inOther, { OR: [{ merchant: null }, { merchant: "" }] }], ...span },
+      });
+      const updated = merchants.reduce((n, m) => n + m.updated, 0);
+      logEvent("categorized", userId, { rules: rules.length, updated });
+      return text({
+        updated,
+        merchants,
+        ...(skipped.length ? { skipped } : {}),
+        ...(notFound.length
+          ? { not_found: notFound, not_found_hint: "No expense has this merchant name: copy it from still_in_other or get_summary group_by=merchant." }
+          : {}),
+        ...(alerts.length ? { budget_alerts: alerts } : {}),
+        base_currency: user.baseCurrency,
+        ...(listRange ? { still_in_other_period: listRange.label } : {}),
+        still_in_other: stillInOther.slice(0, CATEGORIZE_LIST_NEXT).map((m) => ({ merchant: m.merchant, records: m.records, total: round2(m.total) })),
+        ...(stillInOther.length > CATEGORIZE_LIST_NEXT ? { still_in_other_merchants: stillInOther.length } : {}),
+        ...(withoutMerchant ? { other_without_merchant: withoutMerchant } : {}),
+        note: "Future bank syncs and imports put these merchants in these categories whenever they bring no category of their own. Expenses without a merchant can only be fixed one by one (update_transaction).",
+      });
+    })
   );
 
   define(

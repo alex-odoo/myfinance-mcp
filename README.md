@@ -57,6 +57,7 @@ On first connect you sign in with Google or with a one-time code sent to your em
 | `get_transactions`    | List and filter transactions, paged (total, has_more, offset)                                      |
 | `update_transaction`  | Fix any field of an existing transaction, including its type or account; category fixes are remembered per merchant |
 | `delete_transactions` | Delete one or many transactions by id in one call                                                  |
+| `categorize`          | Sort spending stuck in "other" into categories by merchant, many merchants in one call; remembered for future syncs and imports |
 | `get_accounts`        | All accounts with balances and net worth, converted to base currency                               |
 | `manage_account`      | Accounts: create, update, set_balance (anchor the real balance at a date), merge (fold one into another, de-duplicating), delete |
 | `set_budget`          | Monthly cap per category or overall; a log or import that crosses it says so                       |
@@ -81,7 +82,7 @@ Three tools return an interactive dashboard (`ui://myfinancemcp/dashboard`) rend
 - Receipt photos are parsed by YOUR AI client; images never reach this server.
 - Amounts, merchants and notes are never written to server logs (blind logs); usage events keep tool names, timings, error classes and coded argument values, keyed to the account and deleted with it.
 - OAuth 2.1 with PKCE, rotating refresh tokens (`offline_access` advertised), rate-limited sign-in.
-- All 20 tools carry MCP annotations (read-only and destructive ops flagged, connector tools marked open-world), so clients can gate confirmations correctly.
+- All 21 tools carry MCP annotations (read-only and destructive ops flagged, connector tools marked open-world), so clients can gate confirmations correctly.
 - Bank access is strictly read-only: ZenMoney via the user's own API token, and, in the closed beta, open banking consent via Enable Banking (the bank authenticates the user; we never see credentials). Session ids and tokens are stored AES-256-GCM encrypted.
 - CSV export and instant full deletion are tools, not support tickets.
 - Hosted instance: EU data residency (Supabase, eu-central-1), TLS to the database with a pinned CA. Every query is scoped to your account by the server; the database's own API is closed to everyone (row-level security, deny-all).

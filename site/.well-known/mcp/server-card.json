@@ -1,7 +1,7 @@
 {
   "serverInfo": {
     "name": "myfinancemcp",
-    "version": "0.20.0"
+    "version": "0.21.0"
   },
   "authentication": {
     "required": true,
@@ -677,6 +677,89 @@
         },
         "required": [
           "ids"
+        ],
+        "additionalProperties": false,
+        "$schema": "http://json-schema.org/draft-07/schema#"
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true,
+        "idempotentHint": true,
+        "openWorldHint": false
+      }
+    },
+    {
+      "name": "categorize",
+      "title": "Categorize by merchant",
+      "description": "Sort spending into categories by merchant, many merchants in ONE call: each expense of a merchant still in other (scope=all: every expense of it) takes the category, and future bank syncs and imports put that merchant there whenever they bring no category of their own. Use it when spending sits in other (get_summary says sort_other): get_summary category=other group_by=merchant lists the merchants, and each answer here lists the next ones (still_in_other). Pass each name exactly as listed, with an expense category you can tell from it; leave out the ones you cannot. Income and transfers are never touched. Never one call per merchant.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "rules": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "merchant": {
+                  "type": "string",
+                  "maxLength": 500,
+                  "description": "The merchant exactly as listed by get_summary group_by=merchant or still_in_other."
+                },
+                "category": {
+                  "type": "string",
+                  "enum": [
+                    "groceries",
+                    "restaurants",
+                    "transport",
+                    "fuel",
+                    "housing",
+                    "utilities",
+                    "health",
+                    "pharmacy",
+                    "clothing",
+                    "electronics",
+                    "entertainment",
+                    "subscriptions",
+                    "education",
+                    "travel",
+                    "gifts",
+                    "family",
+                    "personal_care",
+                    "business",
+                    "fees",
+                    "other",
+                    "salary",
+                    "freelance",
+                    "investments",
+                    "refunds"
+                  ],
+                  "description": "An expense category (not other). Leave out a merchant you cannot place."
+                }
+              },
+              "required": [
+                "merchant",
+                "category"
+              ],
+              "additionalProperties": false
+            },
+            "minItems": 1,
+            "maxItems": 100
+          },
+          "scope": {
+            "type": "string",
+            "enum": [
+              "other",
+              "all"
+            ],
+            "description": "other (default): only expenses still in other, so earlier choices stay. all: every expense of the merchant."
+          },
+          "period": {
+            "type": "string",
+            "description": "Only for the still_in_other listing: the period the user is looking at, YYYY-MM or YYYY. The rules apply to every expense of the merchant."
+          }
+        },
+        "required": [
+          "rules"
         ],
         "additionalProperties": false,
         "$schema": "http://json-schema.org/draft-07/schema#"

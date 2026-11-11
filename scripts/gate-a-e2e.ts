@@ -1458,7 +1458,7 @@ async function main(): Promise<void> {
   // the old names stay callable for clients that kept an old list (ping below).
   const LISTED = [
     "log_expense", "log_income", "log_transfer", "import_transactions", "get_summary", "get_transactions",
-    "update_transaction", "delete_transactions", "get_accounts", "manage_account", "set_budget", "get_budget_progress",
+    "update_transaction", "delete_transactions", "categorize", "get_accounts", "manage_account", "set_budget", "get_budget_progress",
     "get_recurring", "set_recurring", "get_settings", "update_settings", "export_data", "zenmoney", "delete_all_data",
   ];
   const { LEGACY_TOOLS } = await import("../src/tools");
@@ -2705,7 +2705,8 @@ async function main(): Promise<void> {
     ok(
       "base change reprices every row in place",
       rowsUsd === rowsBefore &&
-        Number(syncedUsd.amountBase) > Number(synced.amountBase) &&
+        // the row may be a refund (negative): EUR -> USD grows its size, whatever its sign
+        Math.abs(Number(syncedUsd.amountBase)) > Math.abs(Number(synced.amountBase)) &&
         Number(syncedUsd.fxRate) > 1 &&
         Math.abs(Number(syncedBack.amountBase) - Number(synced.amountBase)) <= 0.01 &&
         syncedBack.merchant === synced.merchant &&
@@ -3168,6 +3169,100 @@ async function main(): Promise<void> {
         dryImp.text
       );
       await od.close();
+
+      // 0.21.0: spending stuck in other is sorted by merchant in one call (October 2026:
+      // 90% of Alex's Revolut spending was other, the bank sends no category).
+      const uCat = await fresh({ currencySetAt: new Date(), timezone: "Europe/Rome" });
+      const oc2 = await inProcess(uCat.id);
+      for (const [merchant, amount] of [["Bistrot Nona", 30], ["Bistrot Nona", 22], ["Wizz Air    0000000suuy4r", 81], ["Carrefour Oradea Selfchec", 45], ["Carrefour Oradea Selfchec", 12], ["", 60]] as const) {
+        await oc2.tool("log_expense", { amount, ...(merchant ? { merchant } : {}) });
+      }
+      await oc2.tool("log_income", { amount: 12, merchant: "Bistrot Nona" }); // a refund: other on the income side
+      const chosen = await oc2.tool("log_expense", { amount: 9, merchant: "Bistrot Nona", category: "groceries" }); // the user's own choice
+      await oc2.tool("set_budget", { amount: 40, category: "restaurants" });
+      const monthNow = new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/Rome" }).format(new Date()).slice(0, 7);
+      const before = await oc2.tool("get_summary", { period: monthNow });
+      ok(
+        "get_summary says sort_other when most of the spending sits in other, with the listing for the same period",
+        /categorize ONCE/.test(before.json.sort_other ?? "") && new RegExp(`group_by=merchant period=${monthNow}`).test(before.json.sort_other ?? ""),
+        before.text.slice(0, 500)
+      );
+      const wizzBefore = await cdb.transaction.findFirstOrThrow({ where: { userId: uCat.id, merchant: { startsWith: "Wizz" } } });
+      const cat = await oc2.tool("categorize", {
+        rules: [
+          { merchant: "bistrot nona", category: "restaurants" },
+          { merchant: "Wizz Air    0000000suuy4r", category: "travel" },
+          { merchant: "Nobody Shop", category: "groceries" },
+          { merchant: "(no merchant)", category: "groceries" },
+        ],
+        period: monthNow,
+      });
+      const nona = (cat.json?.merchants ?? []).find((m: { merchant: string }) => m.merchant === "bistrot nona");
+      ok(
+        "categorize sorts every other expense of a merchant in one call, any case, lists what is left of the period and what it could not use",
+        !cat.isError &&
+          cat.json.updated === 3 &&
+          nona?.updated === 2 &&
+          cat.json.not_found?.join() === "Nobody Shop" &&
+          cat.json.skipped?.[0]?.merchant === "(no merchant)" &&
+          cat.json.still_in_other_period === monthNow &&
+          cat.json.still_in_other?.[0]?.merchant === "Carrefour Oradea Selfchec" &&
+          cat.json.still_in_other?.[0]?.records === 2 &&
+          cat.json.other_without_merchant === 1,
+        cat.text
+      );
+      ok("moving spending into a budget over its cap says so", cat.json.budget_alerts?.[0]?.budget === "restaurants", cat.text);
+      const wizzAfter = await cdb.transaction.findFirstOrThrow({ where: { id: wizzBefore.id } });
+      ok(
+        "a sorted row keeps its updatedAt, so the syncs still treat it as the bank's",
+        wizzAfter.categoryKey === "travel" && wizzAfter.updatedAt.getTime() === wizzBefore.updatedAt.getTime(),
+        `${wizzBefore.updatedAt.toISOString()} -> ${wizzAfter.updatedAt.toISOString()}`
+      );
+      const nonaRows = await cdb.transaction.findMany({ where: { userId: uCat.id, merchant: "Bistrot Nona" }, select: { id: true, type: true, categoryKey: true } });
+      ok(
+        "the user's own category and the income-side refund stay as they were",
+        nonaRows.find((t) => t.id === chosen.json.id)?.categoryKey === "groceries" && nonaRows.find((t) => t.type === "income")?.categoryKey === "other",
+        JSON.stringify(nonaRows)
+      );
+      const toOther = await oc2.tool("categorize", {
+        rules: [
+          { merchant: "Carrefour Oradea Selfchec", category: "other" },
+          { merchant: "Carrefour Oradea Selfchec", category: "salary" },
+          { merchant: "Wizz Air    0000000suuy4r", category: "travel" },
+        ],
+      });
+      ok(
+        "a rule that cannot apply is answered on its own, the batch still runs, and an already sorted merchant is no not_found",
+        !toOther.isError &&
+          toOther.json.skipped?.length === 2 &&
+          /other is not a target/.test(toOther.json.skipped[0].reason) &&
+          !toOther.json.not_found &&
+          toOther.json.merchants?.[0]?.updated === 0,
+        toOther.text
+      );
+      const chosenBefore = await cdb.transaction.findFirstOrThrow({ where: { id: chosen.json.id } });
+      await Bun.sleep(5); // a later updatedAt must be visible
+      const all = await oc2.tool("categorize", { rules: [{ merchant: "Bistrot Nona", category: "restaurants" }], scope: "all" });
+      const chosenAfter = await cdb.transaction.findFirstOrThrow({ where: { id: chosen.json.id } });
+      ok(
+        "scope=all re-sorts a category the user chose as the user's edit (its updatedAt moves), the ones already there untouched",
+        all.json.updated === 1 && chosenAfter.categoryKey === "restaurants" && chosenAfter.updatedAt > chosenBefore.updatedAt,
+        all.text
+      );
+      const remembered = await oc2.tool("import_transactions", {
+        transactions: [{ date: today, amount: -18, merchant: "BISTROT NONA", external_id: "e2e-021-1" }],
+      });
+      const rememberedRow = await cdb.transaction.findFirst({ where: { userId: uCat.id, externalId: "e2e-021-1" } });
+      ok("an import of a sorted merchant takes its category", rememberedRow?.categoryKey === "restaurants", remembered.text.slice(0, 300));
+      ok("sort_other goes away once little is left in other", !(await oc2.tool("get_summary")).json.sort_other);
+      await oc2.close();
+      // Five sortable records, but a small share of the spending: no hint.
+      const uFew = await fresh({ currencySetAt: new Date() });
+      const of = await inProcess(uFew.id);
+      for (let i = 1; i <= 5; i++) await of.tool("log_expense", { amount: 1, merchant: `Kiosk ${i}` });
+      await of.tool("log_expense", { amount: 100, category: "groceries", merchant: "Lidl" });
+      ok("five records in other that are a small share of the spending raise no sort_other", !(await of.tool("get_summary")).json.sort_other);
+      await of.close();
 
       // 0.20.0: a span of days is cached from ONE request per source (a first
       // ZenMoney sync of ten years asked 1,260 single days, and one failure stopped it).
