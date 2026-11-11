@@ -94,6 +94,8 @@ See [SECURITY.md](SECURITY.md) for the disclosure policy.
 
 MIT-licensed; runs anywhere Bun and Postgres run.
 
+**With your own bank (Revolut or another European bank):** [docs/SELF_HOSTING.md](docs/SELF_HOSTING.md) walks an AI agent (Claude Code, Codex, Cursor) through the whole setup for you, your own Enable Banking application included.
+
 The landing page in `site/` is set in [Switzer](https://www.fontshare.com/fonts/switzer), whose free licence does not allow redistribution, so the font file is not in this repository. For the same look, download it from Fontshare and put `Switzer-Variable.woff2` in `site/fonts/`; without it the pages fall back to the system font. The MCP server does not need it.
 
 ### 1. Postgres
@@ -131,6 +133,7 @@ Database TLS: Supabase hosts are verified against Supabase's root CA automatical
 | `EB_APP_ID`                   | _(optional)_ Enable Banking application id; bank connections stay off until it and the key are set |
 | `EB_PRIVATE_KEY_B64`          | _(optional)_ Base64 of the Enable Banking application's private key PEM |
 | `EB_API_ORIGIN`               | _(optional)_ Enable Banking API origin, default `https://api.enablebanking.com` |
+| `BANK_SYNC_EMAILS`            | _(optional)_ Sign-in emails offered the `bank` tool, comma-separated; on your own instance, your own email |
 | `REFRESH_REUSE_GRACE_MS`      | _(optional)_ How long a rotated refresh token keeps working, default `30000` (parallel refreshes) |
 | `AUTO_SYNC_INTERVAL_MS`       | _(optional)_ Bank auto-sync tick, default hourly (syncs connections >20h stale); `0` disables |
 

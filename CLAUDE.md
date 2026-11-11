@@ -17,6 +17,8 @@ DATA and the MATH; the AI client owns the ADVICE.
 - **Docker** behind nginx
 - Hosted instance: `https://myfinance-mcp.com` (MCP endpoint `POST /mcp`, Bearer token)
 
+Self-hosting for a person (not a maintainer): `docs/SELF_HOSTING.md`; never `deploy.sh`.
+
 ## Deploy (maintainer only - never manual)
 
 ```bash
