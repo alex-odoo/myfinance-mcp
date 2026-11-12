@@ -1,12 +1,25 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.alex-odoo/myfinance-mcp",
+  "title": "MyFinance MCP",
   "description": "Personal finance by conversation: expenses, receipts, statement import, budgets, net worth.",
   "repository": {
     "url": "https://github.com/alex-odoo/myfinance-mcp",
     "source": "github"
   },
   "websiteUrl": "https://myfinance-mcp.com",
+  "icons": [
+    {
+      "src": "https://myfinance-mcp.com/apple-touch-icon.png",
+      "mimeType": "image/png",
+      "sizes": ["180x180"]
+    },
+    {
+      "src": "https://myfinance-mcp.com/favicon.svg",
+      "mimeType": "image/svg+xml",
+      "sizes": ["any"]
+    }
+  ],
   "version": "0.21.0",
   "remotes": [
     {
