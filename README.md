@@ -4,6 +4,8 @@ A remote MCP server for personal finance, an AI expense tracker for Claude, Chat
 
 **Website:** [myfinance-mcp.com](https://myfinance-mcp.com) · Free while in beta · Built by [Rteam](https://rteam.agency)
 
+[![MyFinance MCP MCP connector](https://glama.ai/mcp/connectors/io.github.alex-odoo/myfinance-mcp/badges/score.svg)](https://glama.ai/mcp/connectors/io.github.alex-odoo/myfinance-mcp)
+
 ## Quick Start
 
 Already hosted and ready to use - just connect it to your MCP client:
